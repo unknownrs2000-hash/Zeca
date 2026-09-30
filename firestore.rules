@@ -1,0 +1,225 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function validDisplayName(name) {
+      return name is string && name.size() >= 2 && name.size() <= 24;
+    }
+
+    function cosmeticPrice(itemId) {
+      return itemId == 'frame_aurora' ? 1299
+        : itemId == 'title_lucky' ? 799
+        : itemId == 'frame_neon' ? 1999
+        : -1;
+    }
+
+    function cosmeticName(itemId) {
+      return itemId == 'frame_aurora' ? 'Moldura Aurora'
+        : itemId == 'title_lucky' ? 'Título: Sorte Grande'
+        : itemId == 'frame_neon' ? 'Moldura Neon'
+        : '';
+    }
+
+    function validCosmeticInventory(oldUser, newUser, itemId) {
+      let oldInventory = oldUser.get('inventory', []);
+      let newInventory = newUser.get('inventory', []);
+      return oldInventory is list
+        && newInventory is list
+        && newInventory.size() == oldInventory.size() + 1
+        && newInventory.hasAll(oldInventory)
+        && newInventory.hasAny([itemId])
+        && !(itemId in oldInventory);
+    }
+
+    function validCosmeticPurchase(userId, purchaseId) {
+      let purchase = getAfter(/databases/$(database)/documents/users/$(userId)/purchases/$(purchaseId)).data;
+      let oldUser = get(/databases/$(database)/documents/users/$(userId)).data;
+      let newUser = getAfter(/databases/$(database)/documents/users/$(userId)).data;
+      let ledger = getAfter(/databases/$(database)/documents/users/$(userId)/transactions/$(purchaseId)).data;
+      let newRank = getAfter(/databases/$(database)/documents/leaderboard/$(userId)).data;
+      let itemId = purchase.itemId;
+      let price = cosmeticPrice(itemId);
+      return signedIn()
+        && request.auth.uid == userId
+        && purchaseId is string
+        && purchaseId.size() >= 16
+        && purchase.uid == userId
+        && price > 0
+        && purchase.amountCents == price
+        && purchase.createdAt == request.time
+        && oldUser.balanceInitialized == true
+        && oldUser.balanceCents >= price
+        && newUser.balanceCents == oldUser.balanceCents - price
+        && validCosmeticInventory(oldUser, newUser, itemId)
+        && newUser.lastPurchaseId == purchaseId
+        && newRank.balanceCents == newUser.balanceCents
+        && ledger.itemId == itemId
+        && ledger.deltaCents == -price
+        && ledger.description == 'Loja · ' + cosmeticName(itemId)
+        && ledger.createdAt == request.time;
+    }
+
+    function validInitialProfile(userId) {
+      return signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.keys().hasAll([
+          'uid', 'displayName', 'email', 'balanceCents', 'balanceInitialized', 'level',
+          'avatarUrl', 'pixKey', 'pixKeyType', 'pixKeyHash', 'gamesPlayed', 'wins',
+          'inventory', 'createdAt'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'uid', 'displayName', 'email', 'balanceCents', 'balanceInitialized', 'level',
+          'avatarUrl', 'pixKey', 'pixKeyType', 'pixKeyHash', 'gamesPlayed', 'wins',
+          'inventory', 'createdAt'
+        ])
+        && request.resource.data.uid == userId
+        && validDisplayName(request.resource.data.displayName)
+        && request.resource.data.email is string
+        && request.resource.data.balanceCents == 50000
+        && request.resource.data.balanceInitialized == true
+        && request.resource.data.level == 1
+        && request.resource.data.gamesPlayed == 0
+        && request.resource.data.wins == 0
+        && request.resource.data.inventory is list
+        && request.resource.data.inventory.size() == 0
+        && request.resource.data.pixKey == ''
+        && request.resource.data.pixKeyType == ''
+        && request.resource.data.pixKeyHash == ''
+        && request.resource.data.createdAt == request.time;
+    }
+
+    function isOneTimeBalanceInitialization() {
+      return resource.data.get('balanceInitialized', false) != true
+        && request.resource.data.balanceInitialized == true
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['balanceCents', 'balanceInitialized'])
+        && (
+          request.resource.data.balanceCents == resource.data.get('balanceCents', 0)
+          || (request.resource.data.balanceCents == 50000
+            && (!('balanceCents' in resource.data) || resource.data.balanceCents == 0)
+            && (!('gamesPlayed' in resource.data) || resource.data.gamesPlayed == 0)
+            && (!('wins' in resource.data) || resource.data.wins == 0))
+        );
+    }
+
+    match /users/{userId} {
+      allow read: if signedIn() && request.auth.uid == userId;
+      allow create: if validInitialProfile(userId);
+      allow delete: if false;
+      allow update: if signedIn()
+        && request.auth.uid == userId
+        && (
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName'])
+            && validDisplayName(request.resource.data.displayName))
+          || isOneTimeBalanceInitialization()
+          || (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['balanceCents', 'inventory', 'lastPurchaseId'])
+            && request.resource.data.diff(resource.data).affectedKeys().size() == 3
+            && validCosmeticPurchase(userId, request.resource.data.get('lastPurchaseId', ''))
+          )
+        );
+
+      match /transactions/{transactionId} {
+        allow read: if signedIn() && request.auth.uid == userId;
+        allow create: if request.resource.data.keys().hasOnly(['description', 'deltaCents', 'itemId', 'createdAt'])
+          && validCosmeticPurchase(userId, transactionId);
+        allow update, delete: if false;
+      }
+
+      match /purchases/{purchaseId} {
+        allow read: if signedIn() && request.auth.uid == userId;
+        allow create: if request.resource.data.keys().hasOnly(['uid', 'itemId', 'amountCents', 'createdAt'])
+          && validCosmeticPurchase(userId, purchaseId);
+        allow update, delete: if false;
+      }
+    }
+
+    match /leaderboard/{userId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.keys().hasOnly(['displayName', 'balanceCents', 'level', 'avatarUrl'])
+        && validDisplayName(request.resource.data.displayName)
+        && request.resource.data.avatarUrl is string
+        && request.resource.data.displayName
+          == getAfter(/databases/$(database)/documents/users/$(userId)).data.displayName
+        && request.resource.data.balanceCents
+          == getAfter(/databases/$(database)/documents/users/$(userId)).data.balanceCents
+        && request.resource.data.level
+          == getAfter(/databases/$(database)/documents/users/$(userId)).data.level
+        && request.resource.data.avatarUrl
+          == getAfter(/databases/$(database)/documents/users/$(userId)).data.avatarUrl;
+      allow delete: if false;
+      allow update: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'balanceCents'])
+        && validDisplayName(request.resource.data.displayName)
+        && request.resource.data.displayName
+          == getAfter(/databases/$(database)/documents/users/$(userId)).data.displayName
+        && request.resource.data.balanceCents
+          == getAfter(/databases/$(database)/documents/users/$(userId)).data.balanceCents;
+    }
+
+    match /pixKeys/{keyHash} {
+      allow read, write: if false;
+    }
+
+    match /transfers/{transferId} {
+      allow read: if signedIn()
+        && (resource.data.senderUid == request.auth.uid
+          || resource.data.recipientUid == request.auth.uid);
+      allow write: if false;
+    }
+
+    match /chats/{chatId} {
+      allow read: if signedIn()
+        && (chatId == 'global' || request.auth.uid in resource.data.participantUids);
+      allow create: if signedIn()
+        && chatId != 'global'
+        && request.resource.data.keys().hasOnly(['participantUids', 'lastMessage', 'lastMessageAt', 'createdAt'])
+        && request.resource.data.participantUids is list
+        && request.resource.data.participantUids.size() == 2
+        && request.auth.uid in request.resource.data.participantUids
+        && request.resource.data.participantUids[0] < request.resource.data.participantUids[1]
+        && chatId == request.resource.data.participantUids[0] + '_' + request.resource.data.participantUids[1]
+        && exists(/databases/$(database)/documents/leaderboard/$(request.resource.data.participantUids[0]))
+        && exists(/databases/$(database)/documents/leaderboard/$(request.resource.data.participantUids[1]))
+        && request.resource.data.lastMessage is string
+        && request.resource.data.lastMessage.size() <= 500
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.lastMessageAt == request.time;
+      allow update: if signedIn()
+        && request.auth.uid in resource.data.participantUids
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastMessage', 'lastMessageAt'])
+        && request.resource.data.lastMessage is string
+        && request.resource.data.lastMessage.size() <= 500
+        && request.resource.data.lastMessageAt == request.time;
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        allow read: if signedIn()
+          && (chatId == 'global'
+            || request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participantUids);
+        allow create: if signedIn()
+          && request.resource.data.keys().hasOnly(['senderUid', 'senderName', 'text', 'createdAt'])
+          && request.resource.data.senderUid == request.auth.uid
+          && request.resource.data.senderName
+            == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.displayName
+          && request.resource.data.text is string
+          && request.resource.data.text.size() >= 1
+          && request.resource.data.text.size() <= 500
+          && request.resource.data.createdAt == request.time
+          && (chatId == 'global'
+            || request.auth.uid in getAfter(/databases/$(database)/documents/chats/$(chatId)).data.participantUids);
+        allow update, delete: if false;
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

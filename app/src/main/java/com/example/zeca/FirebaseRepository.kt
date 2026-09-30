@@ -1,0 +1,633 @@
+package com.example.zeca
+
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.firestore.DocumentSnapshot
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreException
+import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.firestore.Query
+import com.google.firebase.functions.FirebaseFunctions
+import com.google.firebase.functions.FirebaseFunctionsException
+
+data class PerfilJogador(
+    val uid: String,
+    val apelido: String,
+    val email: String,
+    val saldoCentavos: Long,
+    val nivel: Int,
+    val avatarUrl: String,
+    val chavePix: String,
+    val tipoChavePix: String,
+    val partidas: Int,
+    val vitorias: Int,
+    val inventario: List<String>,
+)
+
+data class JogadorRanking(
+    val uid: String,
+    val apelido: String,
+    val saldoCentavos: Long,
+    val nivel: Int,
+    val avatarUrl: String,
+)
+
+data class MensagemChat(
+    val id: String,
+    val autorUid: String,
+    val autor: String,
+    val texto: String,
+    val minha: Boolean,
+    val enviadaEmMs: Long,
+)
+
+data class ConversaChat(
+    val id: String,
+    val outroUid: String,
+    val ultimaMensagem: String,
+    val atualizadaEmMs: Long,
+)
+
+data class JogadorDestino(
+    val uid: String,
+    val apelido: String,
+    val nivel: Int,
+    val avatarUrl: String,
+)
+
+data class ResultadoTransferencia(
+    val id: String,
+    val nomeDestino: String,
+    val saldoCentavos: Long,
+)
+
+data class ResultadoJogo(
+    val resultado: String,
+    val variacaoCentavos: Long,
+    val saldoCentavos: Long,
+    val partidas: Int,
+    val vitorias: Int,
+    val multiplicador: Int,
+)
+
+data class SessaoCrash(
+    val gameId: String,
+    val apostaCentavos: Long,
+    val iniciadoEmMs: Long,
+    val retomada: Boolean,
+)
+
+data class ResultadoCrash(
+    val caiu: Boolean,
+    val multiplicadorBps: Int,
+    val premioCentavos: Long,
+    val lucroCentavos: Long,
+    val saldoCentavos: Long,
+    val partidas: Int,
+    val vitorias: Int,
+)
+
+data class CartaBlackjack(val rank: String, val suit: String)
+
+data class EstadoBlackjack(
+    val gameId: String,
+    val status: String,
+    val cartasJogador: List<CartaBlackjack>,
+    val cartasDealer: List<CartaBlackjack>,
+    val cartaOculta: Boolean,
+    val apostaCentavos: Long,
+    val resultado: String,
+    val premioCentavos: Long,
+    val lucroCentavos: Long,
+    val saldoCentavos: Long,
+)
+
+object FirebaseRepository {
+    val auth: FirebaseAuth by lazy { FirebaseAuth.getInstance() }
+    private val database by lazy { FirebaseFirestore.getInstance() }
+    private val functions by lazy { FirebaseFunctions.getInstance("southamerica-east1") }
+
+    fun garantirPerfil(user: FirebaseUser, callback: (Exception?) -> Unit) {
+        val userRef = database.collection("users").document(user.uid)
+        val rankRef = database.collection("leaderboard").document(user.uid)
+        val nomeConta = (user.displayName ?: user.email?.substringBefore('@') ?: "Jogador")
+            .trim()
+            .take(24)
+            .let { if (it.length >= 2) it else "Jogador" }
+        database.runTransaction { transaction ->
+            val userSnapshot = transaction.get(userRef)
+            val rankSnapshot = transaction.get(rankRef)
+            if (!userSnapshot.exists()) {
+                val profile = mapOf(
+                    "uid" to user.uid,
+                    "displayName" to nomeConta,
+                    "email" to (user.email ?: ""),
+                    "balanceCents" to 50_000L,
+                    "balanceInitialized" to true,
+                    "level" to 1L,
+                    "avatarUrl" to (user.photoUrl?.toString() ?: ""),
+                    "pixKey" to "",
+                    "pixKeyType" to "",
+                    "pixKeyHash" to "",
+                    "gamesPlayed" to 0L,
+                    "wins" to 0L,
+                    "inventory" to emptyList<String>(),
+                    "createdAt" to com.google.firebase.firestore.FieldValue.serverTimestamp(),
+                )
+                transaction.set(userRef, profile)
+                transaction.set(
+                    rankRef,
+                    mapOf(
+                        "displayName" to nomeConta,
+                        "balanceCents" to 50_000L,
+                        "level" to 1L,
+                        "avatarUrl" to (user.photoUrl?.toString() ?: ""),
+                    ),
+                )
+            } else {
+                val profile = userSnapshot.data ?: emptyMap()
+                val balance = (profile["balanceCents"] as? Number)?.toLong()?.coerceAtLeast(0L) ?: 0L
+                val initialized = profile["balanceInitialized"] == true
+                val gamesPlayed = (profile["gamesPlayed"] as? Number)?.toLong() ?: 0L
+                val wins = (profile["wins"] as? Number)?.toLong() ?: 0L
+                val canReceiveStartingBalance = !initialized && balance == 0L && gamesPlayed == 0L && wins == 0L
+                val nextBalance = if (canReceiveStartingBalance) 50_000L else balance
+                if (!initialized || nextBalance != balance) {
+                    transaction.update(
+                        userRef,
+                        mapOf("balanceInitialized" to true, "balanceCents" to nextBalance),
+                    )
+                }
+                val profileName = profile["displayName"] as? String ?: nomeConta
+                val profileLevel = (profile["level"] as? Number)?.toLong()?.takeIf { it > 0L } ?: 1L
+                val profileAvatar = profile["avatarUrl"] as? String ?: user.photoUrl?.toString().orEmpty()
+                val publicProfile = mapOf(
+                    "displayName" to profileName,
+                    "balanceCents" to nextBalance,
+                    "level" to profileLevel,
+                    "avatarUrl" to profileAvatar,
+                )
+                if (!rankSnapshot.exists()) transaction.set(rankRef, publicProfile)
+                else transaction.update(rankRef, mapOf("displayName" to profileName, "balanceCents" to nextBalance))
+            }
+            null
+        }
+            .addOnSuccessListener { callback(null) }
+            .addOnFailureListener { callback(erroParaUsuario(it)) }
+    }
+
+    fun observarPerfil(uid: String, callback: (PerfilJogador?) -> Unit): ListenerRegistration =
+        database.collection("users").document(uid).addSnapshotListener { snapshot, _ ->
+            callback(snapshot?.let(::toPerfil))
+        }
+
+    fun observarRanking(callback: (List<JogadorRanking>) -> Unit): ListenerRegistration =
+        database.collection("leaderboard")
+            .orderBy("balanceCents", Query.Direction.DESCENDING)
+            .limit(50)
+            .addSnapshotListener { snapshot, _ ->
+                callback(snapshot?.documents.orEmpty().mapNotNull(::toJogadorRanking))
+            }
+
+    fun observarMensagensChat(
+        chatId: String,
+        uidAtual: String,
+        callback: (List<MensagemChat>, Exception?) -> Unit,
+    ): ListenerRegistration = database.collection("chats").document(chatId).collection("messages")
+        .orderBy("createdAt", Query.Direction.DESCENDING)
+        .limit(80)
+        .addSnapshotListener { snapshot, error ->
+            val mensagens = snapshot?.documents.orEmpty().mapNotNull { document ->
+                val data = document.data ?: return@mapNotNull null
+                MensagemChat(
+                    id = document.id,
+                    autorUid = data["senderUid"] as? String ?: return@mapNotNull null,
+                    autor = data["senderName"] as? String ?: "Jogador",
+                    texto = data["text"] as? String ?: return@mapNotNull null,
+                    minha = data["senderUid"] == uidAtual,
+                    enviadaEmMs = (data["createdAt"] as? com.google.firebase.Timestamp)?.toDate()?.time ?: 0L,
+                )
+            }.sortedBy { it.enviadaEmMs }
+            callback(mensagens, error)
+        }
+
+    fun observarConversasChat(uid: String, callback: (List<ConversaChat>, Exception?) -> Unit): ListenerRegistration =
+        database.collection("chats")
+            .whereArrayContains("participantUids", uid)
+            .limit(100)
+            .addSnapshotListener { snapshot, error ->
+                val conversas = snapshot?.documents.orEmpty().mapNotNull { document ->
+                    val participantes = (document.get("participantUids") as? List<*>)
+                        ?.filterIsInstance<String>() ?: return@mapNotNull null
+                    val outroUid = participantes.firstOrNull { it != uid } ?: return@mapNotNull null
+                    ConversaChat(
+                        id = document.id,
+                        outroUid = outroUid,
+                        ultimaMensagem = document.getString("lastMessage") ?: "",
+                        atualizadaEmMs = document.getTimestamp("lastMessageAt")?.toDate()?.time ?: 0L,
+                    )
+                }.sortedByDescending { it.atualizadaEmMs }
+                callback(conversas, error)
+            }
+
+    fun idConversaPrivada(uidUm: String, uidDois: String): String = listOf(uidUm, uidDois).sorted().joinToString("_")
+
+    fun enviarMensagemChat(
+        destinatarioUid: String?,
+        texto: String,
+        requestId: String,
+        callback: (String?, Exception?) -> Unit,
+    ) {
+        val uid = auth.currentUser?.uid
+        val message = texto.trim()
+        if (uid == null) {
+            callback(null, IllegalStateException("Entre na sua conta para enviar mensagens."))
+            return
+        }
+        if (message.isEmpty() || message.length > 500) {
+            callback(null, IllegalArgumentException("A mensagem deve ter entre 1 e 500 caracteres."))
+            return
+        }
+        if (destinatarioUid == uid) {
+            callback(null, IllegalArgumentException("Escolha outro jogador para a conversa privada."))
+            return
+        }
+
+        val participants = destinatarioUid?.let { listOf(uid, it).sorted() }.orEmpty()
+        val chatId = if (destinatarioUid == null) "global" else participants.joinToString("_")
+        val chatRef = database.collection("chats").document(chatId)
+        val messageRef = chatRef.collection("messages").document(requestId)
+        val senderRef = database.collection("users").document(uid)
+        val recipientRankRef = destinatarioUid?.let { database.collection("leaderboard").document(it) }
+
+        database.runTransaction { transaction ->
+            val previousMessage = transaction.get(messageRef)
+            if (previousMessage.exists()) {
+                if (previousMessage.getString("senderUid") != uid || previousMessage.getString("text") != message) {
+                    throw IllegalStateException("Identificador de mensagem já utilizado.")
+                }
+                return@runTransaction chatId
+            }
+
+            val senderSnapshot = transaction.get(senderRef)
+            val conversationSnapshot = if (recipientRankRef != null) transaction.get(chatRef) else null
+            val recipientSnapshot = recipientRankRef?.let(transaction::get)
+            if (!senderSnapshot.exists()) throw IllegalStateException("Perfil do remetente não encontrado.")
+            if (recipientRankRef != null && recipientSnapshot?.exists() != true) {
+                throw IllegalStateException("Destinatário não encontrado.")
+            }
+            if (conversationSnapshot?.exists() == true) {
+                val savedParticipants = conversationSnapshot.get("participantUids") as? List<*>
+                if (savedParticipants?.filterIsInstance<String>() != participants) {
+                    throw IllegalStateException("Conversa inválida.")
+                }
+            }
+
+            val senderName = senderSnapshot.getString("displayName") ?: "Jogador"
+            val serverTime = com.google.firebase.firestore.FieldValue.serverTimestamp()
+            if (recipientRankRef != null) {
+                val conversationData = mapOf(
+                    "participantUids" to participants,
+                    "lastMessage" to message,
+                    "lastMessageAt" to serverTime,
+                )
+                if (conversationSnapshot?.exists() == true) {
+                    transaction.update(chatRef, conversationData)
+                } else {
+                    transaction.set(
+                        chatRef,
+                        conversationData + ("createdAt" to serverTime),
+                    )
+                }
+            }
+            transaction.set(
+                messageRef,
+                mapOf(
+                    "senderUid" to uid,
+                    "senderName" to senderName,
+                    "text" to message,
+                    "createdAt" to serverTime,
+                ),
+            )
+            chatId
+        }
+            .addOnSuccessListener { callback(it, null) }
+            .addOnFailureListener { callback(null, it) }
+        }
+
+    fun observarMovimentos(uid: String, callback: (List<Movimento>) -> Unit): ListenerRegistration =
+        database.collection("users").document(uid).collection("transactions")
+            .orderBy("createdAt", Query.Direction.DESCENDING)
+            .limit(30)
+            .addSnapshotListener { snapshot, _ ->
+                callback(snapshot?.documents.orEmpty().mapNotNull { doc ->
+                    val data = doc.data ?: return@mapNotNull null
+                    Movimento(
+                        titulo = data["description"] as? String ?: "Movimentação",
+                        variacaoCentavos = (data["deltaCents"] as? Number)?.toLong() ?: 0L,
+                        horario = (data["createdAt"] as? com.google.firebase.Timestamp)
+                            ?.toDate()?.let { java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.forLanguageTag("pt-BR")).format(it) }
+                            ?: "Agora",
+                    )
+                })
+            }
+
+    fun atualizarApelido(apelido: String, callback: (Exception?) -> Unit) {
+        val uid = auth.currentUser?.uid
+        if (uid == null) {
+            callback(IllegalStateException("Entre na sua conta novamente."))
+            return
+        }
+        val nome = apelido.trim()
+        if (nome.length !in 2..24) {
+            callback(IllegalArgumentException("O apelido deve ter entre 2 e 24 caracteres."))
+            return
+        }
+        database.batch()
+            .update(database.collection("users").document(uid), "displayName", nome)
+            .update(database.collection("leaderboard").document(uid), "displayName", nome)
+            .commit()
+            .addOnSuccessListener { callback(null) }
+            .addOnFailureListener { callback(erroParaUsuario(it)) }
+    }
+
+    fun registrarChavePix(tipo: String, chave: String, callback: (Exception?) -> Unit) {
+        chamarFunction("registerPixKey", mapOf("type" to tipo, "key" to chave.trim())) { _, erro -> callback(erro) }
+    }
+
+    fun buscarChavePix(chave: String, callback: (JogadorDestino?, Exception?) -> Unit) {
+        chamarFunction("lookupPixKey", mapOf("key" to chave.trim())) { data, erro ->
+            val destino = data?.let {
+                JogadorDestino(
+                    uid = it["uid"] as? String ?: return@let null,
+                    apelido = it["displayName"] as? String ?: "Jogador",
+                    nivel = (it["level"] as? Number)?.toInt() ?: 1,
+                    avatarUrl = it["avatarUrl"] as? String ?: "",
+                )
+            }
+            callback(destino, erro)
+        }
+    }
+
+    fun transferirPorPix(chave: String, valorCentavos: Long, requestId: String, callback: (ResultadoTransferencia?, Exception?) -> Unit) {
+        chamarFunction(
+            "transferByPixKey",
+            mapOf("key" to chave.trim(), "amountCents" to valorCentavos, "requestId" to requestId),
+        ) { data, erro ->
+            val resultado = data?.let {
+                ResultadoTransferencia(
+                    id = it["transferId"] as? String ?: requestId,
+                    nomeDestino = it["recipientName"] as? String ?: "Jogador",
+                    saldoCentavos = (it["balanceCents"] as? Number)?.toLong() ?: 0L,
+                )
+            }
+            callback(resultado, erro)
+        }
+    }
+
+    fun jogar(
+        jogo: String,
+        apostaCentavos: Long,
+        tipoAposta: String,
+        selecao: String,
+        requestId: String,
+        callback: (ResultadoJogo?, Exception?) -> Unit,
+    ) {
+        chamarFunction(
+            "playGame",
+            mapOf(
+                "game" to jogo,
+                "amountCents" to apostaCentavos,
+                "betType" to tipoAposta,
+                "selection" to selecao,
+                "requestId" to requestId,
+            ),
+        ) { data, erro ->
+            val rawResult = data?.get("result")
+            val resultText = when (rawResult) {
+                is List<*> -> rawResult.joinToString("     ")
+                is Map<*, *> -> "${rawResult["number"]} · ${rawResult["color"]}"
+                else -> ""
+            }
+            val resultado = data?.let {
+                ResultadoJogo(
+                    resultado = resultText,
+                    variacaoCentavos = (it["deltaCents"] as? Number)?.toLong() ?: 0L,
+                    saldoCentavos = (it["balanceCents"] as? Number)?.toLong() ?: 0L,
+                    partidas = (it["gamesPlayed"] as? Number)?.toInt() ?: 0,
+                    vitorias = (it["wins"] as? Number)?.toInt() ?: 0,
+                    multiplicador = (it["payoutMultiplier"] as? Number)?.toInt() ?: 0,
+                )
+            }
+            callback(resultado, erro)
+        }
+    }
+
+    fun iniciarCrash(apostaCentavos: Long, requestId: String, callback: (SessaoCrash?, Exception?) -> Unit) {
+        chamarFunction("startCrash", mapOf("amountCents" to apostaCentavos, "requestId" to requestId)) { data, erro ->
+            val sessao = data?.let {
+                SessaoCrash(
+                    gameId = it["gameId"] as? String ?: return@let null,
+                    apostaCentavos = (it["amountCents"] as? Number)?.toLong() ?: apostaCentavos,
+                    iniciadoEmMs = (it["startedAtMs"] as? Number)?.toLong() ?: 0L,
+                    retomada = it["resumed"] as? Boolean ?: false,
+                )
+            }
+            callback(sessao, erro)
+        }
+    }
+
+    fun sacarCrash(gameId: String, requestId: String, callback: (ResultadoCrash?, Exception?) -> Unit) {
+        chamarFunction("cashOutCrash", mapOf("gameId" to gameId, "requestId" to requestId)) { data, erro ->
+            val resultado = data?.let {
+                ResultadoCrash(
+                    caiu = it["crashed"] as? Boolean ?: false,
+                    multiplicadorBps = (it["multiplierBps"] as? Number)?.toInt() ?: 100,
+                    premioCentavos = (it["payoutCents"] as? Number)?.toLong() ?: 0L,
+                    lucroCentavos = (it["profitCents"] as? Number)?.toLong() ?: 0L,
+                    saldoCentavos = (it["balanceCents"] as? Number)?.toLong() ?: 0L,
+                    partidas = (it["gamesPlayed"] as? Number)?.toInt() ?: 0,
+                    vitorias = (it["wins"] as? Number)?.toInt() ?: 0,
+                )
+            }
+            callback(resultado, erro)
+        }
+    }
+
+    fun iniciarBlackjack(apostaCentavos: Long, requestId: String, callback: (EstadoBlackjack?, Exception?) -> Unit) {
+        chamarFunction("startBlackjack", mapOf("amountCents" to apostaCentavos, "requestId" to requestId)) { data, erro ->
+            callback(data?.toEstadoBlackjack(), erro)
+        }
+    }
+
+    fun acaoBlackjack(
+        gameId: String,
+        acao: String,
+        requestId: String,
+        callback: (EstadoBlackjack?, Exception?) -> Unit,
+    ) {
+        chamarFunction(
+            "blackjackAction",
+            mapOf("gameId" to gameId, "action" to acao, "requestId" to requestId),
+        ) { data, erro -> callback(data?.toEstadoBlackjack(), erro) }
+    }
+
+    fun comprarCosmetico(itemId: String, callback: (String?) -> Unit) {
+        val produtos = mapOf(
+            "frame_aurora" to ("Moldura Aurora" to 1_299L),
+            "title_lucky" to ("Título: Sorte Grande" to 799L),
+            "frame_neon" to ("Moldura Neon" to 1_999L),
+        )
+        val produto = produtos[itemId]
+        val uid = auth.currentUser?.uid
+        if (uid == null) {
+            callback("Entre na sua conta para comprar.")
+            return
+        }
+        if (produto == null) {
+            callback("Este item não está disponível.")
+            return
+        }
+
+        val purchaseId = java.util.UUID.randomUUID().toString()
+        val userRef = database.collection("users").document(uid)
+        val rankRef = database.collection("leaderboard").document(uid)
+        val purchaseRef = userRef.collection("purchases").document(purchaseId)
+        val transactionRef = userRef.collection("transactions").document(purchaseId)
+        database.runTransaction { transaction ->
+            val userSnapshot = transaction.get(userRef)
+            val rankSnapshot = transaction.get(rankRef)
+            val existingPurchase = transaction.get(purchaseRef)
+            if (existingPurchase.exists()) throw IllegalStateException("Compra duplicada.")
+            if (!userSnapshot.exists() || !rankSnapshot.exists()) {
+                throw IllegalStateException("Perfil ainda não está pronto.")
+            }
+
+            val balance = userSnapshot.getLong("balanceCents") ?: 0L
+            val inventory = (userSnapshot.get("inventory") as? List<*>)
+                ?.filterIsInstance<String>()
+                .orEmpty()
+            if (itemId in inventory) throw IllegalStateException("Você já possui este item.")
+            if (balance < produto.second) throw IllegalStateException("Saldo insuficiente.")
+            val balanceAfter = balance - produto.second
+            val serverTime = com.google.firebase.firestore.FieldValue.serverTimestamp()
+
+            transaction.update(
+                userRef,
+                mapOf(
+                    "balanceCents" to balanceAfter,
+                    "inventory" to (inventory + itemId),
+                    "lastPurchaseId" to purchaseId,
+                ),
+            )
+            transaction.update(rankRef, "balanceCents", balanceAfter)
+            transaction.set(
+                purchaseRef,
+                mapOf(
+                    "uid" to uid,
+                    "itemId" to itemId,
+                    "amountCents" to produto.second,
+                    "createdAt" to serverTime,
+                ),
+            )
+            transaction.set(
+                transactionRef,
+                mapOf(
+                    "description" to "Loja · ${produto.first}",
+                    "deltaCents" to -produto.second,
+                    "itemId" to itemId,
+                    "createdAt" to serverTime,
+                ),
+            )
+            balanceAfter
+        }
+            .addOnSuccessListener { callback(null) }
+            .addOnFailureListener { callback(erroParaUsuario(it).localizedMessage ?: "Não foi possível concluir a compra.") }
+    }
+
+    fun sair() = auth.signOut()
+
+    private fun chamarFunction(
+        nome: String,
+        dados: Map<String, Any>,
+        callback: (Map<String, Any>?, Exception?) -> Unit,
+    ) {
+        functions.getHttpsCallable(nome).call(dados)
+            .addOnSuccessListener { result ->
+                @Suppress("UNCHECKED_CAST")
+                callback(result.data as? Map<String, Any>, null)
+            }
+            .addOnFailureListener { erro -> callback(null, erroParaUsuario(erro)) }
+    }
+
+    private fun erroParaUsuario(erro: Exception): Exception {
+        if (erro is FirebaseFirestoreException && erro.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
+            return IllegalStateException(
+                "O Firestore bloqueou a gravação. Publique as regras atualizadas do arquivo firestore.rules.",
+                erro,
+            )
+        }
+        if (erro !is FirebaseFunctionsException || erro.code != FirebaseFunctionsException.Code.NOT_FOUND) {
+            return erro
+        }
+        val detalhe = erro.message.orEmpty()
+        if (detalhe.equals("NOT_FOUND", ignoreCase = true)
+            || detalhe.contains("no function", ignoreCase = true)
+            || detalhe.contains("function not found", ignoreCase = true)) {
+            return IllegalStateException(
+                "O serviço ainda não foi publicado no Firebase. Publique as Cloud Functions e tente novamente.",
+                erro,
+            )
+        }
+        return erro
+    }
+
+    private fun toPerfil(snapshot: DocumentSnapshot): PerfilJogador = PerfilJogador(
+        uid = snapshot.id,
+        apelido = snapshot.getString("displayName") ?: "Jogador",
+        email = snapshot.getString("email") ?: "",
+        saldoCentavos = snapshot.getLong("balanceCents") ?: 0L,
+        nivel = snapshot.getLong("level")?.toInt() ?: 1,
+        avatarUrl = snapshot.getString("avatarUrl") ?: "",
+        chavePix = snapshot.getString("pixKey") ?: "",
+        tipoChavePix = snapshot.getString("pixKeyType") ?: "",
+        partidas = snapshot.getLong("gamesPlayed")?.toInt() ?: 0,
+        vitorias = snapshot.getLong("wins")?.toInt() ?: 0,
+        inventario = (snapshot.get("inventory") as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
+    )
+
+    private fun toJogadorRanking(snapshot: DocumentSnapshot): JogadorRanking? {
+        val data = snapshot.data ?: return null
+        return JogadorRanking(
+            uid = snapshot.id,
+            apelido = data["displayName"] as? String ?: "Jogador",
+            saldoCentavos = (data["balanceCents"] as? Number)?.toLong() ?: 0L,
+            nivel = (data["level"] as? Number)?.toInt() ?: 1,
+            avatarUrl = data["avatarUrl"] as? String ?: "",
+        )
+    }
+
+    private fun Map<String, Any>.toEstadoBlackjack(): EstadoBlackjack? {
+        val gameId = this["gameId"] as? String ?: return null
+        fun cards(key: String): List<CartaBlackjack> = (this[key] as? List<*>)
+            .orEmpty()
+            .mapNotNull { card ->
+                val values = card as? Map<*, *> ?: return@mapNotNull null
+                val rank = values["rank"] as? String ?: return@mapNotNull null
+                val suit = values["suit"] as? String ?: return@mapNotNull null
+                CartaBlackjack(rank, suit)
+            }
+        return EstadoBlackjack(
+            gameId = gameId,
+            status = this["status"] as? String ?: "active",
+            cartasJogador = cards("playerCards"),
+            cartasDealer = cards("dealerCards"),
+            cartaOculta = this["dealerHoleHidden"] as? Boolean ?: false,
+            apostaCentavos = (this["wagerCents"] as? Number)?.toLong() ?: 0L,
+            resultado = this["outcome"] as? String ?: "",
+            premioCentavos = (this["payoutCents"] as? Number)?.toLong() ?: 0L,
+            lucroCentavos = (this["profitCents"] as? Number)?.toLong() ?: 0L,
+            saldoCentavos = (this["balanceCents"] as? Number)?.toLong() ?: 0L,
+        )
+    }
+}
