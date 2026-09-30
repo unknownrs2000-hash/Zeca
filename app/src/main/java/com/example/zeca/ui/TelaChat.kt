@@ -157,7 +157,7 @@ fun TelaChat(
     }
 
     DisposableEffect(uidAtual) {
-        val registration = FirebaseRepository.observarConversasChat(uidAtual) { novas, error ->
+        val registration = FirebaseRepository.observarConversasChat(uidAtual) { novas, error, _ ->
             conversas = novas
             if (error != null) erro = error.localizedMessage ?: "Não foi possível carregar as conversas."
         }
@@ -169,7 +169,7 @@ fun TelaChat(
         if (chatId == null) {
             onDispose { }
         } else {
-            val registration = FirebaseRepository.observarMensagensChat(chatId, uidAtual) { novas, error ->
+            val registration = FirebaseRepository.observarMensagensChat(chatId, uidAtual) { novas, error, _ ->
                 mensagens = novas
                 if (error != null) erro = error.localizedMessage ?: "Não foi possível carregar as mensagens."
             }

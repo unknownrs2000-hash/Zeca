@@ -99,6 +99,31 @@ async function purchase(uid, itemId, purchaseId = "purchase-test-0001", amountOv
   });
 }
 
+async function writePrivateMessage(senderUid, recipientUid, messageId, senderUidMetadata = senderUid) {
+  const database = environment.authenticatedContext(senderUid).firestore();
+  const participantUids = [senderUid, recipientUid].sort();
+  const chatId = participantUids.join("_");
+  const chatRef = doc(database, "chats", chatId);
+  const messageRef = doc(database, "chats", chatId, "messages", messageId);
+
+  return runTransaction(database, async (transaction) => {
+    transaction.set(chatRef, {
+      participantUids,
+      lastMessage: "Olá",
+      lastMessageAt: serverTimestamp(),
+      lastMessageId: messageId,
+      lastMessageSenderUid: senderUidMetadata,
+      createdAt: serverTimestamp(),
+    });
+    transaction.set(messageRef, {
+      senderUid,
+      senderName: senderUid,
+      text: "Olá",
+      createdAt: serverTimestamp(),
+    });
+  });
+}
+
 test("allows purchase with fixed catalog price and atomically debits/inserts receipt", async () => {
   const uid = "player-valid";
   await seedPlayer(uid);
@@ -131,4 +156,26 @@ test("denies duplicate cosmetic ownership", async () => {
   await seedPlayer(uid);
   await assertSucceeds(purchase(uid, "title_lucky", "purchase-title-valid"));
   await assertFails(purchase(uid, "title_lucky", "purchase-title-again"));
+});
+
+test("allows a private message with the authenticated sender metadata", async () => {
+  await seedPlayer("chat-sender");
+  await seedPlayer("chat-recipient");
+  await assertSucceeds(writePrivateMessage(
+    "chat-sender",
+    "chat-recipient",
+    "12345678-1234-1234-1234-123456789012",
+  ));
+});
+
+test("denies private-chat metadata that forges the last sender", async () => {
+  await seedPlayer("chat-real-sender");
+  await seedPlayer("chat-other-user");
+  await seedPlayer("chat-forged-sender");
+  await assertFails(writePrivateMessage(
+    "chat-real-sender",
+    "chat-other-user",
+    "87654321-4321-4321-4321-210987654321",
+    "chat-forged-sender",
+  ));
 });

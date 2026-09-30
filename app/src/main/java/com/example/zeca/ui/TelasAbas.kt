@@ -2,13 +2,20 @@ package com.example.zeca.ui
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.Intent
+import android.graphics.Bitmap
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.scaleIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +36,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -46,6 +54,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -60,6 +69,9 @@ import com.example.zeca.JogadorRanking
 import com.example.zeca.JogadorDestino
 import com.example.zeca.ResultadoTransferencia
 import com.example.zeca.ui.theme.Cores
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.qrcode.QRCodeWriter
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.text.NumberFormat
@@ -68,6 +80,25 @@ import java.util.UUID
 
 fun formatarReais(centavos: Long): String =
     NumberFormat.getCurrencyInstance(Locale.forLanguageTag("pt-BR")).format(BigDecimal.valueOf(centavos, 2))
+
+private data class ComprovantePix(
+    val id: String,
+    val contraparte: String,
+    val valorCentavos: Long,
+    val horario: String,
+    val recebimento: Boolean,
+)
+
+private fun criarQrCode(conteudo: String): Bitmap? = runCatching {
+    val matriz = QRCodeWriter().encode(conteudo, BarcodeFormat.QR_CODE, 640, 640)
+    Bitmap.createBitmap(matriz.width, matriz.height, Bitmap.Config.ARGB_8888).apply {
+        for (y in 0 until matriz.height) {
+            for (x in 0 until matriz.width) {
+                setPixel(x, y, if (matriz[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
+            }
+        }
+    }
+}.getOrNull()
 
 @Composable
 fun TelaCarteira(
@@ -92,6 +123,10 @@ fun TelaCarteira(
     var mensagemTransferencia by rememberSaveable { mutableStateOf("") }
     var destinatario by remember { mutableStateOf<JogadorDestino?>(null) }
     var transferenciaOcupada by remember { mutableStateOf(false) }
+    var valorCobranca by rememberSaveable { mutableStateOf("") }
+    var mostrarQr by rememberSaveable { mutableStateOf(false) }
+    var mensagemQr by rememberSaveable { mutableStateOf("") }
+    var comprovante by remember { mutableStateOf<ComprovantePix?>(null) }
     var emailVerificado by remember { mutableStateOf(emailVerificadoInicial) }
     var mensagemVerificacao by rememberSaveable { mutableStateOf("") }
     var verificacaoOcupada by remember { mutableStateOf(false) }
@@ -99,6 +134,52 @@ fun TelaCarteira(
         "E-mail" -> Regex("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$").matches(chaveEditavel.trim())
         else -> Regex("^[A-Fa-f0-9]{32}$").matches(chaveEditavel.trim())
     }
+    val valorQrCentavos = if (valorCobranca.isBlank()) null else parseValorCentavos(valorCobranca)
+    val valorQrInvalido = valorCobranca.isNotBlank()
+        && (valorQrCentavos == null || valorQrCentavos !in 1..1_000_000)
+    val conteudoQr = remember(chavePix, valorQrCentavos) {
+        Uri.Builder()
+            .scheme("zeca")
+            .authority("pix")
+            .appendQueryParameter("key", chavePix)
+            .apply { valorQrCentavos?.let { appendQueryParameter("amount", it.toString()) } }
+            .build()
+            .toString()
+    }
+    val imagemQr = remember(conteudoQr, mostrarQr) {
+        if (mostrarQr && chavePix.isNotBlank()) criarQrCode(conteudoQr) else null
+    }
+
+    fun buscarDestinatario(chave: String) {
+        transferenciaOcupada = true
+        mensagemTransferencia = ""
+        onBuscarDestinatario(chave) { encontrado, erro ->
+            transferenciaOcupada = false
+            destinatario = encontrado
+            mensagemTransferencia = erro
+                ?: if (encontrado != null) "Confira o destinatário antes de continuar." else "Conta não encontrada."
+        }
+    }
+
+    fun lerQrCode() {
+        GmsBarcodeScanning.getClient(context).startScan()
+            .addOnSuccessListener { codigo ->
+                val uri = runCatching { Uri.parse(codigo.rawValue.orEmpty()) }.getOrNull()
+                val chave = uri?.getQueryParameter("key").orEmpty()
+                val valor = uri?.getQueryParameter("amount")?.toLongOrNull()
+                if (uri?.scheme != "zeca" || uri.host != "pix" || chave.isBlank()
+                    || (uri.getQueryParameter("amount") != null && (valor == null || valor <= 0L))) {
+                    mensagemTransferencia = "QR inválido. Use um QR de cobrança do Zeca."
+                } else {
+                    chaveDestinatario = chave
+                    destinatario = null
+                    valor?.let { valorTransferencia = BigDecimal.valueOf(it, 2).toPlainString().replace('.', ',') }
+                    buscarDestinatario(chave)
+                }
+            }
+            .addOnFailureListener { mensagemTransferencia = "Não foi possível ler o QR code. Tente novamente." }
+    }
+
     TelaBase("Carteira", "Saldo e movimentações.") {
         GlassCard {
             Text("SALDO DISPONÍVEL", color = Color.White.copy(alpha = 0.62f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
@@ -197,7 +278,51 @@ fun TelaCarteira(
         }
 
         GlassCard {
+            Text("Criar cobrança por QR", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Text(
+                "QR para transferências entre saldos do Zeca. Não é um QR Pix bancário.",
+                color = Color.White.copy(alpha = 0.65f),
+                fontSize = 12.sp,
+            )
+            OutlinedTextField(
+                value = valorCobranca,
+                onValueChange = { valorCobranca = it; mensagemQr = ""; mostrarQr = false },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Valor fixo (opcional)") },
+                prefix = { Text("R$ ") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            )
+            Button(
+                onClick = {
+                    mostrarQr = !valorQrInvalido
+                    mensagemQr = if (valorQrInvalido) {
+                        "Informe um valor entre R$ 0,01 e R$ 10.000,00."
+                    } else ""
+                },
+                enabled = chavePix.isNotBlank(),
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Gerar QR de cobrança") }
+            if (imagemQr != null) {
+                Image(
+                    bitmap = imagemQr.asImageBitmap(),
+                    contentDescription = "QR code de cobrança interna do Zeca",
+                    modifier = Modifier.align(Alignment.CenterHorizontally).size(220.dp),
+                )
+                Text("Chave: $chavePix", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                valorQrCentavos?.let {
+                    Text("Valor: ${formatarReais(it)}", color = Cores.Verde, fontWeight = FontWeight.Bold)
+                }
+            }
+            if (mensagemQr.isNotBlank()) Text(mensagemQr, color = Cores.Laranja, fontSize = 12.sp)
+            if (chavePix.isBlank()) {
+                Text("Cadastre uma chave antes de criar uma cobrança.", color = Cores.Laranja, fontSize = 12.sp)
+            }
+        }
+
+        GlassCard {
             Text("Enviar para um usuário", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Button(onClick = ::lerQrCode, modifier = Modifier.fillMaxWidth()) { Text("Ler QR code") }
             OutlinedTextField(
                 value = chaveDestinatario,
                 onValueChange = { chaveDestinatario = it; destinatario = null; mensagemTransferencia = "" },
@@ -207,15 +332,7 @@ fun TelaCarteira(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
             )
             Button(
-                onClick = {
-                    transferenciaOcupada = true
-                    mensagemTransferencia = ""
-                    onBuscarDestinatario(chaveDestinatario.trim()) { encontrado, erro ->
-                        transferenciaOcupada = false
-                        destinatario = encontrado
-                        mensagemTransferencia = erro ?: if (encontrado != null) "Confira o destinatário antes de continuar." else "Conta não encontrada."
-                    }
-                },
+                onClick = { buscarDestinatario(chaveDestinatario.trim()) },
                 enabled = chaveDestinatario.isNotBlank() && !transferenciaOcupada,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(if (transferenciaOcupada) "Buscando..." else "Buscar usuário") }
@@ -237,9 +354,21 @@ fun TelaCarteira(
                         transferenciaOcupada = true
                         onTransferir(chaveDestinatario.trim(), valor, UUID.randomUUID().toString()) { resultado, erro ->
                             transferenciaOcupada = false
-                            destinatario = null
-                            mensagemTransferencia = erro ?: "Enviado para ${resultado?.nomeDestino}: ${formatarReais(valor)}."
-                            if (erro == null) chaveDestinatario = ""
+                            if (erro == null && resultado != null) {
+                                comprovante = ComprovantePix(
+                                    id = resultado.id,
+                                    contraparte = resultado.nomeDestino,
+                                    valorCentavos = valor,
+                                    horario = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.forLanguageTag("pt-BR"))
+                                        .format(java.util.Date()),
+                                    recebimento = false,
+                                )
+                                destinatario = null
+                                mensagemTransferencia = "Transferência concluída para ${resultado.nomeDestino}."
+                                chaveDestinatario = ""
+                            } else {
+                                mensagemTransferencia = erro ?: "Não foi possível concluir a transferência."
+                            }
                         }
                     },
                     enabled = valorEnvio != null && valorEnvio > 0 && !transferenciaOcupada,
@@ -262,7 +391,20 @@ fun TelaCarteira(
                 Text("Nenhuma movimentação por enquanto.", color = Color.White.copy(alpha = 0.65f), fontSize = 13.sp)
             } else {
                 historico.take(8).forEach { movimento ->
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(if (movimento.ehTransferenciaPix) Modifier.clickable {
+                                comprovante = ComprovantePix(
+                                    id = movimento.id,
+                                    contraparte = movimento.titulo,
+                                    valorCentavos = kotlin.math.abs(movimento.variacaoCentavos),
+                                    horario = movimento.horario,
+                                    recebimento = movimento.variacaoCentavos > 0,
+                                )
+                            } else Modifier),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(movimento.titulo, color = Color.White, fontSize = 14.sp)
                             Text(movimento.horario, color = Color.White.copy(alpha = 0.52f), fontSize = 11.sp)
@@ -277,6 +419,42 @@ fun TelaCarteira(
                 }
             }
         }
+    }
+
+    comprovante?.let { recibo ->
+        AlertDialog(
+            onDismissRequest = { comprovante = null },
+            title = {
+                Text(if (recibo.recebimento) "Comprovante de recebimento" else "Comprovante de pagamento")
+            },
+            text = {
+                AnimatedVisibility(visible = true, enter = scaleIn() + fadeIn()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("✓  Transferência concluída", color = Cores.Verde, fontWeight = FontWeight.Bold)
+                        Text(recibo.contraparte, color = Color.White)
+                        Text(formatarReais(recibo.valorCentavos), color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                        Text("Data: ${recibo.horario}", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                        Text("ID: ${recibo.id}", color = Color.White.copy(alpha = 0.58f), fontSize = 11.sp)
+                        Text("Comprovante de saldo interno do Zeca; não comprova liquidação bancária.", color = Cores.Laranja, fontSize = 11.sp)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { comprovante = null }) { Text("Fechar") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    val texto = "Comprovante Zeca\n${if (recibo.recebimento) "Recebimento" else "Pagamento"}: ${recibo.contraparte}\n" +
+                        "Valor: ${formatarReais(recibo.valorCentavos)}\nData: ${recibo.horario}\nID: ${recibo.id}\n" +
+                        "Transferência interna; não é liquidação bancária."
+                    val compartilhar = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, texto)
+                    }
+                    context.startActivity(Intent.createChooser(compartilhar, "Compartilhar comprovante"))
+                }) { Text("Compartilhar") }
+            },
+        )
     }
 }
 

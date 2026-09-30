@@ -60,6 +60,8 @@ data class ConversaChat(
     val outroUid: String,
     val ultimaMensagem: String,
     val atualizadaEmMs: Long,
+    val ultimaMensagemId: String = "",
+    val ultimoRemetenteUid: String = "",
 )
 
 data class JogadorDestino(
@@ -221,7 +223,7 @@ object FirebaseRepository {
     fun observarMensagensChat(
         chatId: String,
         uidAtual: String,
-        callback: (List<MensagemChat>, Exception?) -> Unit,
+        callback: (List<MensagemChat>, Exception?, Boolean) -> Unit,
     ): ListenerRegistration = database.collection("chats").document(chatId).collection("messages")
         .orderBy("createdAt", Query.Direction.DESCENDING)
         .limit(80)
@@ -244,10 +246,13 @@ object FirebaseRepository {
                     encaminhada = data["forwarded"] as? Boolean ?: false,
                 )
             }.sortedBy { it.enviadaEmMs }
-            callback(mensagens, error)
+            callback(mensagens, error, snapshot?.metadata?.isFromCache ?: true)
         }
 
-    fun observarConversasChat(uid: String, callback: (List<ConversaChat>, Exception?) -> Unit): ListenerRegistration =
+    fun observarConversasChat(
+        uid: String,
+        callback: (List<ConversaChat>, Exception?, Boolean) -> Unit,
+    ): ListenerRegistration =
         database.collection("chats")
             .whereArrayContains("participantUids", uid)
             .limit(100)
@@ -261,9 +266,11 @@ object FirebaseRepository {
                         outroUid = outroUid,
                         ultimaMensagem = document.getString("lastMessage") ?: "",
                         atualizadaEmMs = document.getTimestamp("lastMessageAt")?.toDate()?.time ?: 0L,
+                        ultimaMensagemId = document.getString("lastMessageId") ?: "",
+                        ultimoRemetenteUid = document.getString("lastMessageSenderUid") ?: "",
                     )
                 }.sortedByDescending { it.atualizadaEmMs }
-                callback(conversas, error)
+                callback(conversas, error, snapshot?.metadata?.isFromCache ?: true)
             }
 
     fun idConversaPrivada(uidUm: String, uidDois: String): String = listOf(uidUm, uidDois).sorted().joinToString("_")
@@ -328,6 +335,8 @@ object FirebaseRepository {
                     "participantUids" to participants,
                     "lastMessage" to message,
                     "lastMessageAt" to serverTime,
+                    "lastMessageId" to requestId,
+                    "lastMessageSenderUid" to uid,
                 )
                 if (conversationSnapshot?.exists() == true) {
                     transaction.update(chatRef, conversationData)
@@ -380,12 +389,13 @@ object FirebaseRepository {
             .addOnFailureListener { callback(erroParaUsuario(it)) }
     }
 
-    fun observarMovimentos(uid: String, callback: (List<Movimento>) -> Unit): ListenerRegistration =
+    fun observarMovimentos(uid: String, callback: (List<Movimento>, Boolean) -> Unit): ListenerRegistration =
         database.collection("users").document(uid).collection("transactions")
             .orderBy("createdAt", Query.Direction.DESCENDING)
             .limit(30)
             .addSnapshotListener { snapshot, _ ->
-                callback(snapshot?.documents.orEmpty().mapNotNull { doc ->
+                if (snapshot == null) return@addSnapshotListener
+                callback(snapshot.documents.mapNotNull { doc ->
                     val data = doc.data ?: return@mapNotNull null
                     Movimento(
                         titulo = data["description"] as? String ?: "Movimentação",
@@ -393,8 +403,10 @@ object FirebaseRepository {
                         horario = (data["createdAt"] as? com.google.firebase.Timestamp)
                             ?.toDate()?.let { java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.forLanguageTag("pt-BR")).format(it) }
                             ?: "Agora",
+                        id = doc.id,
+                        ehTransferenciaPix = data["type"] == "pix_transfer",
                     )
-                })
+                }, snapshot.metadata.isFromCache)
             }
 
     fun atualizarApelido(apelido: String, callback: (Exception?) -> Unit) {
@@ -721,6 +733,12 @@ object FirebaseRepository {
 
             if (status !in 200..299) {
                 val mensagem = json?.optJSONObject("error")?.optString("message").orEmpty()
+                if (status == 404 && (mensagem.contains("função não encontrada", ignoreCase = true)
+                        || mensagem.contains("function not found", ignoreCase = true))) {
+                    throw IllegalStateException(
+                        "O backend hospedado em zeca-jvic.onrender.com está desatualizado. Publique a versão atual da pasta functions/ no serviço.",
+                    )
+                }
                 throw IllegalStateException(mensagem.ifBlank { "Erro no servidor ($status)." })
             }
             @Suppress("UNCHECKED_CAST")
@@ -756,7 +774,7 @@ object FirebaseRepository {
             || detalhe.contains("no function", ignoreCase = true)
             || detalhe.contains("function not found", ignoreCase = true)) {
             return IllegalStateException(
-                "O serviço ainda não foi publicado no Firebase. Publique as Cloud Functions e tente novamente.",
+                "O backend hospedado em zeca-jvic.onrender.com não encontrou este serviço. Publique a versão atual da pasta functions/ no serviço.",
                 erro,
             )
         }

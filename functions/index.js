@@ -18,9 +18,8 @@ const {
 } = require("./game-logic");
 const { initializeBalance } = require("./profile-logic");
 
-initializeApp({
-  credential: cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)),
-});
+const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
+initializeApp(serviceAccount ? { credential: cert(JSON.parse(serviceAccount)) } : {});
 
 const database = getFirestore();
 const INITIAL_BALANCE_CENTS = 50_000;
@@ -319,12 +318,16 @@ exports.transferByPixKey = onCall(async (request) => {
     transaction.create(senderHistoryRef, {
       description: `Para ${recipientName}`,
       deltaCents: -amountCents,
+      type: "pix_transfer",
+      transferId: requestId,
       counterpartyUid: recipientUid,
       createdAt: now,
     });
     transaction.create(recipientHistoryRef, {
       description: `De ${senderName}`,
       deltaCents: amountCents,
+      type: "pix_transfer",
+      transferId: requestId,
       counterpartyUid: senderUid,
       createdAt: now,
     });
@@ -1041,6 +1044,8 @@ exports.sendChatMessage = onCall(async (request) => {
         participantUids: participants,
         lastMessage: text,
         lastMessageAt: now,
+        lastMessageId: requestId,
+        lastMessageSenderUid: uid,
       };
       if (chatSnapshot.exists) transaction.update(chatRef, chatData);
       else transaction.create(chatRef, { ...chatData, createdAt: now });

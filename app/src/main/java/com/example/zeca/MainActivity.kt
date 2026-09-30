@@ -5,31 +5,44 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Casino
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -46,6 +59,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
+import kotlinx.coroutines.delay
 import com.example.zeca.ui.TelaCarteira
 import com.example.zeca.ui.TelaAutenticacao
 import com.example.zeca.ui.TelaChat
@@ -60,6 +75,12 @@ import java.util.Date
 import java.util.Locale
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
+import java.math.BigDecimal
+import java.text.NumberFormat
+
+private fun formatarValorNotificacao(centavos: Long): String =
+    NumberFormat.getCurrencyInstance(Locale.forLanguageTag("pt-BR"))
+        .format(BigDecimal.valueOf(centavos, 2))
 
 enum class Aba(val titulo: String, val icone: ImageVector) {
     Inicio("Início", Icons.Filled.Home),
@@ -69,8 +90,20 @@ enum class Aba(val titulo: String, val icone: ImageVector) {
     Perfil("Perfil", Icons.Filled.Person),
 }
 
-data class Movimento(val titulo: String, val variacaoCentavos: Long, val horario: String =
-    SimpleDateFormat("dd/MM HH:mm", Locale.forLanguageTag("pt-BR")).format(Date()))
+data class Movimento(
+    val titulo: String,
+    val variacaoCentavos: Long,
+    val horario: String = SimpleDateFormat("dd/MM HH:mm", Locale.forLanguageTag("pt-BR")).format(Date()),
+    val id: String = "",
+    val ehTransferenciaPix: Boolean = false,
+)
+
+private data class NotificacaoApp(
+    val id: String,
+    val titulo: String,
+    val detalhe: String,
+    val aba: Aba,
+)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -108,17 +141,98 @@ private fun AppAutenticado(usuario: FirebaseUser) {
     val ranking = remember { mutableStateListOf<JogadorRanking>() }
     val movimentos = remember { mutableStateListOf<Movimento>() }
     val itensComprados = remember { mutableStateListOf<String>() }
+    val notificacoes = remember { mutableStateListOf<NotificacaoApp>() }
     val stateHolder = rememberSaveableStateHolder()
 
+    fun notificar(notificacao: NotificacaoApp) {
+        if (notificacoes.none { it.id == notificacao.id }) {
+            notificacoes.add(notificacao)
+            if (notificacoes.size > 4) notificacoes.removeAt(0)
+        }
+    }
+
     DisposableEffect(usuario.uid) {
+        val idsMovimentos = mutableSetOf<String>()
+        var movimentosCarregados = false
         val profileRegistration = FirebaseRepository.observarPerfil(usuario.uid) { perfil = it }
         val rankingRegistration = FirebaseRepository.observarRanking { jogadores ->
             ranking.clear()
             ranking.addAll(jogadores)
         }
-        val movementsRegistration = FirebaseRepository.observarMovimentos(usuario.uid) { recentes ->
+        val movementsRegistration = FirebaseRepository.observarMovimentos(usuario.uid) { recentes, fromCache ->
             movimentos.clear()
             movimentos.addAll(recentes)
+            if (fromCache) return@observarMovimentos
+            if (movimentosCarregados) {
+                recentes.forEach { movimento ->
+                    if (idsMovimentos.add(movimento.id) && movimento.variacaoCentavos > 0L) {
+                        val pixRecebido = movimento.ehTransferenciaPix
+                        notificar(
+                            NotificacaoApp(
+                                id = "movimento:${movimento.id}",
+                                titulo = if (pixRecebido) "Pix recebido" else "Saldo recebido",
+                                detalhe = "${movimento.titulo} · ${formatarValorNotificacao(movimento.variacaoCentavos)}",
+                                aba = Aba.Carteira,
+                            ),
+                        )
+                    } else {
+                        idsMovimentos.add(movimento.id)
+                    }
+                }
+            } else {
+                idsMovimentos.addAll(recentes.map { it.id })
+                movimentosCarregados = true
+            }
+        }
+        val idsMensagensPrivadas = mutableMapOf<String, String>()
+        var conversasCarregadas = false
+        val conversationsRegistration = FirebaseRepository.observarConversasChat(usuario.uid) { conversas, erro, fromCache ->
+            if (erro == null && !fromCache) {
+                if (!conversasCarregadas) {
+                    conversas.forEach { idsMensagensPrivadas[it.id] = it.ultimaMensagemId }
+                    conversasCarregadas = true
+                } else {
+                    conversas.forEach { conversa ->
+                        val mensagemAnterior = idsMensagensPrivadas[conversa.id]
+                        if (conversa.ultimaMensagemId.isNotBlank()
+                            && conversa.ultimaMensagemId != mensagemAnterior
+                            && conversa.ultimoRemetenteUid != usuario.uid) {
+                            notificar(
+                                NotificacaoApp(
+                                    id = "mensagem:${conversa.id}:${conversa.ultimaMensagemId}",
+                                    titulo = "Nova mensagem",
+                                    detalhe = conversa.ultimaMensagem.take(90),
+                                    aba = Aba.Chat,
+                                ),
+                            )
+                        }
+                        idsMensagensPrivadas[conversa.id] = conversa.ultimaMensagemId
+                    }
+                }
+            }
+        }
+        val idsMensagensGlobais = mutableSetOf<String>()
+        var chatGlobalCarregado = false
+        val globalMessagesRegistration = FirebaseRepository.observarMensagensChat("global", usuario.uid) { mensagens, erro, fromCache ->
+            if (erro == null && !fromCache) {
+                if (!chatGlobalCarregado) {
+                    idsMensagensGlobais.addAll(mensagens.map { it.id })
+                    chatGlobalCarregado = true
+                } else {
+                    mensagens.forEach { mensagem ->
+                        if (idsMensagensGlobais.add(mensagem.id) && !mensagem.minha) {
+                            notificar(
+                                NotificacaoApp(
+                                    id = "mensagem:global:${mensagem.id}",
+                                    titulo = "Mensagem no chat global",
+                                    detalhe = "${mensagem.autor}: ${mensagem.texto.take(75)}",
+                                    aba = Aba.Chat,
+                                ),
+                            )
+                        }
+                    }
+                }
+            }
         }
         FirebaseRepository.garantirPerfil(usuario) { error ->
             if (error != null) erroPerfil = error.localizedMessage ?: "Não foi possível carregar seu perfil."
@@ -127,7 +241,16 @@ private fun AppAutenticado(usuario: FirebaseUser) {
             profileRegistration.remove()
             rankingRegistration.remove()
             movementsRegistration.remove()
+            conversationsRegistration.remove()
+            globalMessagesRegistration.remove()
         }
+    }
+
+    val notificacaoAtual = notificacoes.firstOrNull()
+    LaunchedEffect(notificacaoAtual?.id) {
+        val atual = notificacaoAtual ?: return@LaunchedEffect
+        delay(5_000)
+        if (notificacoes.firstOrNull()?.id == atual.id) notificacoes.removeAt(0)
     }
 
     val jogador = perfil
@@ -274,6 +397,39 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                                 onAbrirLoja = { mostrarLoja = true },
                                 onSair = { FirebaseRepository.sair() },
                             )
+                        }
+                    }
+                }
+            }
+            AnimatedVisibility(
+                visible = notificacaoAtual != null,
+                modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().zIndex(1f),
+                enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
+                exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
+            ) {
+                notificacaoAtual?.let { notificacao ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 8.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Cores.Cartao)
+                            .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(16.dp))
+                            .clickable {
+                                aba = notificacao.aba
+                                notificacoes.removeAll { it.id == notificacao.id }
+                            }
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(11.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Filled.Notifications, contentDescription = null, tint = Cores.Verde)
+                        Column(Modifier.weight(1f)) {
+                            Text(notificacao.titulo, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text(notificacao.detalhe, color = Color.White.copy(alpha = 0.72f), fontSize = 12.sp, maxLines = 2)
+                        }
+                        IconButton(onClick = { notificacoes.removeAll { it.id == notificacao.id } }) {
+                            Icon(Icons.Filled.Close, contentDescription = "Fechar notificação", tint = Color.White.copy(alpha = 0.7f))
                         }
                     }
                 }

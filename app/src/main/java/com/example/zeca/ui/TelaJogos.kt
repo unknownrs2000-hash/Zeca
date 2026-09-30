@@ -71,6 +71,7 @@ fun TelaJogos(
     var fimCrash by remember { mutableStateOf<String?>(null) }
     var sessaoCrash by remember { mutableStateOf<SessaoCrash?>(null) }
     var crashBps by remember { mutableStateOf(100) }
+    var saqueCrashPendente by remember { mutableStateOf(false) }
     var estadoBlackjack by remember { mutableStateOf<EstadoBlackjack?>(null) }
     val historicoRoleta = remember { mutableStateListOf<Int>() }
 
@@ -82,8 +83,9 @@ fun TelaJogos(
         else -> false
     }
 
-    LaunchedEffect(sessaoCrash?.gameId) {
+    LaunchedEffect(sessaoCrash?.gameId, saqueCrashPendente) {
         val sessao = sessaoCrash ?: return@LaunchedEffect
+        if (saqueCrashPendente) return@LaunchedEffect
         while (true) {
             val elapsedMs = (System.currentTimeMillis() - sessao.iniciadoEmMs).coerceAtLeast(0L)
             crashBps = (100 * exp(elapsedMs / 5_000.0)).toInt().coerceIn(100, 1_000_000)
@@ -266,9 +268,11 @@ fun TelaJogos(
                     },
                     onSacar = {
                         val session = sessaoCrash ?: return@CrashJogo
+                        saqueCrashPendente = true
                         ocupado = true
                         onSacarCrash(session.gameId, UUID.randomUUID().toString()) { result, error ->
                             ocupado = false
+                            saqueCrashPendente = false
                             atrasoSaldo = 0L
                             sessaoCrash = null
                             if (error != null || result == null) {
