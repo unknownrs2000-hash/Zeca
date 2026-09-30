@@ -1453,6 +1453,7 @@ private fun BolhaMensagem(
     onResponder: () -> Unit,
     onIrParaOriginal: (String) -> Unit,
 ) {
+    val contexto = LocalContext.current
     var arraste by remember { mutableStateOf(0f) }
     val limite = with(LocalDensity.current) { 64.dp.toPx() }
     val responder by rememberUpdatedState(onResponder)
@@ -1595,6 +1596,29 @@ private fun BolhaMensagem(
                                 contentDescription = "Código de pagamento ${formatarReais(cobranca.valorCentavos)}",
                                 modifier = Modifier.align(Alignment.CenterHorizontally).size(176.dp),
                             )
+                        }
+                        Text("CÓDIGO DE PAGAMENTO", color = Color.White.copy(alpha = 0.55f), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color.Black.copy(alpha = 0.2f))
+                                .padding(start = 9.dp, end = 2.dp, top = 4.dp, bottom = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                cobranca.uri,
+                                modifier = Modifier.weight(1f),
+                                color = Color.White.copy(alpha = 0.86f),
+                                fontSize = 10.sp,
+                                maxLines = 4,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            IconButton(onClick = {
+                                copiarTexto(contexto, cobranca.uri)
+                            }) {
+                                Icon(Icons.Filled.ContentCopy, contentDescription = "Copiar código de pagamento", tint = Cores.Turquesa)
+                            }
                         }
                         Text(
                             "Escaneie pela Carteira para transferir no Zeca. Não é um Pix bancário.",

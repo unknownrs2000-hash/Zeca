@@ -79,6 +79,7 @@ fun TelaJogos(
     var numeroDado by rememberSaveable { mutableStateOf("1") }
     var paridadeDado by rememberSaveable { mutableStateOf("Par") }
     var casaMinas by rememberSaveable { mutableStateOf("1") }
+    var cantoFutebol by rememberSaveable { mutableStateOf("Centro") }
     var resultado by rememberSaveable { mutableStateOf("Escolha um jogo para começar") }
     var mensagem by rememberSaveable { mutableStateOf("") }
     var ocupado by rememberSaveable { mutableStateOf(false) }
@@ -170,7 +171,7 @@ fun TelaJogos(
 
         JogosPainel {
             SeletorJogos(
-                listOf("Slots", "Roleta", "Crash", "Blackjack", "Cara ou coroa", "Dado", "Par ou ímpar", "Minas", "Raspadinha"),
+                listOf("Slots", "Roleta", "Crash", "Blackjack", "Cara ou coroa", "Dado", "Par ou ímpar", "Minas", "Raspadinha", "Futebol"),
                 jogo,
             ) {
                 jogo = it
@@ -379,6 +380,7 @@ fun TelaJogos(
                         "Dado" -> listOf("1", "2", "3", "4", "5", "6")
                         "Par ou ímpar" -> listOf("Par", "Ímpar")
                         "Minas" -> emptyList()
+                        "Futebol" -> listOf("Esquerda", "Centro", "Direita")
                         else -> emptyList()
                     }
                     val selecionada = when (jogo) {
@@ -386,6 +388,7 @@ fun TelaJogos(
                         "Dado" -> numeroDado
                         "Par ou ímpar" -> paridadeDado
                         "Minas" -> casaMinas
+                        "Futebol" -> cantoFutebol
                         else -> ""
                     }
                     val regras = when (jogo) {
@@ -393,6 +396,7 @@ fun TelaJogos(
                         "Dado" -> "Adivinhe o resultado de 1 a 6. Acerto paga 5,50x."
                         "Par ou ímpar" -> "Escolha a paridade do dado. Acerto paga 1,90x."
                         "Minas" -> "Escolha uma casa entre cinco. Quatro são seguras e pagam 1,18x."
+                        "Futebol" -> "Escolha um canto. Se o goleiro pular para outro lado, é gol e paga 1,40x."
                         else -> "Três estrelas pagam 20x, sinos 4x e cerejas 2x."
                     }
                     val gameId = when (jogo) {
@@ -400,6 +404,7 @@ fun TelaJogos(
                         "Dado" -> "dice"
                         "Par ou ímpar" -> "parity"
                         "Minas" -> "mines"
+                        "Futebol" -> "football"
                         else -> "scratch"
                     }
                     val selecaoServidor = when (jogo) {
@@ -407,6 +412,11 @@ fun TelaJogos(
                         "Dado" -> numeroDado
                         "Par ou ímpar" -> if (paridadeDado == "Par") "even" else "odd"
                         "Minas" -> casaMinas
+                        "Futebol" -> when (cantoFutebol) {
+                            "Esquerda" -> "left"
+                            "Direita" -> "right"
+                            else -> "center"
+                        }
                         else -> ""
                     }
                     MiniGameCard(
@@ -420,6 +430,7 @@ fun TelaJogos(
                                 "Dado" -> numeroDado = escolha
                                 "Par ou ímpar" -> paridadeDado = escolha
                                 "Minas" -> casaMinas = escolha
+                                "Futebol" -> cantoFutebol = escolha
                             }
                             resultado = "Escolha um jogo para começar"
                             lucroUltimo = 0L
@@ -457,6 +468,7 @@ private fun MiniGameCard(
         "Dado" -> Color(0xFF64D6C2)
         "Par ou ímpar" -> Color(0xFF83D68A)
         "Minas" -> Color(0xFFFF7C83)
+        "Futebol" -> Color(0xFF64D98A)
         else -> Color(0xFFFFA45B)
     }
     var vitoria by remember { mutableStateOf(false) }
@@ -604,6 +616,65 @@ private fun MiniGameCard(
                                     }
                                 }
                             }
+                        }
+                    }
+                    "Futebol" -> {
+                        val cantoChutado = Regex("Chute (Esquerda|Centro|Direita)").find(resultado)?.groupValues?.getOrNull(1)
+                        val cantoGoleiro = Regex("goleiro (Esquerda|Centro|Direita)").find(resultado)?.groupValues?.getOrNull(1)
+                            ?: if (resultado == "Escolha um jogo para começar") "Centro" else null
+                        val foiGol = resultado.endsWith("GOL")
+                        Canvas(Modifier.fillMaxSize().padding(12.dp)) {
+                            val linhas = Color.White.copy(alpha = 0.38f)
+                            val espessura = 1.5.dp.toPx()
+                            drawRect(linhas, style = androidx.compose.ui.graphics.drawscope.Stroke(espessura))
+                            drawLine(linhas, Offset(0f, size.height / 2), Offset(size.width, size.height / 2), espessura)
+                            drawCircle(linhas, radius = size.width * 0.12f, center = Offset(size.width / 2, size.height / 2), style = androidx.compose.ui.graphics.drawscope.Stroke(espessura))
+                            val goalWidth = size.width * 0.42f
+                            drawRect(
+                                linhas,
+                                topLeft = Offset((size.width - goalWidth) / 2, 0f),
+                                size = androidx.compose.ui.geometry.Size(goalWidth, size.height * 0.27f),
+                                style = androidx.compose.ui.graphics.drawscope.Stroke(espessura),
+                            )
+                            repeat(5) { line ->
+                                val x = (size.width - goalWidth) / 2 + goalWidth * line / 4f
+                                drawLine(linhas.copy(alpha = 0.22f), Offset(x, 0f), Offset(x, size.height * 0.27f), espessura * 0.6f)
+                            }
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            listOf("Esquerda", "Centro", "Direita").forEach { canto ->
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(17.dp),
+                                ) {
+                                    Text(if (canto == cantoGoleiro) "🧤" else "", fontSize = 24.sp)
+                                    Text(
+                                        when {
+                                            canto == cantoChutado -> "⚽"
+                                            canto == selecionada && cantoChutado == null -> "➤"
+                                            else -> "·"
+                                        },
+                                        color = if (canto == selecionada) accent else Color.White.copy(alpha = 0.65f),
+                                        fontSize = 25.sp,
+                                        fontWeight = FontWeight.Black,
+                                    )
+                                    Text(canto.uppercase(), color = Color.White.copy(alpha = 0.62f), fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                        if (cantoChutado != null) {
+                            Text(
+                                if (foiGol) "GOL!" else "DEFESA DO GOLEIRO",
+                                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 5.dp),
+                                color = if (foiGol) Color(0xFFB7FFCB) else Color(0xFFFFD0A6),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Black,
+                            )
                         }
                     }
                     else -> {

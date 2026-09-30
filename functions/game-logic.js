@@ -105,6 +105,24 @@ function scratchCardResult(wagerCents, secureRandomInt = randomInt) {
   };
 }
 
+function footballShotResult(selection, wagerCents, secureRandomInt = randomInt) {
+  const corners = ["left", "center", "right"];
+  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER) || !corners.includes(selection)) {
+    throw new RangeError("Invalid football wager.");
+  }
+  const goalkeeper = corners[secureRandomInt(corners.length)];
+  const won = selection !== goalkeeper;
+  const labels = { left: "Esquerda", center: "Centro", right: "Direita" };
+  return {
+    displayText: `Chute ${labels[selection]} · goleiro ${labels[goalkeeper]} · ${won ? "GOL" : "DEFENDEU"}`,
+    shot: selection,
+    goalkeeper,
+    won,
+    payoutCents: won ? Math.floor(wagerCents * 140 / 100) : 0,
+    multiplier: won ? 140 : 0,
+  };
+}
+
 function rouletteResult(betType, selection, number, wagerCents) {
   if (!Number.isInteger(number) || number < 0 || number > 36) {
     throw new RangeError("Roulette number must be between 0 and 36.");
@@ -203,6 +221,7 @@ module.exports = {
   crashPointBasisPoints,
   createShuffledDeck,
   diceGuessResult,
+  footballShotResult,
   isBlackjack,
   minesPickResult,
   parityDiceResult,

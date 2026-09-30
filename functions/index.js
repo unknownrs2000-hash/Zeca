@@ -12,6 +12,7 @@ const {
   crashPointBasisPoints,
   createShuffledDeck,
   diceGuessResult,
+  footballShotResult,
   isBlackjack,
   minesPickResult,
   parityDiceResult,
@@ -420,7 +421,7 @@ exports.playGame = onCall(async (request) => {
   if (!validateWager(amountCents, MAX_TRANSFER_CENTS)) {
     throw new HttpsError("invalid-argument", "Valor da aposta inválido.");
   }
-  if (!new Set(["slots", "roulette", "coin", "dice", "parity", "mines", "scratch"]).has(game)
+  if (!new Set(["slots", "roulette", "coin", "dice", "parity", "mines", "scratch", "football"]).has(game)
       || typeof requestId !== "string"
       || !/^[a-f0-9-]{36}$/i.test(requestId)) {
     throw new HttpsError("invalid-argument", "Jogo ou identificador inválido.");
@@ -476,6 +477,7 @@ exports.playGame = onCall(async (request) => {
         else if (game === "dice") result = diceGuessResult(request.data?.selection, amountCents);
         else if (game === "parity") result = parityDiceResult(request.data?.selection, amountCents);
         else if (game === "mines") result = minesPickResult(request.data?.selection, amountCents);
+        else if (game === "football") result = footballShotResult(request.data?.selection, amountCents);
         else result = scratchCardResult(amountCents);
         returnedCents = result.payoutCents;
       } catch {
@@ -501,6 +503,7 @@ exports.playGame = onCall(async (request) => {
       parity: "Par ou ímpar",
       mines: "Minas",
       scratch: "Raspadinha",
+      football: "Futebol",
     };
     const description = game === "slots"
       ? `Slots · ${result.reels.join(" ")}`

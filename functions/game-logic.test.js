@@ -9,6 +9,7 @@ const {
   crashPointBasisPoints,
   createShuffledDeck,
   diceGuessResult,
+  footballShotResult,
   rouletteResult,
   settleBlackjack,
   minesPickResult,
@@ -94,4 +95,16 @@ test("mines and scratch cards pay only their predefined winning outcomes", () =>
   assert.equal(scratchCardResult(1_000, () => 100).payoutCents, 2_000);
   assert.equal(scratchCardResult(1_000, () => 320).payoutCents, 0);
   assert.throws(() => minesPickResult("6", 1_000, () => 0), RangeError);
+});
+
+test("football shots score past the server-selected goalkeeper and pay 1.40x", () => {
+  const goal = footballShotResult("left", 1_000, () => 1);
+  assert.equal(goal.goalkeeper, "center");
+  assert.equal(goal.won, true);
+  assert.equal(goal.payoutCents, 1_400);
+
+  const saved = footballShotResult("right", 1_000, () => 2);
+  assert.equal(saved.won, false);
+  assert.equal(saved.payoutCents, 0);
+  assert.throws(() => footballShotResult("top", 1_000, () => 0), RangeError);
 });
