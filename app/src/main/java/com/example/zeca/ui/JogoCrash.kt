@@ -136,7 +136,7 @@ fun CrashJogo(
                     Text("Ganho atual ${formatarReais(potencial)}", color = cor, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
                 BotaoJogo(
-                    texto = if (carregando) "Aguardando..." else "Retirar · ${formatarReais(potencial)}",
+                    texto = if (carregando) "Parando..." else "Retirar · ${formatarReais(potencial)}",
                     onClick = onSacar,
                     enabled = !carregando && multiplicadorBps > 100,
                     cor = cor,

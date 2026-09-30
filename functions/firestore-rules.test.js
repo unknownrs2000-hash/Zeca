@@ -207,6 +207,35 @@ test("allows an authenticated listener before a direct chat exists, then protect
   await assertSucceeds(getDoc(messagePath(member)));
 });
 
+test("allows only the message author to edit text within the chat limit", async () => {
+  const authorUid = "edit-message-author";
+  const otherUid = "edit-message-other";
+  const outsiderUid = "edit-message-outsider";
+  const participantUids = [authorUid, otherUid].sort();
+  const chatId = participantUids.join("_");
+  const messageId = "edit-message-0001";
+  await seedPlayer(authorUid);
+  await seedPlayer(otherUid);
+  await environment.withSecurityRulesDisabled(async (context) => {
+    const database = context.firestore();
+    await database.doc(`chats/${chatId}`).set({ participantUids, type: "direct" });
+    await database.doc(`chats/${chatId}/messages/${messageId}`).set({
+      senderUid: authorUid,
+      text: "Original",
+      createdAt: new Date(),
+    });
+  });
+
+  const author = environment.authenticatedContext(authorUid).firestore();
+  const other = environment.authenticatedContext(otherUid).firestore();
+  const outsider = environment.authenticatedContext(outsiderUid).firestore();
+  const messageRef = (database) => doc(database, "chats", chatId, "messages", messageId);
+  await assertSucceeds(updateDoc(messageRef(author), { text: "Corrigida", editedAt: serverTimestamp() }));
+  await assertFails(updateDoc(messageRef(other), { text: "Alteração alheia", editedAt: serverTimestamp() }));
+  await assertFails(updateDoc(messageRef(outsider), { text: "Invasão", editedAt: serverTimestamp() }));
+  await assertFails(updateDoc(messageRef(author), { text: "x".repeat(501), editedAt: serverTimestamp() }));
+});
+
 test("allows a new account to create an incomplete profile before choosing its username", async () => {
   const uid = "new-profile-user";
   const database = environment.authenticatedContext(uid).firestore();

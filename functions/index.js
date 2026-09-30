@@ -657,7 +657,6 @@ exports.cashOutCrash = onCall(async (request) => {
 
     const game = gameSnapshot.data();
     const profile = userSnapshot.data();
-    enforceGameCooldown(profile, nowMs);
     const elapsedMs = Math.max(0, nowMs - game.startedAtMs);
     const multiplierBps = crashMultiplierBasisPoints(elapsedMs);
     const crashed = multiplierBps >= game.crashAtBps;
@@ -1273,6 +1272,41 @@ exports.renameChatFlame = onCall(async (request) => {
     transaction.update(chatRef, { streakName: name });
   });
   return { ok: true, name };
+});
+
+exports.editChatMessage = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const chatId = request.data?.chatId;
+  const messageId = request.data?.messageId;
+  const text = typeof request.data?.text === "string" ? request.data.text.trim() : "";
+  if (typeof chatId !== "string" || !/^[a-z0-9_-]{3,160}$/i.test(chatId)
+      || typeof messageId !== "string" || !/^[a-f0-9-]{36}$/i.test(messageId)
+      || text.length < 1 || text.length > 500) {
+    throw new HttpsError("invalid-argument", "Mensagem ou identificador inválido.");
+  }
+
+  const chatRef = database.collection("chats").doc(chatId);
+  const messageRef = chatRef.collection("messages").doc(messageId);
+  await database.runTransaction(async (transaction) => {
+    const [chatSnapshot, messageSnapshot] = await Promise.all([
+      transaction.get(chatRef),
+      transaction.get(messageRef),
+    ]);
+    if (!chatSnapshot.exists || !chatSnapshot.get("participantUids")?.includes(uid)
+        || !messageSnapshot.exists || messageSnapshot.get("senderUid") !== uid) {
+      throw new HttpsError("permission-denied", "Só é possível editar uma mensagem sua nesta conversa.");
+    }
+    if (messageSnapshot.get("deletedForAll") === true) {
+      throw new HttpsError("failed-precondition", "Uma mensagem apagada não pode ser editada.");
+    }
+
+    const editedAt = FieldValue.serverTimestamp();
+    transaction.update(messageRef, { text, editedAt });
+    if (chatSnapshot.get("lastMessageId") === messageId) {
+      transaction.update(chatRef, { lastMessage: text, lastMessageAt: editedAt });
+    }
+  });
+  return { ok: true };
 });
 
 exports.sendChatMessage = onCall(async (request) => {

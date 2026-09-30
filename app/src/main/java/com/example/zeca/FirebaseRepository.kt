@@ -56,6 +56,7 @@ data class MensagemChat(
     val respostaTexto: String = "",
     val apagadaParaTodos: Boolean = false,
     val encaminhada: Boolean = false,
+    val editada: Boolean = false,
     val usernameAutor: String = "",
     val avatarUrlAutor: String = "",
     val avatarItensAutor: List<String> = emptyList(),
@@ -312,6 +313,7 @@ object FirebaseRepository {
                     respostaTexto = data["replyToText"] as? String ?: "",
                     apagadaParaTodos = data["deletedForAll"] as? Boolean ?: false,
                     encaminhada = data["forwarded"] as? Boolean ?: false,
+                    editada = data["editedAt"] != null,
                     usernameAutor = data["senderUsername"] as? String ?: "",
                     avatarUrlAutor = data["senderAvatarUrl"] as? String ?: "",
                     avatarItensAutor = (data["senderAvatarItems"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
@@ -449,6 +451,18 @@ object FirebaseRepository {
             .update(mapOf("deletedForAll" to true, "text" to ""))
             .addOnSuccessListener { callback(null) }
             .addOnFailureListener { callback(erroParaUsuario(it)) }
+    }
+
+    fun editarMensagemChat(chatId: String, mensagemId: String, texto: String, callback: (Exception?) -> Unit) {
+        val textoEditado = texto.trim()
+        if (textoEditado.isEmpty() || textoEditado.length > 500) {
+            callback(IllegalArgumentException("A mensagem deve ter entre 1 e 500 caracteres."))
+            return
+        }
+        chamarFunction(
+            "editChatMessage",
+            mapOf("chatId" to chatId, "messageId" to mensagemId, "text" to textoEditado),
+        ) { _, erro -> callback(erro) }
     }
 
     fun observarMovimentos(uid: String, callback: (List<Movimento>, Boolean) -> Unit): ListenerRegistration =

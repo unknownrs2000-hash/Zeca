@@ -313,6 +313,7 @@ fun TelaJogos(
                     onSacar = {
                         val session = sessaoCrash ?: return@CrashJogo
                         saqueCrashPendente = true
+                        fimCrash = "retirando"
                         ocupado = true
                         onSacarCrash(session.gameId, UUID.randomUUID().toString()) { result, error ->
                             ocupado = false
@@ -320,6 +321,7 @@ fun TelaJogos(
                             atrasoSaldo = 0L
                             sessaoCrash = null
                             if (error != null || result == null) {
+                                fimCrash = null
                                 mensagem = error?.localizedMessage ?: "Não foi possível retirar."
                             } else {
                                 crashBps = result.multiplicadorBps

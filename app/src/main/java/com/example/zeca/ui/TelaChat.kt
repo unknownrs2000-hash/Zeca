@@ -54,6 +54,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.Person
@@ -143,6 +144,7 @@ fun TelaChat(
     onRenomearFoguinho: (String, String, (Exception?) -> Unit) -> Unit,
     onApagarParaMim: (String, String, (Exception?) -> Unit) -> Unit,
     onApagarParaTodos: (String, String, (Exception?) -> Unit) -> Unit,
+    onEditarMensagem: (String, String, String, (Exception?) -> Unit) -> Unit,
     onBuscarPerfil: (String, (PerfilPublico?, Exception?) -> Unit) -> Unit,
 ) {
     var modo by rememberSaveable { mutableStateOf("Global") }
@@ -359,6 +361,8 @@ fun TelaChat(
                     Text("Crie um grupo para conversar e manter um foguinho coletivo.", color = Color.White.copy(alpha = 0.62f), fontSize = 13.sp)
                 } else {
                     grupos.forEach { grupo ->
+                            val diasAtivos = diasFoguinhoAtivos(grupo)
+                            val nivelAtivo = if (diasAtivos == grupo.diasFoguinho) grupo.nivelFoguinho else 0
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -380,8 +384,8 @@ fun TelaChat(
                                     overflow = TextOverflow.Ellipsis,
                                 )
                             }
-                            Icon(Icons.Filled.LocalFireDepartment, contentDescription = "${grupo.diasFoguinho} dias de sequência", tint = corFoguinho(grupo.nivelFoguinho))
-                            Text(grupo.diasFoguinho.toString(), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            Icon(Icons.Filled.LocalFireDepartment, contentDescription = "$diasAtivos dias de sequência", tint = corFoguinho(nivelAtivo))
+                            Text(diasAtivos.toString(), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             IconButton(onClick = { abrirConfiguracoesGrupo(grupo) }) {
                                 Icon(Icons.Filled.Settings, contentDescription = "Configurações de ${grupo.nome}", tint = Color.White.copy(alpha = 0.7f))
                             }
@@ -443,6 +447,11 @@ fun TelaChat(
                             if (e != null) erro = e.localizedMessage ?: "Não foi possível apagar a mensagem."
                         }
                     }
+                },
+                onEditarMensagem = { mensagemId, texto, concluir ->
+                    val idConversa = chatId
+                    if (idConversa == null) concluir(IllegalStateException("Conversa não encontrada."))
+                    else onEditarMensagem(idConversa, mensagemId, texto, concluir)
                 },
                 cabecalho = {
                     if (emConversa) {
@@ -1115,6 +1124,7 @@ private fun TelaConversa(
     onPerfil: (String) -> Unit,
     onApagarParaMim: (String) -> Unit,
     onApagarParaTodos: (String) -> Unit,
+    onEditarMensagem: (String, String, (Exception?) -> Unit) -> Unit,
     cabecalho: @Composable ColumnScope.() -> Unit,
 ) {
     val contexto = LocalContext.current
@@ -1127,6 +1137,9 @@ private fun TelaConversa(
     var respondendo by remember { mutableStateOf<MensagemChat?>(null) }
     var menu by remember { mutableStateOf<MensagemChat?>(null) }
     var apagando by remember { mutableStateOf<MensagemChat?>(null) }
+    var mensagemEditando by remember { mutableStateOf<MensagemChat?>(null) }
+    var salvandoEdicao by remember { mutableStateOf(false) }
+    var erroEdicao by rememberSaveable { mutableStateOf("") }
     var encaminhando by remember { mutableStateOf<MensagemChat?>(null) }
     var cobrancaAberta by rememberSaveable { mutableStateOf(false) }
     var valorCobranca by rememberSaveable { mutableStateOf("") }
@@ -1380,6 +1393,9 @@ private fun TelaConversa(
             onEncaminhar = { encaminhando = alvo; menu = null },
             onPerfil = if (!alvo.minha) ({ onPerfil(alvo.autorUid); menu = null }) else null,
             onApagar = { apagando = alvo; menu = null },
+            onEditar = if (alvo.minha && !alvo.apagadaParaTodos) {
+                { mensagemEditando = alvo; erroEdicao = ""; menu = null }
+            } else null,
         )
     }
 
@@ -1404,6 +1420,24 @@ private fun TelaConversa(
             onParaMim = { onApagarParaMim(alvo.id); apagando = null },
             onParaTodos = { onApagarParaTodos(alvo.id); apagando = null },
             onCancelar = { apagando = null },
+        )
+    }
+
+    mensagemEditando?.let { alvo ->
+        DialogoEditarMensagem(
+            mensagem = alvo,
+            salvando = salvandoEdicao,
+            erro = erroEdicao,
+            onCancelar = { if (!salvandoEdicao) mensagemEditando = null },
+            onSalvar = { texto ->
+                salvandoEdicao = true
+                erroEdicao = ""
+                onEditarMensagem(alvo.id, texto) { error ->
+                    salvandoEdicao = false
+                    if (error == null) mensagemEditando = null
+                    else erroEdicao = error.localizedMessage ?: "Não foi possível editar a mensagem."
+                }
+            },
         )
     }
 }
@@ -1570,13 +1604,19 @@ private fun BolhaMensagem(
                         )
                     }
                 }
-                if (mensagem.enviadaEmMs > 0) {
-                    Text(
-                        SimpleDateFormat("HH:mm", Locale.forLanguageTag("pt-BR")).format(Date(mensagem.enviadaEmMs)),
-                        color = Color.White.copy(alpha = 0.48f),
-                        fontSize = 10.sp,
-                        modifier = Modifier.align(Alignment.End),
-                    )
+                if (mensagem.editada || mensagem.enviadaEmMs > 0) {
+                    Row(modifier = Modifier.align(Alignment.End), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        if (mensagem.editada) {
+                            Text("editada", color = Color.White.copy(alpha = 0.48f), fontSize = 10.sp)
+                        }
+                        if (mensagem.enviadaEmMs > 0) {
+                            Text(
+                                SimpleDateFormat("HH:mm", Locale.forLanguageTag("pt-BR")).format(Date(mensagem.enviadaEmMs)),
+                                color = Color.White.copy(alpha = 0.48f),
+                                fontSize = 10.sp,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -1637,6 +1677,7 @@ private fun MenuMensagem(
     onEncaminhar: () -> Unit,
     onPerfil: (() -> Unit)?,
     onApagar: () -> Unit,
+    onEditar: (() -> Unit)?,
 ) {
     Dialog(onDismissRequest = onDispensar) {
         Column(
@@ -1660,6 +1701,7 @@ private fun MenuMensagem(
                 AcaoMenu(Icons.Filled.ContentCopy, "Copiar", onCopiar)
                 AcaoMenu(Icons.Filled.Share, "Compartilhar", onCompartilhar)
                 if (onPerfil != null) AcaoMenu(Icons.Filled.Person, "Ver perfil", onPerfil)
+                if (onEditar != null) AcaoMenu(Icons.Filled.Edit, "Editar mensagem", onEditar)
             }
             AcaoMenu(Icons.Filled.Delete, "Apagar", onApagar, Color(0xFFFF6879))
         }
@@ -1708,6 +1750,44 @@ private fun DialogoApagar(
                 TextButton(onClick = onParaMim) { Text("Apagar para mim", color = Color(0xFFFF6879)) }
                 TextButton(onClick = onCancelar) { Text("Cancelar") }
             }
+        },
+    )
+}
+
+@Composable
+private fun DialogoEditarMensagem(
+    mensagem: MensagemChat,
+    salvando: Boolean,
+    erro: String,
+    onCancelar: () -> Unit,
+    onSalvar: (String) -> Unit,
+) {
+    var texto by rememberSaveable(mensagem.id) { mutableStateOf(mensagem.texto) }
+    AlertDialog(
+        onDismissRequest = onCancelar,
+        containerColor = Color(0xFF1A2126),
+        title = { Text("Editar mensagem", color = Color.White, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = texto,
+                    onValueChange = { texto = it.take(500) },
+                    modifier = Modifier.fillMaxWidth(),
+                    maxLines = 5,
+                    enabled = !salvando,
+                    supportingText = { Text("${texto.length}/500") },
+                )
+                if (erro.isNotBlank()) Text(erro, color = Color(0xFFFF8790), fontSize = 12.sp)
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onSalvar(texto.trim()) },
+                enabled = texto.trim().isNotEmpty() && !salvando,
+            ) { Text(if (salvando) "Salvando..." else "Salvar", color = Cores.Verde) }
+        },
+        dismissButton = {
+            TextButton(onClick = onCancelar, enabled = !salvando) { Text("Cancelar") }
         },
     )
 }

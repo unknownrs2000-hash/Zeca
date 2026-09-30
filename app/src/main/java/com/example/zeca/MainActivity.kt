@@ -413,6 +413,9 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                             onApagarParaTodos = { chatId, mensagemId, concluir ->
                                 FirebaseRepository.apagarMensagemParaTodos(chatId, mensagemId, concluir)
                             },
+                            onEditarMensagem = { chatId, mensagemId, texto, concluir ->
+                                FirebaseRepository.editarMensagemChat(chatId, mensagemId, texto, concluir)
+                            },
                             onBuscarPerfil = { uid, concluir ->
                                 FirebaseRepository.buscarPerfilPublico(uid, concluir)
                             },

@@ -211,7 +211,6 @@ service cloud.firestore {
           'displayName', 'balanceCents', 'level', 'avatarUrl', 'username',
           'avatarAsProfilePhoto', 'equippedAvatarItems'
         ])
-        && validDisplayName(request.resource.data.displayName)
         && request.resource.data.avatarUrl is string
         && request.resource.data.username is string
         && request.resource.data.avatarAsProfilePhoto is bool
@@ -347,6 +346,15 @@ service cloud.firestore {
           && (chatId == 'global'
             || request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participantUids)
           && (
+            (resource.data.senderUid == request.auth.uid
+              && resource.data.get('deletedForAll', false) != true
+              && request.resource.data.diff(resource.data).affectedKeys().hasAll(['text', 'editedAt'])
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'editedAt'])
+              && request.resource.data.text is string
+              && request.resource.data.text.size() >= 1
+              && request.resource.data.text.size() <= 500
+              && request.resource.data.editedAt == request.time)
+            ||
             (resource.data.senderUid == request.auth.uid
               && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deletedForAll', 'text'])
               && request.resource.data.deletedForAll == true
