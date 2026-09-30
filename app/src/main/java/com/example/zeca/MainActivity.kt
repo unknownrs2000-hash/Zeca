@@ -264,6 +264,10 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                                 vitorias = jogador.vitorias,
                                 avatarUrl = jogador.avatarUrl,
                                 inventario = jogador.inventario,
+                                molduraEquipada = jogador.molduraEquipada,
+                                onEscolherMoldura = { itemId, concluir ->
+                                    FirebaseRepository.equiparMoldura(itemId) { error -> concluir(error?.localizedMessage) }
+                                },
                                 onSalvarApelido = { nome, concluir ->
                                     FirebaseRepository.atualizarApelido(nome) { error -> concluir(error?.localizedMessage) }
                                 },

@@ -24,6 +24,7 @@ data class PerfilJogador(
     val inventario: List<String>,
     val ganhoTotalCentavos: Long,
     val perdaTotalCentavos: Long,
+    val molduraEquipada: String,
 )
 
 data class JogadorRanking(
@@ -79,6 +80,7 @@ data class PerfilPublico(
     val inventario: List<String>,
     val chavePix: String,
     val tipoChavePix: String,
+    val molduraEquipada: String,
 )
 
 data class ResultadoTransferencia(
@@ -468,6 +470,7 @@ object FirebaseRepository {
                     inventario = (it["inventory"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
                     chavePix = it["pixKey"] as? String ?: "",
                     tipoChavePix = it["pixKeyType"] as? String ?: "",
+                    molduraEquipada = it["equippedFrame"] as? String ?: "",
                 )
             }
             callback(perfil, erro)
@@ -659,6 +662,10 @@ object FirebaseRepository {
             .addOnFailureListener { callback(erroParaUsuario(it).localizedMessage ?: "Não foi possível concluir a compra.") }
     }
 
+    fun equiparMoldura(itemId: String, callback: (Exception?) -> Unit) {
+        chamarFunction("equipFrame", mapOf("itemId" to itemId)) { _, erro -> callback(erro) }
+    }
+
     fun sair() = auth.signOut()
 
     private fun chamarFunction(
@@ -770,6 +777,7 @@ object FirebaseRepository {
         inventario = (snapshot.get("inventory") as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
         ganhoTotalCentavos = snapshot.getLong("totalWonCents") ?: 0L,
         perdaTotalCentavos = snapshot.getLong("totalLostCents") ?: 0L,
+        molduraEquipada = snapshot.getString("equippedFrame") ?: "",
     )
 
     private fun toJogadorRanking(snapshot: DocumentSnapshot): JogadorRanking? {

@@ -299,15 +299,7 @@ internal fun TelaPerfilJogador(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(112.dp)
-                        .background(Cores.Verde.copy(alpha = 0.2f), CircleShape)
-                        .border(1.dp, Color.White.copy(alpha = 0.4f), CircleShape),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(jogador.apelido.take(1).uppercase(), color = Cores.Verde, fontSize = 48.sp, fontWeight = FontWeight.Black)
-                }
+                AvatarComMoldura(jogador.apelido.take(1).uppercase(), perfil?.molduraEquipada.orEmpty(), 112.dp)
                 Spacer(Modifier.height(6.dp))
                 Text(jogador.apelido, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Black)
                 Text("Nível ${perfil?.nivel ?: jogador.nivel}", color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp)
@@ -343,7 +335,7 @@ internal fun TelaPerfilJogador(
                         DadoJogador("Vitórias", perfil.vitorias.toString())
                     }
                     SecaoJogador("Coleção") {
-                        ItensColecao(perfil.inventario)
+                        ItensColecao(perfil.inventario, molduraEquipada = perfil.molduraEquipada)
                     }
                     if (onConversar != null) {
                         Button(onClick = onConversar, modifier = Modifier.fillMaxWidth()) { Text("Enviar mensagem") }

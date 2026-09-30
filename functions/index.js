@@ -912,6 +912,31 @@ exports.buyCosmetic = onCall(async (request) => {
   return response;
 });
 
+exports.equipFrame = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const itemId = request.data?.itemId;
+  if (typeof itemId !== "string" || itemId.length > 64) {
+    throw new HttpsError("invalid-argument", "Item inválido.");
+  }
+
+  const userRef = database.collection("users").doc(uid);
+  await database.runTransaction(async (transaction) => {
+    const userSnapshot = await transaction.get(userRef);
+    if (!userSnapshot.exists) {
+      throw new HttpsError("failed-precondition", "Perfil ainda não foi criado.");
+    }
+    if (itemId !== "") {
+      const inventory = Array.isArray(userSnapshot.data().inventory) ? userSnapshot.data().inventory : [];
+      if (!itemId.startsWith("frame_") || !COSMETICS[itemId] || !inventory.includes(itemId)) {
+        throw new HttpsError("failed-precondition", "Você não possui esta moldura.");
+      }
+    }
+    transaction.update(userRef, { equippedFrame: itemId });
+  });
+
+  return { ok: true, equippedFrame: itemId };
+});
+
 exports.getPlayerProfile = onCall(async (request) => {
   authenticatedUid(request);
   const targetUid = request.data?.uid;
@@ -942,6 +967,7 @@ exports.getPlayerProfile = onCall(async (request) => {
       : [],
     pixKey: typeof profile.pixKey === "string" ? profile.pixKey : "",
     pixKeyType: typeof profile.pixKeyType === "string" ? profile.pixKeyType : "",
+    equippedFrame: typeof profile.equippedFrame === "string" ? profile.equippedFrame : "",
   };
 });
 

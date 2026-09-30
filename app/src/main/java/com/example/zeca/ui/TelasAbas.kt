@@ -3,6 +3,7 @@ package com.example.zeca.ui
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,8 +25,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -45,6 +50,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.zeca.MensagemChat
@@ -284,22 +290,20 @@ fun TelaPerfil(
     vitorias: Int,
     avatarUrl: String,
     inventario: List<String>,
+    molduraEquipada: String,
+    onEscolherMoldura: (String, (String?) -> Unit) -> Unit,
     onSalvarApelido: (String, (String?) -> Unit) -> Unit,
     onAbrirLoja: () -> Unit,
     onSair: () -> Unit,
 ) {
     var apelidoEditavel by rememberSaveable { mutableStateOf(apelido) }
     var mensagemPerfil by rememberSaveable { mutableStateOf("") }
+    var mensagemMoldura by rememberSaveable { mutableStateOf("") }
     LaunchedEffect(apelido) { apelidoEditavel = apelido }
 
     TelaBase("Perfil", "Seu espaço no Zeca.") {
         GlassCard {
-            Box(
-                modifier = Modifier.size(72.dp).background(Cores.Verde.copy(alpha = 0.2f), CircleShape).border(1.dp, Color.White.copy(alpha = 0.4f), CircleShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(apelido.take(1).uppercase(), color = Cores.Verde, fontSize = 30.sp, fontWeight = FontWeight.Black)
-            }
+            AvatarComMoldura(apelido.take(1).uppercase(), molduraEquipada, 72.dp)
             OutlinedTextField(
                 value = apelidoEditavel,
                 onValueChange = { apelidoEditavel = it.take(24); mensagemPerfil = "" },
@@ -330,7 +334,15 @@ fun TelaPerfil(
         }
         GlassCard {
             Text("Coleção", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            ItensColecao(inventario)
+            ItensColecao(
+                inventario,
+                molduraEquipada = molduraEquipada,
+                onEscolherMoldura = { itemId ->
+                    mensagemMoldura = ""
+                    onEscolherMoldura(itemId) { erro -> if (erro != null) mensagemMoldura = erro }
+                },
+            )
+            if (mensagemMoldura.isNotBlank()) Text(mensagemMoldura, color = Cores.Laranja, fontSize = 12.sp)
         }
         Button(onClick = onAbrirLoja, modifier = Modifier.fillMaxWidth()) { Text("Abrir Loja") }
         TextButton(onClick = onSair, modifier = Modifier.fillMaxWidth()) { Text("Sair da conta") }
@@ -349,7 +361,9 @@ fun TelaLoja(
     var mensagemErro by rememberSaveable { mutableStateOf(false) }
     var itemEmCompra by rememberSaveable { mutableStateOf("") }
 
-    TelaBase("Loja", "Escolha um detalhe para o seu perfil.") {
+    BackHandler(onBack = onVoltar)
+
+    TelaBase("Loja", "Escolha um detalhe para o seu perfil.", onVoltar = onVoltar) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -447,7 +461,12 @@ fun TelaLoja(
 }
 
 @Composable
-private fun TelaBase(titulo: String, subtitulo: String, content: @Composable ColumnScope.() -> Unit) {
+private fun TelaBase(
+    titulo: String,
+    subtitulo: String,
+    onVoltar: (() -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -460,7 +479,16 @@ private fun TelaBase(titulo: String, subtitulo: String, content: @Composable Col
                 .padding(start = 20.dp, top = 30.dp, end = 20.dp, bottom = 118.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text(titulo, color = Color.White, fontSize = 29.sp, fontWeight = FontWeight.Black)
+            if (onVoltar != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onVoltar) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar", tint = Color.White)
+                    }
+                    Text(titulo, color = Color.White, fontSize = 29.sp, fontWeight = FontWeight.Black)
+                }
+            } else {
+                Text(titulo, color = Color.White, fontSize = 29.sp, fontWeight = FontWeight.Black)
+            }
             Text(subtitulo, color = Color.White.copy(alpha = 0.62f), fontSize = 13.sp)
             content()
         }
@@ -530,14 +558,50 @@ internal val catalogoLoja = listOf(
     Produto("title_milena", "Milena", "Um título de destaque para o seu perfil.", 1_100_000L, Color(0xFFEC407A), "☾"),
 )
 
+internal fun coresMoldura(id: String): List<Color>? = when (id) {
+    "frame_aurora" -> listOf(Cores.Turquesa, Color(0xFF7C4DFF), Color(0xFF3DDC97), Cores.Turquesa)
+    "frame_neon" -> listOf(Color(0xFFFF8290), Color(0xFFFF2D95), Color(0xFFFF8290))
+    "frame_gold" -> listOf(Color(0xFFFFD166), Color(0xFFFFF1B8), Color(0xFFFFB300), Color(0xFFFFD166))
+    "frame_emerald" -> listOf(Color(0xFF3DDC97), Color(0xFF0B8F5A), Color(0xFF3DDC97))
+    "frame_royal" -> listOf(Color(0xFFE040FB), Color(0xFF7C4DFF), Color(0xFFFFD166), Color(0xFFE040FB))
+    else -> null
+}
+
 @Composable
-internal fun ItensColecao(ids: List<String>) {
+internal fun AvatarComMoldura(inicial: String, moldura: String, tamanho: Dp, modifier: Modifier = Modifier) {
+    val cores = coresMoldura(moldura)
+    Box(
+        modifier = modifier
+            .size(tamanho + 16.dp)
+            .then(if (cores != null) Modifier.border(4.dp, Brush.sweepGradient(cores), CircleShape) else Modifier),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(tamanho)
+                .background(Cores.Verde.copy(alpha = 0.2f), CircleShape)
+                .border(1.dp, Color.White.copy(alpha = 0.4f), CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(inicial, color = Cores.Verde, fontSize = (tamanho.value * 0.42f).sp, fontWeight = FontWeight.Black)
+        }
+    }
+}
+
+@Composable
+internal fun ItensColecao(
+    ids: List<String>,
+    molduraEquipada: String = "",
+    onEscolherMoldura: ((String) -> Unit)? = null,
+) {
     val itens = ids.mapNotNull { id -> catalogoLoja.firstOrNull { it.id == id } }
     if (itens.isEmpty()) {
         Text("Nenhum item na coleção ainda.", color = Color.White.copy(alpha = 0.65f), fontSize = 13.sp)
     } else {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             itens.forEach { item ->
+                val ehMoldura = item.id.startsWith("frame_")
+                val emUso = ehMoldura && item.id == molduraEquipada
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -548,7 +612,27 @@ internal fun ItensColecao(ids: List<String>) {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(item.simbolo, color = item.cor, fontSize = 20.sp, fontWeight = FontWeight.Black)
-                    Text(item.nome, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    Text(item.nome, modifier = Modifier.weight(1f), color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    if (ehMoldura) {
+                        if (onEscolherMoldura != null) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (emUso) Color.White.copy(alpha = 0.16f) else Color.White)
+                                    .clickable { onEscolherMoldura(if (emUso) "" else item.id) }
+                                    .padding(horizontal = 12.dp, vertical = 7.dp),
+                            ) {
+                                Text(
+                                    if (emUso) "Em uso" else "Usar",
+                                    color = if (emUso) Color.White else Color(0xFF111418),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                        } else if (emUso) {
+                            Text("Em uso", color = item.cor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
             }
         }
