@@ -54,6 +54,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -104,6 +105,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.example.zeca.ConversaChat
 import com.example.zeca.FirebaseRepository
@@ -126,7 +128,8 @@ fun TelaChat(
     jogadores: List<JogadorRanking>,
     onEnviar: (String?, String?, String, String, RespostaChat?, (Exception?) -> Unit) -> Unit,
     onEncaminhar: (String?, String?, String, String, (Exception?) -> Unit) -> Unit,
-    onCriarGrupo: (String, List<String>, String, (String?, Exception?) -> Unit) -> Unit,
+    onCriarGrupo: (String, String, List<String>, String, String, String, (String?, Exception?) -> Unit) -> Unit,
+    onAtualizarGrupo: (String, String, String, String, String, (Exception?) -> Unit) -> Unit,
     onRenomearFoguinho: (String, String, (Exception?) -> Unit) -> Unit,
     onApagarParaMim: (String, String, (Exception?) -> Unit) -> Unit,
     onApagarParaTodos: (String, String, (Exception?) -> Unit) -> Unit,
@@ -146,16 +149,34 @@ fun TelaChat(
     var erroPerfil by remember { mutableStateOf("") }
     var criarGrupoAberto by remember { mutableStateOf(false) }
     var nomeGrupo by rememberSaveable { mutableStateOf("") }
+    var descricaoGrupo by rememberSaveable { mutableStateOf("") }
+    var editarGrupoPolicy by rememberSaveable { mutableStateOf("creator") }
+    var enviarGrupoPolicy by rememberSaveable { mutableStateOf("everyone") }
     val membrosGrupo = remember { mutableStateListOf<String>() }
     var criandoGrupo by remember { mutableStateOf(false) }
     var grupoErro by rememberSaveable { mutableStateOf("") }
     var editarFoguinho by remember { mutableStateOf(false) }
     var nomeFoguinhoEditavel by rememberSaveable { mutableStateOf("") }
     var salvandoFoguinho by remember { mutableStateOf(false) }
+    var grupoConfigId by rememberSaveable { mutableStateOf("") }
+    var nomeGrupoEditavel by rememberSaveable { mutableStateOf("") }
+    var descricaoGrupoEditavel by rememberSaveable { mutableStateOf("") }
+    var editarPolicyEditavel by rememberSaveable { mutableStateOf("creator") }
+    var enviarPolicyEditavel by rememberSaveable { mutableStateOf("everyone") }
+    var salvandoConfigGrupo by remember { mutableStateOf(false) }
     val destinatario = jogadores.firstOrNull { it.uid == destinatarioUid }
     val perfilJogador = jogadores.firstOrNull { it.uid == perfilUid }
         ?: perfilPublico?.takeIf { it.uid == perfilUid }?.let {
-            JogadorRanking(it.uid, it.apelido, it.saldoCentavos, it.nivel, it.avatarUrl)
+            JogadorRanking(
+                it.uid,
+                it.apelido,
+                it.saldoCentavos,
+                it.nivel,
+                it.avatarUrl,
+                it.username,
+                it.avatarItensEquipados,
+                it.avatarComoFotoPerfil,
+            )
         }
     val conversaGrupo = conversas.firstOrNull { it.id == grupoUid && it.tipo == "group" }
     val conversasDiretas = conversas.filter { it.tipo != "group" }
@@ -169,6 +190,15 @@ fun TelaChat(
         else -> null
     }
     val conversaSelecionada = conversaGrupo ?: conversas.firstOrNull { it.id == chatId }
+
+    fun abrirConfiguracoesGrupo(grupo: ConversaChat) {
+        grupoConfigId = grupo.id
+        nomeGrupoEditavel = grupo.nome
+        descricaoGrupoEditavel = grupo.descricao
+        editarPolicyEditavel = grupo.politicaEditar
+        enviarPolicyEditavel = grupo.politicaEnviar
+        grupoErro = ""
+    }
 
     BackHandler(enabled = perfilUid.isNotBlank() || emConversa) {
         if (perfilUid.isNotBlank()) {
@@ -288,6 +318,8 @@ fun TelaChat(
                             detalhe = conversa.ultimaMensagem,
                             hora = horaConversa(conversa.atualizadaEmMs),
                             avatarUrl = jogador?.avatarUrl.orEmpty(),
+                            avatarItems = jogador?.avatarItensEquipados.orEmpty(),
+                            avatarAsProfilePhoto = jogador?.avatarComoFotoPerfil == true,
                             onClick = { destinatarioUid = conversa.outroUid; erro = "" },
                             onPerfil = { perfilUid = conversa.outroUid },
                         )
@@ -302,6 +334,9 @@ fun TelaChat(
                     Text("Grupos", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
                     TextButton(onClick = {
                         nomeGrupo = ""
+                        descricaoGrupo = ""
+                        editarGrupoPolicy = "creator"
+                        enviarGrupoPolicy = "everyone"
                         membrosGrupo.clear()
                         grupoErro = ""
                         criarGrupoAberto = true
@@ -317,18 +352,26 @@ fun TelaChat(
                                 .clip(RoundedCornerShape(13.dp))
                                 .background(Color.White.copy(alpha = 0.07f))
                                 .border(1.dp, Color.White.copy(alpha = 0.13f), RoundedCornerShape(13.dp))
-                                .clickable { grupoUid = grupo.id; erro = "" }
                                 .padding(horizontal = 12.dp, vertical = 11.dp),
                             horizontalArrangement = Arrangement.spacedBy(11.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Icon(Icons.Filled.Groups, contentDescription = null, tint = Cores.Turquesa)
-                            Column(Modifier.weight(1f)) {
+                            Column(Modifier.weight(1f).clickable { grupoUid = grupo.id; erro = "" }) {
                                 Text(grupo.nome, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                Text("${grupo.participantes.size} pessoas · ${grupo.ultimaMensagem}", color = Color.White.copy(alpha = 0.62f), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    grupo.descricao.ifBlank { "${grupo.participantes.size} pessoas · ${grupo.ultimaMensagem}" },
+                                    color = Color.White.copy(alpha = 0.62f),
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
                             }
                             Icon(Icons.Filled.LocalFireDepartment, contentDescription = "${grupo.diasFoguinho} dias de sequência", tint = corFoguinho(grupo.nivelFoguinho))
                             Text(grupo.diasFoguinho.toString(), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            IconButton(onClick = { abrirConfiguracoesGrupo(grupo) }) {
+                                Icon(Icons.Filled.Settings, contentDescription = "Configurações de ${grupo.nome}", tint = Color.White.copy(alpha = 0.7f))
+                            }
                         }
                     }
                 }
@@ -345,6 +388,8 @@ fun TelaChat(
                             detalhe = "Nível ${jogador.nivel}",
                             hora = "",
                             avatarUrl = jogador.avatarUrl,
+                            avatarItems = jogador.avatarItensEquipados,
+                            avatarAsProfilePhoto = jogador.avatarComoFotoPerfil,
                             onClick = { destinatarioUid = jogador.uid; erro = "" },
                             onPerfil = { perfilUid = jogador.uid },
                         )
@@ -365,6 +410,7 @@ fun TelaChat(
                 rascunho = rascunho,
                 onRascunhoChange = { rascunho = it.take(500); erro = "" },
                 enviando = enviando,
+                podeEnviarMensagem = !emGrupo || conversaGrupo?.politicaEnviar != "creator" || conversaGrupo.criadoPorUid == uidAtual,
                 erro = erro,
                 onEnviar = enviarMensagem,
                 onPerfil = { perfilUid = it },
@@ -387,6 +433,8 @@ fun TelaChat(
                         CabecalhoConversa(
                             nome = if (emGrupo) conversaGrupo?.nome ?: "Grupo" else destinatario?.apelido ?: "Jogador",
                             avatarUrl = if (emGrupo) "" else destinatario?.avatarUrl.orEmpty(),
+                            avatarItems = destinatario?.avatarItensEquipados.orEmpty(),
+                            avatarAsProfilePhoto = destinatario?.avatarComoFotoPerfil == true,
                             detalhe = if (emGrupo) "${conversaGrupo?.participantes?.size ?: 0} pessoas" else destinatario?.let { "Nível ${it.nivel}" } ?: "",
                             onVoltar = { if (emGrupo) grupoUid = "" else destinatarioUid = ""; erro = "" },
                             onPerfil = { perfilUid = destinatarioUid },
@@ -419,27 +467,76 @@ fun TelaChat(
     }
 
     if (criarGrupoAberto) {
-        AlertDialog(
+        Dialog(
             onDismissRequest = { if (!criandoGrupo) criarGrupoAberto = false },
-            title = { Text("Criar grupo") },
-            text = {
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth(0.94f)
+                    .heightIn(max = 760.dp)
+                    .clip(RoundedCornerShape(26.dp))
+                    .background(Brush.verticalGradient(listOf(Color(0xFF20282C), Cores.Cartao, Cores.Fundo)))
+                    .border(1.dp, Color.White.copy(alpha = 0.17f), RoundedCornerShape(26.dp))
+                    .verticalScroll(rememberScrollState())
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Box(
+                        modifier = Modifier.size(48.dp).clip(CircleShape).background(Cores.Turquesa.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center,
+                    ) { Icon(Icons.Filled.Groups, contentDescription = null, tint = Cores.Turquesa, modifier = Modifier.size(26.dp)) }
+                    Column(Modifier.weight(1f)) {
+                        Text("NOVO ESPAÇO", color = Cores.Turquesa, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text("Criar grupo", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Black)
+                    }
+                    IconButton(onClick = { if (!criandoGrupo) criarGrupoAberto = false }) {
+                        Icon(Icons.Filled.Close, contentDescription = "Fechar", tint = Color.White.copy(alpha = 0.72f))
+                    }
+                }
+
+                Text("IDENTIDADE", color = Cores.Verde, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                OutlinedTextField(
+                    value = nomeGrupo,
+                    onValueChange = { nomeGrupo = it.take(32); grupoErro = "" },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Nome do grupo") },
+                    supportingText = { Text("2 a 32 caracteres") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                )
+                OutlinedTextField(
+                    value = descricaoGrupo,
+                    onValueChange = { descricaoGrupo = it.take(160) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Descrição") },
+                    placeholder = { Text("Sobre o que é este grupo?") },
+                    supportingText = { Text("${descricaoGrupo.length}/160") },
+                    maxLines = 3,
+                    shape = RoundedCornerShape(14.dp),
+                )
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("PARTICIPANTES", color = Cores.Verde, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text("${membrosGrupo.size} selecionados · até 19", color = Color.White.copy(alpha = 0.62f), fontSize = 12.sp)
+                    }
+                    Icon(Icons.Filled.Groups, contentDescription = null, tint = Cores.Turquesa)
+                }
                 Column(
-                    modifier = Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color.Black.copy(alpha = 0.16f))
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
                 ) {
-                    OutlinedTextField(
-                        value = nomeGrupo,
-                        onValueChange = { nomeGrupo = it.take(32); grupoErro = "" },
-                        label = { Text("Nome do grupo") },
-                        singleLine = true,
-                    )
-                    Text("Escolha de 1 a 19 pessoas. Todos precisam participar diariamente para manter a sequência.", fontSize = 12.sp)
                     jogadores.filter { it.uid != uidAtual }.forEach { jogador ->
                         Row(
                             modifier = Modifier.fillMaxWidth().clickable {
                                 if (jogador.uid in membrosGrupo) membrosGrupo.remove(jogador.uid)
                                 else if (membrosGrupo.size < 19) membrosGrupo.add(jogador.uid)
-                            },
+                            }.padding(vertical = 3.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Checkbox(
@@ -449,38 +546,193 @@ fun TelaChat(
                                     else membrosGrupo.remove(jogador.uid)
                                 },
                             )
-                            AvatarChat(jogador.apelido, 34.dp, photoUrl = jogador.avatarUrl)
+                            AvatarChat(
+                                jogador.apelido,
+                                36.dp,
+                                photoUrl = jogador.avatarUrl,
+                                avatarItems = jogador.avatarItensEquipados,
+                                avatarAsProfilePhoto = jogador.avatarComoFotoPerfil,
+                            )
                             Column(Modifier.padding(start = 10.dp)) {
-                                Text(jogador.apelido, color = Color.White, fontWeight = FontWeight.SemiBold)
-                                Text("@${jogador.username}", color = Color.White.copy(alpha = 0.58f), fontSize = 11.sp)
+                                Text(jogador.apelido, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                Text("@${jogador.username}", color = Color.White.copy(alpha = 0.56f), fontSize = 10.sp)
                             }
                         }
                     }
-                    if (grupoErro.isNotBlank()) Text(grupoErro, color = Cores.Laranja, fontSize = 12.sp)
                 }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        criandoGrupo = true
-                        grupoErro = ""
-                        onCriarGrupo(nomeGrupo.trim(), membrosGrupo.toList(), UUID.randomUUID().toString()) { novoGrupo, error ->
-                            criandoGrupo = false
-                            if (error != null || novoGrupo == null) {
-                                grupoErro = error?.localizedMessage ?: "Não foi possível criar o grupo."
-                            } else {
-                                criarGrupoAberto = false
-                                grupoUid = novoGrupo
+
+                Text("PERMISSÕES", color = Cores.Verde, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Column(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color.White.copy(alpha = 0.055f)).padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(11.dp),
+                ) {
+                    Text("Quem pode editar o grupo?", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    OpcoesChat(listOf("Criador", "Todos"), if (editarGrupoPolicy == "creator") "Criador" else "Todos") {
+                        editarGrupoPolicy = if (it == "Criador") "creator" else "members"
+                    }
+                    Text("Quem pode enviar mensagens?", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    OpcoesChat(listOf("Todos", "Criador"), if (enviarGrupoPolicy == "creator") "Criador" else "Todos") {
+                        enviarGrupoPolicy = if (it == "Criador") "creator" else "everyone"
+                    }
+                }
+                Text("A sequência diária avança quando todos os participantes enviam uma mensagem.", color = Color.White.copy(alpha = 0.58f), fontSize = 11.sp)
+                if (grupoErro.isNotBlank()) Text(grupoErro, color = Cores.Laranja, fontSize = 12.sp)
+
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    TextButton(
+                        onClick = { criarGrupoAberto = false },
+                        enabled = !criandoGrupo,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Cancelar", color = Color.White.copy(alpha = 0.75f)) }
+                    Button(
+                        onClick = {
+                            criandoGrupo = true
+                            grupoErro = ""
+                            onCriarGrupo(
+                                nomeGrupo.trim(),
+                                descricaoGrupo.trim(),
+                                membrosGrupo.toList(),
+                                editarGrupoPolicy,
+                                enviarGrupoPolicy,
+                                UUID.randomUUID().toString(),
+                            ) { novoGrupo, error ->
+                                criandoGrupo = false
+                                if (error != null || novoGrupo == null) {
+                                    grupoErro = error?.localizedMessage ?: "Não foi possível criar o grupo."
+                                } else {
+                                    criarGrupoAberto = false
+                                    grupoUid = novoGrupo
+                                }
+                            }
+                        },
+                        enabled = nomeGrupo.trim().length in 2..32 && membrosGrupo.isNotEmpty() && !criandoGrupo,
+                        modifier = Modifier.weight(1.3f),
+                    ) { Text(if (criandoGrupo) "Criando..." else "Criar grupo") }
+                }
+            }
+        }
+    }
+
+    val grupoEmConfiguracao = grupos.firstOrNull { it.id == grupoConfigId }
+    if (grupoEmConfiguracao != null) {
+        val podeEditarGrupo = grupoEmConfiguracao.criadoPorUid == uidAtual || grupoEmConfiguracao.politicaEditar == "members"
+        Dialog(
+            onDismissRequest = { if (!salvandoConfigGrupo) grupoConfigId = "" },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth(0.94f)
+                    .heightIn(max = 720.dp)
+                    .clip(RoundedCornerShape(26.dp))
+                    .background(Brush.verticalGradient(listOf(Color(0xFF20282C), Cores.Cartao, Cores.Fundo)))
+                    .border(1.dp, Color.White.copy(alpha = 0.17f), RoundedCornerShape(26.dp))
+                    .verticalScroll(rememberScrollState())
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(15.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Box(
+                        modifier = Modifier.size(46.dp).clip(CircleShape).background(Cores.Turquesa.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center,
+                    ) { Icon(Icons.Filled.Groups, contentDescription = null, tint = Cores.Turquesa, modifier = Modifier.size(24.dp)) }
+                    Column(Modifier.weight(1f)) {
+                        Text("CONFIGURAÇÕES", color = Cores.Turquesa, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text(grupoEmConfiguracao.nome, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    IconButton(onClick = { if (!salvandoConfigGrupo) grupoConfigId = "" }) {
+                        Icon(Icons.Filled.Close, contentDescription = "Fechar", tint = Color.White.copy(alpha = 0.72f))
+                    }
+                }
+                OutlinedTextField(
+                    value = nomeGrupoEditavel,
+                    onValueChange = { nomeGrupoEditavel = it.take(32); grupoErro = "" },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = podeEditarGrupo,
+                    label = { Text("Nome do grupo") },
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = descricaoGrupoEditavel,
+                    onValueChange = { descricaoGrupoEditavel = it.take(160); grupoErro = "" },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = podeEditarGrupo,
+                    label = { Text("Descrição") },
+                    supportingText = { Text("${descricaoGrupoEditavel.length}/160") },
+                    maxLines = 3,
+                )
+                Text("PARTICIPANTES · ${grupoEmConfiguracao.participantes.size}", color = Cores.Verde, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Column(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color.Black.copy(alpha = 0.16f)).padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(9.dp),
+                ) {
+                    grupoEmConfiguracao.participantes.forEach { uid ->
+                        val jogador = jogadores.firstOrNull { it.uid == uid }
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            AvatarChat(
+                                jogador?.apelido ?: "?",
+                                34.dp,
+                                photoUrl = jogador?.avatarUrl.orEmpty(),
+                                avatarItems = jogador?.avatarItensEquipados.orEmpty(),
+                                avatarAsProfilePhoto = jogador?.avatarComoFotoPerfil == true,
+                            )
+                            Column {
+                                Text(jogador?.apelido ?: "Participante", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    when (uid) {
+                                        grupoEmConfiguracao.criadoPorUid -> "Criador"
+                                        uidAtual -> "Você"
+                                        else -> jogador?.username?.let { "@$it" } ?: "Membro"
+                                    },
+                                    color = Color.White.copy(alpha = 0.58f),
+                                    fontSize = 10.sp,
+                                )
                             }
                         }
-                    },
-                    enabled = nomeGrupo.trim().length in 2..32 && membrosGrupo.isNotEmpty() && !criandoGrupo,
-                ) { Text(if (criandoGrupo) "Criando..." else "Criar") }
-            },
-            dismissButton = {
-                TextButton(onClick = { criarGrupoAberto = false }, enabled = !criandoGrupo) { Text("Cancelar") }
-            },
-        )
+                    }
+                }
+                Column(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color.White.copy(alpha = 0.055f)).padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(11.dp),
+                ) {
+                    Text("Quem pode editar informações?", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    OpcoesChat(listOf("Criador", "Todos"), if (editarPolicyEditavel == "creator") "Criador" else "Todos") {
+                        if (podeEditarGrupo) editarPolicyEditavel = if (it == "Criador") "creator" else "members"
+                    }
+                    Text("Quem pode enviar mensagens?", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    OpcoesChat(listOf("Todos", "Criador"), if (enviarPolicyEditavel == "creator") "Criador" else "Todos") {
+                        if (podeEditarGrupo) enviarPolicyEditavel = if (it == "Criador") "creator" else "everyone"
+                    }
+                }
+                if (!podeEditarGrupo) {
+                    Text("As informações deste grupo só podem ser alteradas pelo criador.", color = Cores.Laranja, fontSize = 12.sp)
+                }
+                if (grupoErro.isNotBlank()) Text(grupoErro, color = Cores.Laranja, fontSize = 12.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    TextButton(onClick = { grupoConfigId = "" }, modifier = Modifier.weight(1f)) {
+                        Text("Fechar", color = Color.White.copy(alpha = 0.75f))
+                    }
+                    Button(
+                        onClick = {
+                            salvandoConfigGrupo = true
+                            onAtualizarGrupo(
+                                grupoEmConfiguracao.id,
+                                nomeGrupoEditavel.trim(),
+                                descricaoGrupoEditavel.trim(),
+                                editarPolicyEditavel,
+                                enviarPolicyEditavel,
+                            ) { error ->
+                                salvandoConfigGrupo = false
+                                if (error == null) grupoConfigId = ""
+                                else grupoErro = error.localizedMessage ?: "Não foi possível atualizar o grupo."
+                            }
+                        },
+                        enabled = podeEditarGrupo && nomeGrupoEditavel.trim().length in 2..32 && !salvandoConfigGrupo,
+                        modifier = Modifier.weight(1.3f),
+                    ) { Text(if (salvandoConfigGrupo) "Salvando..." else "Salvar alterações") }
+                }
+            }
+        }
     }
 
     if (editarFoguinho && conversaSelecionada != null) {
@@ -581,7 +833,14 @@ private fun horaConversa(ms: Long): String {
 }
 
 @Composable
-private fun AvatarChat(nome: String, tamanho: Dp, modifier: Modifier = Modifier, photoUrl: String = "") {
+private fun AvatarChat(
+    nome: String,
+    tamanho: Dp,
+    modifier: Modifier = Modifier,
+    photoUrl: String = "",
+    avatarItems: List<String> = emptyList(),
+    avatarAsProfilePhoto: Boolean = false,
+) {
     val cor = CORES_AVATAR[(nome.hashCode() and Int.MAX_VALUE) % CORES_AVATAR.size]
     Box(
         modifier = Modifier
@@ -592,19 +851,15 @@ private fun AvatarChat(nome: String, tamanho: Dp, modifier: Modifier = Modifier,
             .border(1.dp, Color.White.copy(alpha = 0.25f), CircleShape),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            nome.trim().take(1).uppercase(),
-            color = Color.White,
-            fontSize = (tamanho.value * 0.42f).sp,
-            fontWeight = FontWeight.Black,
-        )
-        if (photoUrl.isNotBlank()) {
+        if (photoUrl.isNotBlank() && !avatarAsProfilePhoto) {
             AsyncImage(
                 model = photoUrl,
                 contentDescription = "Foto de $nome",
                 modifier = Modifier.fillMaxSize().clip(CircleShape),
                 contentScale = ContentScale.Crop,
             )
+        } else {
+            AvatarPersonagem(nome.trim().take(1).uppercase(), avatarItems, tamanho)
         }
     }
 }
@@ -614,6 +869,8 @@ private fun CabecalhoConversa(
     nome: String,
     detalhe: String,
     avatarUrl: String,
+    avatarItems: List<String>,
+    avatarAsProfilePhoto: Boolean,
     onVoltar: () -> Unit,
     onPerfil: () -> Unit,
 ) {
@@ -637,7 +894,13 @@ private fun CabecalhoConversa(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            AvatarChat(nome, 42.dp, photoUrl = avatarUrl)
+            AvatarChat(
+                nome,
+                42.dp,
+                photoUrl = avatarUrl,
+                avatarItems = avatarItems,
+                avatarAsProfilePhoto = avatarAsProfilePhoto,
+            )
             Column {
                 Text(nome, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
@@ -673,7 +936,13 @@ private fun PerfilChat(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                AvatarChat(jogador.apelido, 88.dp, photoUrl = jogador.avatarUrl)
+                AvatarChat(
+                    jogador.apelido,
+                    88.dp,
+                    photoUrl = jogador.avatarUrl,
+                    avatarItems = jogador.avatarItensEquipados,
+                    avatarAsProfilePhoto = jogador.avatarComoFotoPerfil,
+                )
                 Text(
                     jogador.apelido + if (ehVoce) " (você)" else "",
                     color = Color.White,
@@ -715,6 +984,8 @@ private fun LinhaJogador(
     detalhe: String,
     hora: String,
     avatarUrl: String = "",
+    avatarItems: List<String> = emptyList(),
+    avatarAsProfilePhoto: Boolean = false,
     onClick: () -> Unit,
     onPerfil: () -> Unit,
 ) {
@@ -728,7 +999,14 @@ private fun LinhaJogador(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AvatarChat(nome, 42.dp, Modifier.clickable(onClick = onPerfil), avatarUrl)
+        AvatarChat(
+            nome,
+            42.dp,
+            Modifier.clickable(onClick = onPerfil),
+            avatarUrl,
+            avatarItems,
+            avatarAsProfilePhoto,
+        )
         Column(modifier = Modifier.weight(1f)) {
             Text(nome, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
@@ -805,6 +1083,7 @@ private fun TelaConversa(
     rascunho: String,
     onRascunhoChange: (String) -> Unit,
     enviando: Boolean,
+    podeEnviarMensagem: Boolean,
     erro: String,
     onEnviar: (RespostaChat?, () -> Unit) -> Unit,
     onPerfil: (String) -> Unit,
@@ -824,7 +1103,7 @@ private fun TelaConversa(
     var apagando by remember { mutableStateOf<MensagemChat?>(null) }
     var encaminhando by remember { mutableStateOf<MensagemChat?>(null) }
     val invertida = remember(mensagens) { mensagens.asReversed() }
-    val podeEnviar = rascunho.isNotBlank() && !enviando
+    val podeEnviar = rascunho.isNotBlank() && !enviando && podeEnviarMensagem
 
     val fecharTeclado: () -> Unit = { foco.clearFocus() }
     val conexaoRolagem = remember {
@@ -931,7 +1210,8 @@ private fun TelaConversa(
                 modifier = Modifier
                     .weight(1f)
                     .focusRequester(campoFoco),
-                placeholder = { Text("Mensagem") },
+                enabled = podeEnviarMensagem,
+                placeholder = { Text(if (podeEnviarMensagem) "Mensagem" else "Só o criador pode enviar") },
                 shape = RoundedCornerShape(26.dp),
                 maxLines = 4,
                 keyboardOptions = KeyboardOptions(
@@ -1047,7 +1327,14 @@ private fun BolhaMensagem(
             verticalAlignment = Alignment.Bottom,
         ) {
             if (!mensagem.minha) {
-                AvatarChat(mensagem.autor, 32.dp, Modifier.clickable(onClick = onPerfil), avatarUrl)
+                AvatarChat(
+                    mensagem.autor,
+                    32.dp,
+                    Modifier.clickable(onClick = onPerfil),
+                    avatarUrl,
+                    mensagem.avatarItensAutor,
+                    mensagem.avatarComoFotoAutor,
+                )
                 Spacer(Modifier.width(8.dp))
             }
             Column(
@@ -1348,7 +1635,13 @@ private fun DialogoEncaminhar(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        AvatarChat(jogador.apelido, 40.dp, photoUrl = jogador.avatarUrl)
+                        AvatarChat(
+                            jogador.apelido,
+                            40.dp,
+                            photoUrl = jogador.avatarUrl,
+                            avatarItems = jogador.avatarItensEquipados,
+                            avatarAsProfilePhoto = jogador.avatarComoFotoPerfil,
+                        )
                         Column {
                             Text(
                                 jogador.apelido,

@@ -13,6 +13,7 @@ const PRODUCTS = {
   frame_aurora: { name: "Moldura Aurora", priceCents: 1_299 },
   title_lucky: { name: "Título: Sorte Grande", priceCents: 799 },
   frame_neon: { name: "Moldura Neon", priceCents: 1_999 },
+  avatar_hair_wave: { name: "Cabelo Ondulado", priceCents: 999 },
 };
 
 let environment;
@@ -45,6 +46,8 @@ async function seedPlayer(uid, balanceCents = 50_000) {
       balanceInitialized: true,
       level: 1,
       avatarUrl: "",
+      avatarAsProfilePhoto: false,
+      equippedAvatarItems: [],
       pixKey: "",
       pixKeyType: "",
       pixKeyHash: "",
@@ -58,6 +61,8 @@ async function seedPlayer(uid, balanceCents = 50_000) {
       balanceCents,
       level: 1,
       avatarUrl: "",
+      avatarAsProfilePhoto: false,
+      equippedAvatarItems: [],
     });
   });
 }
@@ -123,6 +128,8 @@ async function writePrivateMessage(senderUid, recipientUid, messageId, senderUid
       senderName: senderUid,
       senderUsername: senderUid,
       senderAvatarUrl: "",
+      senderAvatarItems: [],
+      senderAvatarAsProfilePhoto: false,
       text: "Olá",
       createdAt: serverTimestamp(),
     });
@@ -199,6 +206,8 @@ test("allows a new account to create an incomplete profile before choosing its u
       balanceInitialized: true,
       level: 1,
       avatarUrl: "",
+      avatarAsProfilePhoto: false,
+      equippedAvatarItems: [],
       pixKey: "",
       pixKeyType: "",
       pixKeyHash: "",
@@ -213,6 +222,8 @@ test("allows a new account to create an incomplete profile before choosing its u
       balanceCents: 50_000,
       level: 1,
       avatarUrl: "",
+      avatarAsProfilePhoto: false,
+      equippedAvatarItems: [],
     });
   }));
 });
@@ -267,4 +278,14 @@ test("group members cannot edit streak or last-message metadata directly", async
     streakDays: 99,
     lastMessage: "Falso",
   }));
+});
+
+test("allows purchase of a priced avatar cosmetic", async () => {
+  const uid = "avatar-buyer";
+  await seedPlayer(uid);
+  await assertSucceeds(purchase(uid, "avatar_hair_wave", "purchase-avatar-0001"));
+  const database = environment.authenticatedContext(uid).firestore();
+  const profile = await getDoc(doc(database, "users", uid));
+  assert.equal(profile.data().balanceCents, 49_001);
+  assert.deepEqual(profile.data().inventory, ["avatar_hair_wave"]);
 });

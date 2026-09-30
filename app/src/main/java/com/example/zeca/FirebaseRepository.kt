@@ -29,6 +29,8 @@ data class PerfilJogador(
     val ganhoTotalCentavos: Long,
     val perdaTotalCentavos: Long,
     val molduraEquipada: String,
+    val avatarItensEquipados: List<String> = emptyList(),
+    val avatarComoFotoPerfil: Boolean = false,
 )
 
 data class JogadorRanking(
@@ -38,6 +40,8 @@ data class JogadorRanking(
     val nivel: Int,
     val avatarUrl: String,
     val username: String = "",
+    val avatarItensEquipados: List<String> = emptyList(),
+    val avatarComoFotoPerfil: Boolean = false,
 )
 
 data class MensagemChat(
@@ -54,6 +58,8 @@ data class MensagemChat(
     val encaminhada: Boolean = false,
     val usernameAutor: String = "",
     val avatarUrlAutor: String = "",
+    val avatarItensAutor: List<String> = emptyList(),
+    val avatarComoFotoAutor: Boolean = false,
 )
 
 data class RespostaChat(
@@ -71,6 +77,10 @@ data class ConversaChat(
     val ultimoRemetenteUid: String = "",
     val tipo: String = "direct",
     val nome: String = "",
+    val descricao: String = "",
+    val criadoPorUid: String = "",
+    val politicaEditar: String = "creator",
+    val politicaEnviar: String = "everyone",
     val participantes: List<String> = emptyList(),
     val diasFoguinho: Int = 0,
     val nivelFoguinho: Int = 0,
@@ -83,6 +93,8 @@ data class JogadorDestino(
     val apelido: String,
     val nivel: Int,
     val avatarUrl: String,
+    val avatarItensEquipados: List<String> = emptyList(),
+    val avatarComoFotoPerfil: Boolean = false,
 )
 
 data class PerfilPublico(
@@ -98,6 +110,8 @@ data class PerfilPublico(
     val chavePix: String,
     val tipoChavePix: String,
     val molduraEquipada: String,
+    val avatarItensEquipados: List<String> = emptyList(),
+    val avatarComoFotoPerfil: Boolean = false,
 )
 
 data class ResultadoTransferencia(
@@ -176,6 +190,8 @@ object FirebaseRepository {
                     "balanceInitialized" to true,
                     "level" to 1L,
                     "avatarUrl" to (user.photoUrl?.toString() ?: ""),
+                    "avatarAsProfilePhoto" to false,
+                    "equippedAvatarItems" to emptyList<String>(),
                     "pixKey" to "",
                     "pixKeyType" to "",
                     "pixKeyHash" to "",
@@ -193,6 +209,8 @@ object FirebaseRepository {
                         "balanceCents" to 50_000L,
                         "level" to 1L,
                         "avatarUrl" to (user.photoUrl?.toString() ?: ""),
+                        "avatarAsProfilePhoto" to false,
+                        "equippedAvatarItems" to emptyList<String>(),
                     ),
                 )
             } else {
@@ -213,15 +231,30 @@ object FirebaseRepository {
                 val username = profile["username"] as? String ?: ""
                 val profileLevel = (profile["level"] as? Number)?.toLong()?.takeIf { it > 0L } ?: 1L
                 val profileAvatar = profile["avatarUrl"] as? String ?: user.photoUrl?.toString().orEmpty()
+                val avatarAsProfilePhoto = profile["avatarAsProfilePhoto"] as? Boolean ?: false
+                val equippedAvatarItems = (profile["equippedAvatarItems"] as? List<*>)?.filterIsInstance<String>().orEmpty()
                 val publicProfile = mapOf(
                     "displayName" to profileName,
                     "username" to username,
                     "balanceCents" to nextBalance,
                     "level" to profileLevel,
                     "avatarUrl" to profileAvatar,
+                    "avatarAsProfilePhoto" to avatarAsProfilePhoto,
+                    "equippedAvatarItems" to equippedAvatarItems,
                 )
                 if (!rankSnapshot.exists()) transaction.set(rankRef, publicProfile)
-                else transaction.update(rankRef, mapOf("displayName" to profileName, "balanceCents" to nextBalance))
+                else transaction.update(
+                    rankRef,
+                    mapOf(
+                        "displayName" to profileName,
+                        "username" to username,
+                        "balanceCents" to nextBalance,
+                        "level" to profileLevel,
+                        "avatarUrl" to profileAvatar,
+                        "avatarAsProfilePhoto" to avatarAsProfilePhoto,
+                        "equippedAvatarItems" to equippedAvatarItems,
+                    ),
+                )
             }
             null
         }
@@ -268,6 +301,8 @@ object FirebaseRepository {
                     encaminhada = data["forwarded"] as? Boolean ?: false,
                     usernameAutor = data["senderUsername"] as? String ?: "",
                     avatarUrlAutor = data["senderAvatarUrl"] as? String ?: "",
+                    avatarItensAutor = (data["senderAvatarItems"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
+                    avatarComoFotoAutor = data["senderAvatarAsProfilePhoto"] as? Boolean ?: false,
                 )
             }.sortedBy { it.enviadaEmMs }
             callback(mensagens, error, snapshot?.metadata?.isFromCache ?: true)
@@ -294,6 +329,10 @@ object FirebaseRepository {
                         ultimoRemetenteUid = document.getString("lastMessageSenderUid") ?: "",
                         tipo = document.getString("type") ?: "direct",
                         nome = document.getString("name") ?: "",
+                        descricao = document.getString("description") ?: "",
+                        criadoPorUid = document.getString("createdBy") ?: "",
+                        politicaEditar = document.getString("editPolicy") ?: "creator",
+                        politicaEnviar = document.getString("sendPolicy") ?: "everyone",
                         participantes = participantes,
                         diasFoguinho = document.getLong("streakDays")?.toInt() ?: 0,
                         nivelFoguinho = document.getLong("streakLevel")?.toInt() ?: 0,
@@ -330,11 +369,46 @@ object FirebaseRepository {
         }
         }
 
-    fun criarGrupo(nome: String, memberUids: List<String>, requestId: String, callback: (String?, Exception?) -> Unit) {
+    fun criarGrupo(
+        nome: String,
+        descricao: String,
+        memberUids: List<String>,
+        editPolicy: String,
+        sendPolicy: String,
+        requestId: String,
+        callback: (String?, Exception?) -> Unit,
+    ) {
         chamarFunction(
             "createChatGroup",
-            mapOf("name" to nome, "memberUids" to memberUids, "requestId" to requestId),
+            mapOf(
+                "name" to nome,
+                "description" to descricao,
+                "memberUids" to memberUids,
+                "editPolicy" to editPolicy,
+                "sendPolicy" to sendPolicy,
+                "requestId" to requestId,
+            ),
         ) { data, error -> callback(data?.get("chatId") as? String, error) }
+    }
+
+    fun atualizarGrupo(
+        chatId: String,
+        nome: String,
+        descricao: String,
+        editPolicy: String,
+        sendPolicy: String,
+        callback: (Exception?) -> Unit,
+    ) {
+        chamarFunction(
+            "updateChatGroup",
+            mapOf(
+                "chatId" to chatId,
+                "name" to nome,
+                "description" to descricao,
+                "editPolicy" to editPolicy,
+                "sendPolicy" to sendPolicy,
+            ),
+        ) { _, error -> callback(error) }
     }
 
     fun renomearFoguinho(chatId: String, nome: String, callback: (Exception?) -> Unit) {
@@ -385,11 +459,29 @@ object FirebaseRepository {
                 }, snapshot.metadata.isFromCache)
             }
 
-    fun atualizarPerfil(username: String, displayName: String, avatarUrl: String, callback: (Exception?) -> Unit) {
+    fun atualizarPerfil(
+        username: String,
+        displayName: String,
+        avatarUrl: String,
+        avatarComoFotoPerfil: Boolean,
+        callback: (Exception?) -> Unit,
+    ) {
         chamarFunction(
             "updatePlayerProfile",
-            mapOf("username" to username, "displayName" to displayName, "avatarUrl" to avatarUrl),
+            mapOf(
+                "username" to username,
+                "displayName" to displayName,
+                "avatarUrl" to avatarUrl,
+                "avatarAsProfilePhoto" to avatarComoFotoPerfil,
+            ),
         ) { _, erro -> callback(erro) }
+    }
+
+    fun equiparItemAvatar(slot: String, itemId: String?, callback: (Exception?) -> Unit) {
+        chamarFunction(
+            "equipAvatarItem",
+            mapOf("slot" to slot, "itemId" to (itemId ?: "")),
+        ) { _, error -> callback(error) }
     }
 
     fun enviarFotoPerfil(uri: Uri, contentResolver: ContentResolver, callback: (String?, Exception?) -> Unit) {
@@ -486,6 +578,8 @@ object FirebaseRepository {
                     apelido = it["displayName"] as? String ?: "Jogador",
                     nivel = (it["level"] as? Number)?.toInt() ?: 1,
                     avatarUrl = it["avatarUrl"] as? String ?: "",
+                    avatarItensEquipados = (it["equippedAvatarItems"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
+                    avatarComoFotoPerfil = it["avatarAsProfilePhoto"] as? Boolean ?: false,
                 )
             }
             callback(destino, erro)
@@ -508,6 +602,8 @@ object FirebaseRepository {
                     chavePix = it["pixKey"] as? String ?: "",
                     tipoChavePix = it["pixKeyType"] as? String ?: "",
                     molduraEquipada = it["equippedFrame"] as? String ?: "",
+                    avatarItensEquipados = (it["equippedAvatarItems"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
+                    avatarComoFotoPerfil = it["avatarAsProfilePhoto"] as? Boolean ?: false,
                 )
             }
             callback(perfil, erro)
@@ -823,6 +919,8 @@ object FirebaseRepository {
         ganhoTotalCentavos = snapshot.getLong("totalWonCents") ?: 0L,
         perdaTotalCentavos = snapshot.getLong("totalLostCents") ?: 0L,
         molduraEquipada = snapshot.getString("equippedFrame") ?: "",
+        avatarItensEquipados = (snapshot.get("equippedAvatarItems") as? List<*>)?.filterIsInstance<String>().orEmpty(),
+        avatarComoFotoPerfil = snapshot.getBoolean("avatarAsProfilePhoto") == true,
     )
 
     private fun toJogadorRanking(snapshot: DocumentSnapshot): JogadorRanking? {
@@ -834,6 +932,8 @@ object FirebaseRepository {
             nivel = (data["level"] as? Number)?.toInt() ?: 1,
             avatarUrl = data["avatarUrl"] as? String ?: "",
             username = data["username"] as? String ?: "",
+            avatarItensEquipados = (data["equippedAvatarItems"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
+            avatarComoFotoPerfil = data["avatarAsProfilePhoto"] as? Boolean ?: false,
         )
     }
 

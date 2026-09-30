@@ -176,6 +176,8 @@ fun TelaInicio(
                                 moldura = "",
                                 tamanho = 34.dp,
                                 photoUrl = jogador.avatarUrl,
+                                avatarItems = jogador.avatarItensEquipados,
+                                avatarAsProfilePhoto = jogador.avatarComoFotoPerfil,
                             )
                             Text("${index + 1}", color = Cores.Verde, fontSize = 16.sp, fontWeight = FontWeight.Black)
                             Column(modifier = Modifier.weight(1f)) {
@@ -315,6 +317,8 @@ internal fun TelaPerfilJogador(
                     perfil?.molduraEquipada.orEmpty(),
                     112.dp,
                     photoUrl = perfil?.avatarUrl ?: jogador.avatarUrl,
+                    avatarItems = perfil?.avatarItensEquipados ?: jogador.avatarItensEquipados,
+                    avatarAsProfilePhoto = perfil?.avatarComoFotoPerfil ?: jogador.avatarComoFotoPerfil,
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(jogador.apelido, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Black)

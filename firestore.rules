@@ -23,6 +23,15 @@ service cloud.firestore {
         : itemId == 'title_donizete' ? 1000000
         : itemId == 'title_erasmo' ? 1500000
         : itemId == 'title_milena' ? 1100000
+        : itemId == 'avatar_hair_wave' ? 999
+        : itemId == 'avatar_hair_curls' ? 1299
+        : itemId == 'avatar_hair_silver' ? 899
+        : itemId == 'avatar_skin_sun' ? 699
+        : itemId == 'avatar_skin_cocoa' ? 699
+        : itemId == 'avatar_top_hoodie' ? 1299
+        : itemId == 'avatar_top_jacket' ? 1499
+        : itemId == 'avatar_glasses_round' ? 799
+        : itemId == 'avatar_crown_neon' ? 1999
         : -1;
     }
 
@@ -39,6 +48,15 @@ service cloud.firestore {
         : itemId == 'title_donizete' ? 'Título: Donizete'
         : itemId == 'title_erasmo' ? 'Título: Erasmo'
         : itemId == 'title_milena' ? 'Título: Milena'
+        : itemId == 'avatar_hair_wave' ? 'Cabelo Ondulado'
+        : itemId == 'avatar_hair_curls' ? 'Cachos'
+        : itemId == 'avatar_hair_silver' ? 'Cor Prateada'
+        : itemId == 'avatar_skin_sun' ? 'Tom Solar'
+        : itemId == 'avatar_skin_cocoa' ? 'Tom Cacau'
+        : itemId == 'avatar_top_hoodie' ? 'Moletom Neon'
+        : itemId == 'avatar_top_jacket' ? 'Jaqueta Aurora'
+        : itemId == 'avatar_glasses_round' ? 'Óculos Redondos'
+        : itemId == 'avatar_crown_neon' ? 'Coroa Neon'
         : '';
     }
 
@@ -86,12 +104,12 @@ service cloud.firestore {
         && request.auth.uid == userId
         && request.resource.data.keys().hasAll([
           'uid', 'displayName', 'email', 'balanceCents', 'balanceInitialized', 'level',
-          'avatarUrl', 'username', 'profileSetupComplete', 'pixKey', 'pixKeyType', 'pixKeyHash', 'gamesPlayed', 'wins',
+          'avatarUrl', 'avatarAsProfilePhoto', 'equippedAvatarItems', 'username', 'profileSetupComplete', 'pixKey', 'pixKeyType', 'pixKeyHash', 'gamesPlayed', 'wins',
           'inventory', 'createdAt'
         ])
         && request.resource.data.keys().hasOnly([
           'uid', 'displayName', 'email', 'balanceCents', 'balanceInitialized', 'level',
-          'avatarUrl', 'username', 'profileSetupComplete', 'pixKey', 'pixKeyType', 'pixKeyHash', 'gamesPlayed', 'wins',
+          'avatarUrl', 'avatarAsProfilePhoto', 'equippedAvatarItems', 'username', 'profileSetupComplete', 'pixKey', 'pixKeyType', 'pixKeyHash', 'gamesPlayed', 'wins',
           'inventory', 'createdAt'
         ])
         && request.resource.data.uid == userId
@@ -100,6 +118,9 @@ service cloud.firestore {
         && request.resource.data.balanceCents == 50000
         && request.resource.data.balanceInitialized == true
         && request.resource.data.level == 1
+        && request.resource.data.avatarAsProfilePhoto == false
+        && request.resource.data.equippedAvatarItems is list
+        && request.resource.data.equippedAvatarItems.size() == 0
         && request.resource.data.username == ''
         && request.resource.data.profileSetupComplete == false
         && request.resource.data.gamesPlayed == 0
@@ -161,10 +182,15 @@ service cloud.firestore {
       allow read: if signedIn();
       allow create: if signedIn()
         && request.auth.uid == userId
-        && request.resource.data.keys().hasOnly(['displayName', 'balanceCents', 'level', 'avatarUrl', 'username'])
+        && request.resource.data.keys().hasOnly([
+          'displayName', 'balanceCents', 'level', 'avatarUrl', 'username',
+          'avatarAsProfilePhoto', 'equippedAvatarItems'
+        ])
         && validDisplayName(request.resource.data.displayName)
         && request.resource.data.avatarUrl is string
         && request.resource.data.username is string
+        && request.resource.data.avatarAsProfilePhoto is bool
+        && request.resource.data.equippedAvatarItems is list
         && request.resource.data.username
           == getAfter(/databases/$(database)/documents/users/$(userId)).data.username
         && request.resource.data.displayName
@@ -174,7 +200,11 @@ service cloud.firestore {
         && request.resource.data.level
           == getAfter(/databases/$(database)/documents/users/$(userId)).data.level
         && request.resource.data.avatarUrl
-          == getAfter(/databases/$(database)/documents/users/$(userId)).data.avatarUrl;
+          == getAfter(/databases/$(database)/documents/users/$(userId)).data.avatarUrl
+        && request.resource.data.avatarAsProfilePhoto
+          == getAfter(/databases/$(database)/documents/users/$(userId)).data.avatarAsProfilePhoto
+        && request.resource.data.equippedAvatarItems
+          == getAfter(/databases/$(database)/documents/users/$(userId)).data.equippedAvatarItems;
       allow delete: if false;
       allow update: if signedIn()
         && request.auth.uid == userId
@@ -246,7 +276,8 @@ service cloud.firestore {
             || request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participantUids);
         allow create: if signedIn()
           && request.resource.data.keys().hasOnly([
-            'senderUid', 'senderName', 'senderUsername', 'senderAvatarUrl', 'text', 'createdAt',
+            'senderUid', 'senderName', 'senderUsername', 'senderAvatarUrl', 'senderAvatarItems',
+            'senderAvatarAsProfilePhoto', 'text', 'createdAt',
             'replyToId', 'replyToName', 'replyToText', 'forwarded'
           ])
           && request.resource.data.senderUid == request.auth.uid
@@ -256,6 +287,10 @@ service cloud.firestore {
             == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.username
           && request.resource.data.senderAvatarUrl
             == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.avatarUrl
+          && request.resource.data.senderAvatarItems
+            == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.equippedAvatarItems
+          && request.resource.data.senderAvatarAsProfilePhoto
+            == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.avatarAsProfilePhoto
           && request.resource.data.text is string
           && request.resource.data.text.size() >= 1
           && request.resource.data.text.size() <= 500

@@ -18,6 +18,7 @@ const {
 } = require("./game-logic");
 const { initializeBalance, levelProgress, normalizeUsername } = require("./profile-logic");
 const { applyStreakMessage, dateUtc } = require("./chat-logic");
+const { AVATAR_ITEM_SLOTS, equipAvatarItem, unequipAvatarSlot } = require("./avatar-logic");
 
 const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
 initializeApp(serviceAccount ? { credential: cert(JSON.parse(serviceAccount)) } : {});
@@ -40,6 +41,15 @@ const COSMETICS = {
   title_donizete: { name: "Título: Donizete", priceCents: 1_000_000 },
   title_erasmo: { name: "Título: Erasmo", priceCents: 1_500_000 },
   title_milena: { name: "Título: Milena", priceCents: 1_100_000 },
+    avatar_hair_wave: { name: "Cabelo Ondulado", priceCents: 999, slot: "hair" },
+    avatar_hair_curls: { name: "Cachos", priceCents: 1_299, slot: "hair" },
+    avatar_hair_silver: { name: "Cor Prateada", priceCents: 899, slot: "hairColor" },
+    avatar_skin_sun: { name: "Tom Solar", priceCents: 699, slot: "skin" },
+    avatar_skin_cocoa: { name: "Tom Cacau", priceCents: 699, slot: "skin" },
+    avatar_top_hoodie: { name: "Moletom Neon", priceCents: 1_299, slot: "outfit" },
+    avatar_top_jacket: { name: "Jaqueta Aurora", priceCents: 1_499, slot: "outfit" },
+    avatar_glasses_round: { name: "Óculos Redondos", priceCents: 799, slot: "accessory" },
+    avatar_crown_neon: { name: "Coroa Neon", priceCents: 1_999, slot: "accessory" },
 };
 
 function authenticatedUid(request) {
@@ -129,6 +139,8 @@ exports.ensurePlayerProfile = onCall(async (request) => {
         levelProgress(gamesPlayed).level,
       ),
       avatarUrl: existing.avatarUrl || authUser.photoURL || "",
+      avatarAsProfilePhoto: existing.avatarAsProfilePhoto === true,
+      equippedAvatarItems: Array.isArray(existing.equippedAvatarItems) ? existing.equippedAvatarItems : [],
       username,
       profileSetupComplete: existing.profileSetupComplete === true && username !== "",
       pixKey: existing.pixKey || "",
@@ -144,6 +156,8 @@ exports.ensurePlayerProfile = onCall(async (request) => {
       balanceCents: profile.balanceCents,
       level: profile.level,
       avatarUrl: profile.avatarUrl,
+      avatarAsProfilePhoto: profile.avatarAsProfilePhoto,
+      equippedAvatarItems: profile.equippedAvatarItems,
       username: profile.username,
     };
 
@@ -161,6 +175,7 @@ exports.updatePlayerProfile = onCall(async (request) => {
   const displayName = safeName(request.data?.displayName, "");
   const username = normalizeUsername(request.data?.username);
   const avatarUrl = typeof request.data?.avatarUrl === "string" ? request.data.avatarUrl.trim() : "";
+  const avatarAsProfilePhoto = request.data?.avatarAsProfilePhoto === true;
   if (!displayName) {
     throw new HttpsError("invalid-argument", "O nome de exibição deve ter entre 2 e 24 caracteres.");
   }
@@ -197,10 +212,20 @@ exports.updatePlayerProfile = onCall(async (request) => {
       transaction.delete(oldUsernameRef);
     }
     transaction.set(usernameRef, { uid, createdAt: FieldValue.serverTimestamp() });
-    transaction.update(userRef, { username, displayName, avatarUrl, profileSetupComplete: true });
-    transaction.update(rankRef, { username, displayName, avatarUrl });
+    const equippedAvatarItems = Array.isArray(userSnapshot.get("equippedAvatarItems"))
+      ? userSnapshot.get("equippedAvatarItems")
+      : [];
+    transaction.update(userRef, {
+      username,
+      displayName,
+      avatarUrl,
+      avatarAsProfilePhoto,
+      equippedAvatarItems,
+      profileSetupComplete: true,
+    });
+    transaction.update(rankRef, { username, displayName, avatarUrl, avatarAsProfilePhoto, equippedAvatarItems });
   });
-  return { ok: true, username, displayName, avatarUrl };
+  return { ok: true, username, displayName, avatarUrl, avatarAsProfilePhoto };
 });
 
 exports.registerPixKey = onCall(async (request) => {
@@ -1034,6 +1059,45 @@ exports.equipFrame = onCall(async (request) => {
   return { ok: true, equippedFrame: itemId };
 });
 
+exports.equipAvatarItem = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const slot = request.data?.slot;
+  const itemId = request.data?.itemId || "";
+  if (!Object.values(AVATAR_ITEM_SLOTS).includes(slot)
+      || (itemId && AVATAR_ITEM_SLOTS[itemId] !== slot)) {
+    throw new HttpsError("invalid-argument", "Peça de avatar inválida para este espaço.");
+  }
+  const userRef = database.collection("users").doc(uid);
+  const rankRef = database.collection("leaderboard").doc(uid);
+  let equippedAvatarItems;
+  await database.runTransaction(async (transaction) => {
+    const [userSnapshot, rankSnapshot] = await Promise.all([
+      transaction.get(userRef),
+      transaction.get(rankRef),
+    ]);
+    if (!userSnapshot.exists || !rankSnapshot.exists) {
+      throw new HttpsError("failed-precondition", "Perfil ainda não foi criado.");
+    }
+    const inventory = Array.isArray(userSnapshot.get("inventory")) ? userSnapshot.get("inventory") : [];
+    const currentItems = Array.isArray(userSnapshot.get("equippedAvatarItems"))
+      ? userSnapshot.get("equippedAvatarItems")
+      : [];
+    try {
+      equippedAvatarItems = itemId
+        ? equipAvatarItem(currentItems, inventory, itemId)
+        : unequipAvatarSlot(currentItems, slot);
+    } catch (error) {
+      if (error.message === "avatar-item-not-owned") {
+        throw new HttpsError("failed-precondition", "Você ainda não possui esta peça.");
+      }
+      throw new HttpsError("invalid-argument", "Peça de avatar inválida.");
+    }
+    transaction.update(userRef, { equippedAvatarItems });
+    transaction.update(rankRef, { equippedAvatarItems });
+  });
+  return { ok: true, equippedAvatarItems };
+});
+
 exports.getPlayerProfile = onCall(async (request) => {
   authenticatedUid(request);
   const targetUid = request.data?.uid;
@@ -1057,6 +1121,8 @@ exports.getPlayerProfile = onCall(async (request) => {
     username: rank.username || "",
     level: rank.level || 1,
     avatarUrl: rank.avatarUrl || "",
+    avatarAsProfilePhoto: rank.avatarAsProfilePhoto === true,
+    equippedAvatarItems: Array.isArray(rank.equippedAvatarItems) ? rank.equippedAvatarItems : [],
     balanceCents: rank.balanceCents || 0,
     gamesPlayed: Number.isSafeInteger(profile.gamesPlayed) ? profile.gamesPlayed : 0,
     wins: Number.isSafeInteger(profile.wins) ? profile.wins : 0,
@@ -1072,6 +1138,9 @@ exports.getPlayerProfile = onCall(async (request) => {
 exports.createChatGroup = onCall(async (request) => {
   const uid = authenticatedUid(request);
   const name = typeof request.data?.name === "string" ? request.data.name.trim().replace(/\s+/g, " ") : "";
+  const description = typeof request.data?.description === "string" ? request.data.description.trim().slice(0, 160) : "";
+  const editPolicy = request.data?.editPolicy === "members" ? "members" : "creator";
+  const sendPolicy = request.data?.sendPolicy === "creator" ? "creator" : "everyone";
   const requestId = request.data?.requestId;
   const selectedUids = request.data?.memberUids;
   if (name.length < 2 || name.length > 32) {
@@ -1106,7 +1175,10 @@ exports.createChatGroup = onCall(async (request) => {
     transaction.create(chatRef, {
       type: "group",
       name,
+      description,
       createdBy: uid,
+      editPolicy,
+      sendPolicy,
       participantUids,
       lastMessage: "Grupo criado",
       lastMessageAt: now,
@@ -1123,6 +1195,35 @@ exports.createChatGroup = onCall(async (request) => {
     response = { chatId: requestId };
   });
   return response;
+});
+
+exports.updateChatGroup = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const chatId = request.data?.chatId;
+  const name = typeof request.data?.name === "string" ? request.data.name.trim().replace(/\s+/g, " ") : "";
+  const description = typeof request.data?.description === "string" ? request.data.description.trim() : "";
+  const editPolicy = request.data?.editPolicy;
+  const sendPolicy = request.data?.sendPolicy;
+  if (typeof chatId !== "string" || !/^[a-f0-9-]{36}$/i.test(chatId)
+      || name.length < 2 || name.length > 32 || description.length > 160
+      || !["creator", "members"].includes(editPolicy)
+      || !["creator", "everyone"].includes(sendPolicy)) {
+    throw new HttpsError("invalid-argument", "As configurações do grupo são inválidas.");
+  }
+  const chatRef = database.collection("chats").doc(chatId);
+  await database.runTransaction(async (transaction) => {
+    const chatSnapshot = await transaction.get(chatRef);
+    if (!chatSnapshot.exists || chatSnapshot.get("type") !== "group"
+        || !chatSnapshot.get("participantUids")?.includes(uid)) {
+      throw new HttpsError("permission-denied", "Você não participa deste grupo.");
+    }
+    const group = chatSnapshot.data();
+    if (group.createdBy !== uid && group.editPolicy !== "members") {
+      throw new HttpsError("permission-denied", "Somente o criador pode alterar as configurações do grupo.");
+    }
+    transaction.update(chatRef, { name, description, editPolicy, sendPolicy });
+  });
+  return { ok: true };
 });
 
 exports.renameChatFlame = onCall(async (request) => {
@@ -1221,6 +1322,9 @@ exports.sendChatMessage = onCall(async (request) => {
           || !chatSnapshot.get("participantUids")?.includes(uid)) {
         throw new HttpsError("permission-denied", "Você não participa deste grupo.");
       }
+      if (chatSnapshot.get("sendPolicy") === "creator" && chatSnapshot.get("createdBy") !== uid) {
+        throw new HttpsError("permission-denied", "Somente o criador pode enviar mensagens neste grupo.");
+      }
     }
 
     const now = FieldValue.serverTimestamp();
@@ -1255,6 +1359,8 @@ exports.sendChatMessage = onCall(async (request) => {
       senderName,
       senderUsername: sender.username || "",
       senderAvatarUrl: sender.avatarUrl || "",
+      senderAvatarItems: Array.isArray(sender.equippedAvatarItems) ? sender.equippedAvatarItems : [],
+      senderAvatarAsProfilePhoto: sender.avatarAsProfilePhoto === true,
       text,
       createdAt: now,
     };

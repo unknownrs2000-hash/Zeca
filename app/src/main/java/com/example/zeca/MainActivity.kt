@@ -288,8 +288,8 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                     concluir(url, error?.localizedMessage)
                 }
             },
-            onSalvarPerfil = { username, displayName, avatarUrl, concluir ->
-                FirebaseRepository.atualizarPerfil(username, displayName, avatarUrl) { error ->
+            onSalvarPerfil = { username, displayName, avatarUrl, avatarComoFoto, concluir ->
+                FirebaseRepository.atualizarPerfil(username, displayName, avatarUrl, avatarComoFoto) { error ->
                     concluir(error?.localizedMessage)
                 }
             },
@@ -395,8 +395,13 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                                     concluir(error)
                                 }
                             },
-                            onCriarGrupo = { nome, membros, requestId, concluir ->
-                                FirebaseRepository.criarGrupo(nome, membros, requestId) { id, error -> concluir(id, error) }
+                            onCriarGrupo = { nome, descricao, membros, editPolicy, sendPolicy, requestId, concluir ->
+                                FirebaseRepository.criarGrupo(nome, descricao, membros, editPolicy, sendPolicy, requestId) { id, error ->
+                                    concluir(id, error)
+                                }
+                            },
+                            onAtualizarGrupo = { chatId, nome, descricao, editPolicy, sendPolicy, concluir ->
+                                FirebaseRepository.atualizarGrupo(chatId, nome, descricao, editPolicy, sendPolicy, concluir)
                             },
                             onRenomearFoguinho = { chatId, nome, concluir ->
                                 FirebaseRepository.renomearFoguinho(chatId, nome, concluir)
@@ -430,6 +435,8 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                                 partidas = jogador.partidas,
                                 vitorias = jogador.vitorias,
                                 avatarUrl = jogador.avatarUrl,
+                                avatarItensEquipados = jogador.avatarItensEquipados,
+                                avatarComoFotoPerfil = jogador.avatarComoFotoPerfil,
                                 inventario = jogador.inventario,
                                 molduraEquipada = jogador.molduraEquipada,
                                 onEscolherMoldura = { itemId, concluir ->
@@ -440,8 +447,11 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                                         concluir(url, error?.localizedMessage)
                                     }
                                 },
-                                onSalvarPerfil = { username, nome, avatarUrl, concluir ->
-                                    FirebaseRepository.atualizarPerfil(username, nome, avatarUrl) { error -> concluir(error?.localizedMessage) }
+                                onSalvarPerfil = { username, nome, avatarUrl, avatarComoFoto, concluir ->
+                                    FirebaseRepository.atualizarPerfil(username, nome, avatarUrl, avatarComoFoto) { error -> concluir(error?.localizedMessage) }
+                                },
+                                onEquiparItemAvatar = { slot, itemId, concluir ->
+                                    FirebaseRepository.equiparItemAvatar(slot, itemId) { error -> concluir(error?.localizedMessage) }
                                 },
                                 onAbrirLoja = { mostrarLoja = true },
                                 onSair = { FirebaseRepository.sair() },

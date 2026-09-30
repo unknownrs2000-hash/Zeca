@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -43,6 +44,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -94,11 +96,12 @@ fun TelaConfigurarPerfil(
     nomeInicial: String,
     avatarUrlInicial: String,
     onEnviarFoto: (Uri, (String?, String?) -> Unit) -> Unit,
-    onSalvarPerfil: (String, String, String, (String?) -> Unit) -> Unit,
+    onSalvarPerfil: (String, String, String, Boolean, (String?) -> Unit) -> Unit,
 ) {
     var username by rememberSaveable { mutableStateOf("") }
     var displayName by rememberSaveable { mutableStateOf(nomeInicial) }
     var avatarUrl by rememberSaveable { mutableStateOf(avatarUrlInicial) }
+    var avatarComoFoto by rememberSaveable { mutableStateOf(avatarUrlInicial.isBlank()) }
     var mensagem by rememberSaveable { mutableStateOf("") }
     var enviandoFoto by remember { mutableStateOf(false) }
     var salvando by remember { mutableStateOf(false) }
@@ -125,7 +128,13 @@ fun TelaConfigurarPerfil(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                AvatarComMoldura(displayName.take(1).uppercase().ifBlank { "?" }, "", 92.dp, photoUrl = avatarUrl)
+                AvatarComMoldura(
+                    displayName.take(1).uppercase().ifBlank { "?" },
+                    "",
+                    92.dp,
+                    photoUrl = avatarUrl,
+                    avatarAsProfilePhoto = avatarComoFoto,
+                )
                 Button(
                     onClick = { seletorFoto.launch("image/*") },
                     enabled = !enviandoFoto,
@@ -152,11 +161,18 @@ fun TelaConfigurarPerfil(
                 supportingText = { Text("Este nome aparecerá no ranking e no chat.") },
                 singleLine = true,
             )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = avatarComoFoto, onCheckedChange = { avatarComoFoto = it })
+                Column {
+                    Text("Usar meu avatar como foto de perfil", color = Color.White, fontSize = 12.sp)
+                    Text("Seu personagem aparecerá no ranking e no chat.", color = Color.White.copy(alpha = 0.58f), fontSize = 10.sp)
+                }
+            }
             Button(
                 onClick = {
                     salvando = true
                     mensagem = ""
-                    onSalvarPerfil(username, displayName.trim(), avatarUrl) { erro ->
+                    onSalvarPerfil(username, displayName.trim(), avatarUrl, avatarComoFoto) { erro ->
                         salvando = false
                         mensagem = erro ?: "Perfil salvo."
                     }
@@ -708,17 +724,21 @@ fun TelaPerfil(
     partidas: Int,
     vitorias: Int,
     avatarUrl: String,
+    avatarItensEquipados: List<String>,
+    avatarComoFotoPerfil: Boolean,
     inventario: List<String>,
     molduraEquipada: String,
     onEscolherMoldura: (String, (String?) -> Unit) -> Unit,
     onEnviarFoto: (Uri, (String?, String?) -> Unit) -> Unit,
-    onSalvarPerfil: (String, String, String, (String?) -> Unit) -> Unit,
+    onSalvarPerfil: (String, String, String, Boolean, (String?) -> Unit) -> Unit,
+    onEquiparItemAvatar: (String, String?, (String?) -> Unit) -> Unit,
     onAbrirLoja: () -> Unit,
     onSair: () -> Unit,
 ) {
     var apelidoEditavel by rememberSaveable { mutableStateOf(apelido) }
     var usernameEditavel by rememberSaveable { mutableStateOf(username) }
     var avatarUrlEditavel by rememberSaveable { mutableStateOf(avatarUrl) }
+    var avatarComoFotoEditavel by rememberSaveable { mutableStateOf(avatarComoFotoPerfil) }
     var mensagemPerfil by rememberSaveable { mutableStateOf("") }
     var mensagemMoldura by rememberSaveable { mutableStateOf("") }
     var enviandoFoto by remember { mutableStateOf(false) }
@@ -738,11 +758,17 @@ fun TelaPerfil(
         apelidoEditavel = apelido
         usernameEditavel = username
         avatarUrlEditavel = avatarUrl
+        avatarComoFotoEditavel = avatarComoFotoPerfil
     }
 
     TelaBase("Perfil", "Seu espaço no Zeca.") {
         GlassCard {
-            AvatarComMoldura(apelidoEditavel.take(1).uppercase(), molduraEquipada, 72.dp, photoUrl = avatarUrlEditavel)
+            AvatarComMoldura(
+                apelidoEditavel.take(1).uppercase(), molduraEquipada, 92.dp,
+                photoUrl = avatarUrlEditavel,
+                avatarItems = avatarItensEquipados,
+                avatarAsProfilePhoto = avatarComoFotoEditavel,
+            )
             Button(
                 onClick = { seletorFoto.launch("image/*") },
                 enabled = !enviandoFoto,
@@ -761,6 +787,13 @@ fun TelaPerfil(
                 supportingText = { Text("3 a 20 caracteres: letras, números e _") },
                 singleLine = true,
             )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = avatarComoFotoEditavel, onCheckedChange = { avatarComoFotoEditavel = it; mensagemPerfil = "" })
+                Column {
+                    Text("Usar meu avatar como foto de perfil", color = Color.White, fontSize = 12.sp)
+                    Text("O avatar aparecerá para outras pessoas no ranking e no chat.", color = Color.White.copy(alpha = 0.58f), fontSize = 10.sp)
+                }
+            }
             OutlinedTextField(
                 value = apelidoEditavel,
                 onValueChange = { apelidoEditavel = it.take(24); mensagemPerfil = "" },
@@ -779,13 +812,13 @@ fun TelaPerfil(
             Text("Próximo nível: bônus de R$ 10,00", color = Cores.Turquesa, fontSize = 12.sp)
             Button(
                 onClick = {
-                    onSalvarPerfil(usernameEditavel, apelidoEditavel.trim(), avatarUrlEditavel) { erro ->
+                    onSalvarPerfil(usernameEditavel, apelidoEditavel.trim(), avatarUrlEditavel, avatarComoFotoEditavel) { erro ->
                         mensagemPerfil = erro ?: "Perfil atualizado."
                     }
                 },
                 enabled = Regex("^[a-z0-9_]{3,20}$").matches(usernameEditavel)
                     && apelidoEditavel.trim().length in 2..24
-                    && (apelidoEditavel.trim() != apelido || usernameEditavel != username || avatarUrlEditavel != avatarUrl)
+                    && (apelidoEditavel.trim() != apelido || usernameEditavel != username || avatarUrlEditavel != avatarUrl || avatarComoFotoEditavel != avatarComoFotoPerfil)
                     && !enviandoFoto,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Salvar perfil") }
@@ -804,9 +837,14 @@ fun TelaPerfil(
             ItensColecao(
                 inventario,
                 molduraEquipada = molduraEquipada,
+                avatarItensEquipados = avatarItensEquipados,
                 onEscolherMoldura = { itemId ->
                     mensagemMoldura = ""
                     onEscolherMoldura(itemId) { erro -> if (erro != null) mensagemMoldura = erro }
+                },
+                onEquiparItemAvatar = { slot, itemId ->
+                    mensagemMoldura = ""
+                    onEquiparItemAvatar(slot, itemId) { erro -> if (erro != null) mensagemMoldura = erro }
                 },
             )
             if (mensagemMoldura.isNotBlank()) Text(mensagemMoldura, color = Cores.Laranja, fontSize = 12.sp)
@@ -1008,7 +1046,15 @@ private fun Estatistica(rotulo: String, valor: String) {
     }
 }
 
-internal data class Produto(val id: String, val nome: String, val descricao: String, val precoCentavos: Long, val cor: Color, val simbolo: String)
+internal data class Produto(
+    val id: String,
+    val nome: String,
+    val descricao: String,
+    val precoCentavos: Long,
+    val cor: Color,
+    val simbolo: String,
+    val avatarSlot: String = "",
+)
 
 internal val catalogoLoja = listOf(
     Produto("frame_aurora", "Moldura Aurora", "Um brilho suave em volta do seu avatar.", 1_299L, Cores.Turquesa, "✦"),
@@ -1023,6 +1069,15 @@ internal val catalogoLoja = listOf(
     Produto("title_donizete", "Donizete", "Um título raro para mostrar no perfil.", 1_000_000L, Color(0xFF26C6DA), "♣"),
     Produto("title_erasmo", "Erasmo", "Um título de peso para poucos jogadores.", 1_500_000L, Color(0xFFFFCA28), "♥"),
     Produto("title_milena", "Milena", "Um título de destaque para o seu perfil.", 1_100_000L, Color(0xFFEC407A), "☾"),
+    Produto("avatar_hair_wave", "Cabelo Ondulado", "Um corte leve com ondas marcantes.", 999L, Color(0xFF805B42), "〰", "hair"),
+    Produto("avatar_hair_curls", "Cachos", "Volume e personalidade para o visual.", 1_299L, Color(0xFF4E352F), "✿", "hair"),
+    Produto("avatar_hair_silver", "Cor Prateada", "Um brilho prateado no cabelo.", 899L, Color(0xFFC8D3DC), "✧", "hairColor"),
+    Produto("avatar_skin_sun", "Tom Solar", "Um tom de pele quente.", 699L, Color(0xFFD99B70), "●", "skin"),
+    Produto("avatar_skin_cocoa", "Tom Cacau", "Um tom de pele cacau.", 699L, Color(0xFF8D5B43), "●", "skin"),
+    Produto("avatar_top_hoodie", "Moletom Neon", "Moletom com detalhes turquesa.", 1_299L, Cores.Turquesa, "▰", "outfit"),
+    Produto("avatar_top_jacket", "Jaqueta Aurora", "Jaqueta em tons de pôr do sol.", 1_499L, Color(0xFFFF7A59), "◈", "outfit"),
+    Produto("avatar_glasses_round", "Óculos Redondos", "Armação divertida para completar o rosto.", 799L, Color(0xFF6FE7E1), "◎", "accessory"),
+    Produto("avatar_crown_neon", "Coroa Neon", "Uma coroa luminosa para chegar chegando.", 1_999L, Color(0xFFFFD166), "♛", "accessory"),
 )
 
 internal fun coresMoldura(id: String): List<Color>? = when (id) {
@@ -1041,6 +1096,8 @@ internal fun AvatarComMoldura(
     tamanho: Dp,
     modifier: Modifier = Modifier,
     photoUrl: String = "",
+    avatarItems: List<String> = emptyList(),
+    avatarAsProfilePhoto: Boolean = false,
 ) {
     val cores = coresMoldura(moldura)
     Box(
@@ -1049,22 +1106,87 @@ internal fun AvatarComMoldura(
             .then(if (cores != null) Modifier.border(4.dp, Brush.sweepGradient(cores), CircleShape) else Modifier),
         contentAlignment = Alignment.Center,
     ) {
-        Box(
-            modifier = Modifier
-                .size(tamanho)
-                .background(Cores.Verde.copy(alpha = 0.2f), CircleShape)
-                .border(1.dp, Color.White.copy(alpha = 0.4f), CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(inicial, color = Cores.Verde, fontSize = (tamanho.value * 0.42f).sp, fontWeight = FontWeight.Black)
-            if (photoUrl.isNotBlank()) {
+        Box(Modifier.size(tamanho).clip(CircleShape).border(1.dp, Color.White.copy(alpha = 0.4f), CircleShape)) {
+            if (photoUrl.isNotBlank() && !avatarAsProfilePhoto) {
                 AsyncImage(
                     model = photoUrl,
                     contentDescription = "Foto de perfil",
-                    modifier = Modifier.fillMaxSize().clip(CircleShape),
+                    modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop,
                 )
+            } else {
+                AvatarPersonagem(inicial, avatarItems, tamanho)
             }
+        }
+    }
+}
+
+@Composable
+internal fun AvatarPersonagem(inicial: String, itens: List<String>, tamanho: Dp, modifier: Modifier = Modifier) {
+    val pele = when {
+        "avatar_skin_cocoa" in itens -> Color(0xFF8D5B43)
+        "avatar_skin_sun" in itens -> Color(0xFFD99B70)
+        else -> Color(0xFFE9B18A)
+    }
+    val cabelo = if ("avatar_hair_silver" in itens) Color(0xFFC8D3DC) else when {
+        "avatar_hair_curls" in itens -> Color(0xFF4E352F)
+        "avatar_hair_wave" in itens -> Color(0xFF805B42)
+        else -> Color(0xFF352923)
+    }
+    val roupa = when {
+        "avatar_top_jacket" in itens -> Color(0xFFFF7A59)
+        "avatar_top_hoodie" in itens -> Color(0xFF21B9AC)
+        else -> Color(0xFF317B70)
+    }
+    Box(
+        modifier = modifier.size(tamanho).clip(CircleShape)
+            .background(Brush.verticalGradient(listOf(Color(0xFF355F65), Color(0xFF172B32)))),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth(0.76f).height(tamanho * 0.43f)
+                .clip(RoundedCornerShape(topStart = tamanho * 0.3f, topEnd = tamanho * 0.3f))
+                .background(roupa),
+        )
+        Box(
+            Modifier.align(Alignment.TopCenter).padding(top = tamanho * 0.19f)
+                .size(tamanho * 0.54f, tamanho * 0.60f)
+                .clip(RoundedCornerShape(tamanho * 0.27f))
+                .background(pele),
+        )
+        Box(
+            Modifier.align(Alignment.TopCenter).offset(y = tamanho * 0.20f)
+                .size(tamanho * 0.58f, tamanho * if ("avatar_hair_curls" in itens) 0.25f else 0.19f)
+                .clip(RoundedCornerShape(topStart = tamanho * 0.32f, topEnd = tamanho * 0.32f, bottomEnd = tamanho * 0.1f))
+                .background(cabelo),
+        )
+        Row(
+            modifier = Modifier.align(Alignment.Center).offset(y = tamanho * 0.035f),
+            horizontalArrangement = Arrangement.spacedBy(tamanho * 0.12f),
+        ) {
+            repeat(2) {
+                Box(Modifier.size(tamanho * 0.055f).clip(CircleShape).background(Color(0xFF302824)))
+            }
+        }
+        Box(
+            Modifier.align(Alignment.Center).offset(y = tamanho * 0.17f)
+                .size(tamanho * 0.13f, tamanho * 0.035f)
+                .clip(CircleShape)
+                .background(Color(0xFFAC5D59)),
+        )
+        if ("avatar_glasses_round" in itens) {
+            Row(
+                modifier = Modifier.align(Alignment.Center).offset(y = tamanho * 0.045f),
+                horizontalArrangement = Arrangement.spacedBy(tamanho * 0.035f),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                repeat(2) {
+                    Box(Modifier.size(tamanho * 0.18f).border(1.5.dp, Cores.Turquesa, CircleShape))
+                }
+            }
+        }
+        if ("avatar_crown_neon" in itens) {
+            Text("♛", modifier = Modifier.align(Alignment.TopCenter).offset(y = tamanho * 0.015f), color = Color(0xFFFFD166), fontSize = (tamanho.value * 0.28f).sp)
         }
     }
 }
@@ -1074,6 +1196,8 @@ internal fun ItensColecao(
     ids: List<String>,
     molduraEquipada: String = "",
     onEscolherMoldura: ((String) -> Unit)? = null,
+    avatarItensEquipados: List<String> = emptyList(),
+    onEquiparItemAvatar: ((String, String?) -> Unit)? = null,
 ) {
     val itens = ids.mapNotNull { id -> catalogoLoja.firstOrNull { it.id == id } }
     if (itens.isEmpty()) {
@@ -1082,7 +1206,9 @@ internal fun ItensColecao(
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             itens.forEach { item ->
                 val ehMoldura = item.id.startsWith("frame_")
+                val ehItemAvatar = item.avatarSlot.isNotBlank()
                 val emUso = ehMoldura && item.id == molduraEquipada
+                val avatarEmUso = ehItemAvatar && item.id in avatarItensEquipados
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1113,6 +1239,24 @@ internal fun ItensColecao(
                         } else if (emUso) {
                             Text("Em uso", color = item.cor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
+                    }
+                    if (ehItemAvatar && onEquiparItemAvatar != null) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (avatarEmUso) Color.White.copy(alpha = 0.16f) else Color.White)
+                                .clickable { onEquiparItemAvatar(item.avatarSlot, if (avatarEmUso) null else item.id) }
+                                .padding(horizontal = 12.dp, vertical = 7.dp),
+                        ) {
+                            Text(
+                                if (avatarEmUso) "Vestindo" else "Vestir",
+                                color = if (avatarEmUso) Color.White else Color(0xFF111418),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                    } else if (avatarEmUso) {
+                        Text("Vestindo", color = item.cor, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
