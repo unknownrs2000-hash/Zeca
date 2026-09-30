@@ -175,8 +175,10 @@ service cloud.firestore {
     }
 
     match /chats/{chatId} {
-      allow read: if signedIn()
-        && (chatId == 'global' || request.auth.uid in resource.data.participantUids);
+      allow get: if signedIn()
+        && (chatId == 'global' || request.auth.uid in chatId.split('_'));
+      allow list: if signedIn()
+        && request.auth.uid in resource.data.participantUids;
       allow create: if signedIn()
         && chatId != 'global'
         && request.resource.data.keys().hasOnly(['participantUids', 'lastMessage', 'lastMessageAt', 'createdAt'])
@@ -202,7 +204,7 @@ service cloud.firestore {
       match /messages/{messageId} {
         allow read: if signedIn()
           && (chatId == 'global'
-            || request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participantUids);
+            || request.auth.uid in chatId.split('_'));
         allow create: if signedIn()
           && request.resource.data.keys().hasOnly(['senderUid', 'senderName', 'text', 'createdAt'])
           && request.resource.data.senderUid == request.auth.uid

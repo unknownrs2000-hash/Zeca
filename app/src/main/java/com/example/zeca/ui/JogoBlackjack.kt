@@ -28,6 +28,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -42,7 +44,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -51,6 +55,9 @@ import com.example.zeca.CartaBlackjack
 import com.example.zeca.EstadoBlackjack
 import com.example.zeca.ui.theme.Cores
 import kotlinx.coroutines.delay
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 
 @Composable
 fun BlackjackJogo(
@@ -146,17 +153,7 @@ private fun MesaJogo(
                 color = Color.White.copy(alpha = 0.7f),
                 fontSize = 12.sp,
             )
-            Box(Modifier.fillMaxWidth().height(36.dp), contentAlignment = Alignment.Center) {
-                AnimatedVisibility(
-                    visible = revelado,
-                    enter = scaleIn(
-                        spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
-                        0.4f,
-                    ) + fadeIn(),
-                ) {
-                    Text(titulo, color = corTitulo, fontSize = 22.sp, fontWeight = FontWeight.Black)
-                }
-            }
+            TituloResultado(titulo, corTitulo, revelado)
             BannerPremio(estado.lucroCentavos, festa, revelado)
         }
         ExplosaoMoedas(festa, Modifier.matchParentSize())
@@ -319,6 +316,129 @@ private fun VersoCarta(modifier: Modifier = Modifier) {
             contentAlignment = Alignment.Center,
         ) {
             Text("Z", color = Color.White.copy(alpha = 0.8f), fontSize = 22.sp, fontWeight = FontWeight.Black)
+        }
+    }
+}
+
+@Composable
+private fun TituloResultado(titulo: String, cor: Color, visivel: Boolean) {
+    Box(Modifier.fillMaxWidth().height(36.dp), contentAlignment = Alignment.Center) {
+        AnimatedVisibility(
+            visible = visivel,
+            enter = scaleIn(
+                spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+                0.4f,
+            ) + fadeIn(),
+        ) {
+            Text(titulo, color = cor, fontSize = 22.sp, fontWeight = FontWeight.Black)
+        }
+    }
+}
+
+@Composable
+internal fun BotaoJogo(
+    texto: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    cor: Color = Cores.Verde,
+    corTexto: Color = Color(0xFF07130F),
+) {
+    Button(
+        onClick = onClick,
+        modifier = modifier,
+        enabled = enabled,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = cor,
+            contentColor = corTexto,
+            disabledContainerColor = Color.White.copy(alpha = 0.12f),
+            disabledContentColor = Color.White.copy(alpha = 0.4f),
+        ),
+    ) {
+        Text(texto, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1)
+    }
+}
+
+@Composable
+internal fun rememberVibrar(): (Boolean) -> Unit {
+    val haptic = LocalHapticFeedback.current
+    return remember(haptic) {
+        { forte: Boolean ->
+            haptic.performHapticFeedback(
+                if (forte) HapticFeedbackType.LongPress else HapticFeedbackType.TextHandleMove,
+            )
+        }
+    }
+}
+
+@Composable
+internal fun BannerPremio(lucroCentavos: Long, festa: Int, visivel: Boolean) {
+    AnimatedVisibility(
+        visible = visivel && lucroCentavos > 0L,
+        enter = scaleIn(
+            spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+            0.6f,
+        ) + fadeIn(),
+    ) {
+        key(festa) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFFFFD86B).copy(alpha = 0.16f), RoundedCornerShape(14.dp))
+                    .border(1.dp, Color(0xFFFFD86B).copy(alpha = 0.6f), RoundedCornerShape(14.dp))
+                    .padding(vertical = 10.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "+${formatarReais(lucroCentavos)}",
+                    color = Color(0xFFFFD86B),
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Black,
+                )
+            }
+        }
+    }
+}
+
+internal val CORES_MOEDAS = listOf(Color(0xFFFFD86B))
+
+internal val CORES_EXPLOSAO = listOf(
+    Color(0xFFFF4D6A),
+    Color(0xFFFF9F43),
+    Color(0xFFFFD86B),
+)
+
+@Composable
+internal fun ExplosaoMoedas(
+    disparo: Int,
+    modifier: Modifier = Modifier,
+    cores: List<Color> = CORES_MOEDAS,
+) {
+    if (disparo == 0) return
+    key(disparo) {
+        val progresso = remember { Animatable(0f) }
+        val densidade = LocalDensity.current.density
+        LaunchedEffect(Unit) {
+            progresso.animateTo(1f, tween(1400, easing = FastOutSlowInEasing))
+        }
+        Box(modifier, contentAlignment = Alignment.Center) {
+            repeat(14) { i ->
+                val angulo = (2 * PI * i / 14).toFloat()
+                val corParticula = cores[i % cores.size]
+                Box(
+                    Modifier
+                        .size(12.dp)
+                        .graphicsLayer {
+                            val p = progresso.value
+                            val distancia = 170f * densidade * p
+                            translationX = cos(angulo) * distancia
+                            translationY = sin(angulo) * distancia - 60f * densidade * p
+                            alpha = (1f - p).coerceIn(0f, 1f)
+                        }
+                        .background(corParticula, CircleShape)
+                        .border(1.dp, Color.Black.copy(alpha = 0.3f), CircleShape),
+                )
+            }
         }
     }
 }

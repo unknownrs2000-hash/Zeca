@@ -565,6 +565,10 @@ object FirebaseRepository {
                     var erroRetorno: Exception? = null
                     try {
                         dadosRetorno = postarNoServidor(nome, dados, tokenResult.token.orEmpty())
+                    } catch (e: java.net.SocketTimeoutException) {
+                        erroRetorno = IllegalStateException(
+                            "O servidor demorou para responder. Tente de novo.", e,
+                        )
                     } catch (e: java.io.IOException) {
                         erroRetorno = IllegalStateException(
                             "Não foi possível conectar ao servidor. Tente de novo em instantes.", e,
@@ -582,8 +586,8 @@ object FirebaseRepository {
         val conexao = java.net.URL("$SERVER_URL/call/$nome").openConnection() as java.net.HttpURLConnection
         try {
             conexao.requestMethod = "POST"
-            conexao.connectTimeout = 15_000
-            conexao.readTimeout = 70_000
+            conexao.connectTimeout = 10_000
+            conexao.readTimeout = 15_000
             conexao.doOutput = true
             conexao.setRequestProperty("Content-Type", "application/json")
             conexao.setRequestProperty("Authorization", "Bearer $token")

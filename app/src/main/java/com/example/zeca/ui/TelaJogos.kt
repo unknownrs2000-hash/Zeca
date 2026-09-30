@@ -107,7 +107,7 @@ fun TelaJogos(
     }
 
     val mensagemTela = if (ocupado && servidorLento) {
-        "Acordando o servidor… a primeira jogada pode levar até 1 minuto."
+        "Conectando ao servidor… isso pode levar alguns segundos."
     } else {
         mensagem
     }
