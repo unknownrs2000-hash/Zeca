@@ -428,6 +428,24 @@ object FirebaseRepository {
         }
     }
 
+    fun buscarPerfilPublico(uid: String, callback: (PerfilPublico?, Exception?) -> Unit) {
+        chamarFunction("getPlayerProfile", mapOf("uid" to uid)) { data, erro ->
+            val perfil = data?.let {
+                PerfilPublico(
+                    uid = it["uid"] as? String ?: uid,
+                    apelido = it["displayName"] as? String ?: "Jogador",
+                    nivel = (it["level"] as? Number)?.toInt() ?: 1,
+                    avatarUrl = it["avatarUrl"] as? String ?: "",
+                    saldoCentavos = (it["balanceCents"] as? Number)?.toLong() ?: 0L,
+                    partidas = (it["gamesPlayed"] as? Number)?.toInt() ?: 0,
+                    vitorias = (it["wins"] as? Number)?.toInt() ?: 0,
+                    inventario = (it["inventory"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
+                )
+            }
+            callback(perfil, erro)
+        }
+    }
+
     fun transferirPorPix(chave: String, valorCentavos: Long, requestId: String, callback: (ResultadoTransferencia?, Exception?) -> Unit) {
         chamarFunction(
             "transferByPixKey",
