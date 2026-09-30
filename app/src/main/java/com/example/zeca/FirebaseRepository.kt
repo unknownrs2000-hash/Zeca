@@ -105,7 +105,8 @@ data class EstadoBlackjack(
 object FirebaseRepository {
     val auth: FirebaseAuth by lazy { FirebaseAuth.getInstance() }
     private val database by lazy { FirebaseFirestore.getInstance() }
-    private val functions by lazy { FirebaseFunctions.getInstance("southamerica-east1") }
+    private const val SERVER_URL = "https://zeca-jvic.onrender.com"
+    private val principal = android.os.Handler(android.os.Looper.getMainLooper())
 
     fun garantirPerfil(user: FirebaseUser, callback: (Exception?) -> Unit) {
         val userRef = database.collection("users").document(user.uid)
