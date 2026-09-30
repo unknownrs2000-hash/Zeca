@@ -31,6 +31,15 @@ const COSMETICS = {
   frame_aurora: { name: "Moldura Aurora", priceCents: 1_299 },
   title_lucky: { name: "Título: Sorte Grande", priceCents: 799 },
   frame_neon: { name: "Moldura Neon", priceCents: 1_999 },
+  frame_gold: { name: "Moldura Dourada", priceCents: 2_499 },
+  title_highroller: { name: "Título: Alto Rolo", priceCents: 1_499 },
+  frame_emerald: { name: "Moldura Esmeralda", priceCents: 1_699 },
+  title_champion: { name: "Título: Campeão", priceCents: 2_999 },
+  frame_royal: { name: "Moldura Real", priceCents: 3_999 },
+  title_jucineia: { name: "Título: Jucineia", priceCents: 1_250_000 },
+  title_donizete: { name: "Título: Donizete", priceCents: 1_000_000 },
+  title_erasmo: { name: "Título: Erasmo", priceCents: 1_500_000 },
+  title_milena: { name: "Título: Milena", priceCents: 1_100_000 },
 };
 
 function authenticatedUid(request) {
@@ -875,6 +884,37 @@ exports.buyCosmetic = onCall(async (request) => {
     response = { itemId, balanceCents: balanceAfter };
   });
   return response;
+});
+
+exports.getPlayerProfile = onCall(async (request) => {
+  authenticatedUid(request);
+  const targetUid = request.data?.uid;
+  if (typeof targetUid !== "string" || targetUid.length < 1 || targetUid.length > 128) {
+    throw new HttpsError("invalid-argument", "Jogador inválido.");
+  }
+
+  const [rankSnapshot, userSnapshot] = await Promise.all([
+    database.collection("leaderboard").doc(targetUid).get(),
+    database.collection("users").doc(targetUid).get(),
+  ]);
+  if (!rankSnapshot.exists || !userSnapshot.exists) {
+    throw new HttpsError("not-found", "Jogador não encontrado.");
+  }
+
+  const rank = rankSnapshot.data();
+  const profile = userSnapshot.data();
+  return {
+    uid: targetUid,
+    displayName: rank.displayName || "Jogador",
+    level: rank.level || 1,
+    avatarUrl: rank.avatarUrl || "",
+    balanceCents: rank.balanceCents || 0,
+    gamesPlayed: Number.isSafeInteger(profile.gamesPlayed) ? profile.gamesPlayed : 0,
+    wins: Number.isSafeInteger(profile.wins) ? profile.wins : 0,
+    inventory: Array.isArray(profile.inventory)
+      ? profile.inventory.filter((id) => typeof id === "string")
+      : [],
+  };
 });
 
 exports.sendChatMessage = onCall(async (request) => {

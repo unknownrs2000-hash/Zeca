@@ -158,6 +158,9 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                             ranking = ranking,
                             erroSincronizacao = erroPerfil,
                             onAbrirAba = { aba = it },
+                            onBuscarPerfil = { uid, concluir ->
+                                FirebaseRepository.buscarPerfilPublico(uid, concluir)
+                            },
                         )
                         Aba.Jogos -> TelaJogos(
                             saldoCentavos = jogador.saldoCentavos,
@@ -239,6 +242,7 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                                 partidas = jogador.partidas,
                                 vitorias = jogador.vitorias,
                                 avatarUrl = jogador.avatarUrl,
+                                inventario = jogador.inventario,
                                 onSalvarApelido = { nome, concluir ->
                                     FirebaseRepository.atualizarApelido(nome) { error -> concluir(error?.localizedMessage) }
                                 },

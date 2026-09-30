@@ -238,6 +238,7 @@ fun TelaPerfil(
     partidas: Int,
     vitorias: Int,
     avatarUrl: String,
+    inventario: List<String>,
     onSalvarApelido: (String, (String?) -> Unit) -> Unit,
     onAbrirLoja: () -> Unit,
     onSair: () -> Unit,
@@ -282,6 +283,10 @@ fun TelaPerfil(
                 Estatistica("Saldo", formatarReais(saldoCentavos))
             }
         }
+        GlassCard {
+            Text("Coleção", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            ItensColecao(inventario)
+        }
         Button(onClick = onAbrirLoja, modifier = Modifier.fillMaxWidth()) { Text("Abrir Loja") }
         TextButton(onClick = onSair, modifier = Modifier.fillMaxWidth()) { Text("Sair da conta") }
     }
@@ -294,20 +299,7 @@ fun TelaLoja(
     onVoltar: () -> Unit,
     onComprar: (String, (String?) -> Unit) -> Unit,
 ) {
-    val produtos = listOf(
-        Produto("frame_aurora", "Moldura Aurora", "Um brilho suave em volta do seu avatar.", 1_299L, Cores.Turquesa, "✦"),
-        Produto("title_lucky", "Sorte Grande", "Um título para mostrar no seu perfil.", 799L, Cores.Laranja, "★"),
-        Produto("frame_neon", "Moldura Neon", "Uma borda vibrante para o seu avatar.", 1_999L, Color(0xFFFF8290), "◈"),
-        Produto("frame_gold", "Moldura Dourada", "Um contorno dourado de alto nível.", 2_499L, Color(0xFFFFD166), "❖"),
-        Produto("title_highroller", "Alto Rolo", "Um título para quem aposta grande.", 1_499L, Color(0xFFB388FF), "♦"),
-        Produto("frame_emerald", "Moldura Esmeralda", "Um verde profundo em volta do avatar.", 1_699L, Color(0xFF3DDC97), "✧"),
-        Produto("title_champion", "Campeão", "O título de quem domina o ranking.", 2_999L, Color(0xFF64B5F6), "✪"),
-        Produto("frame_royal", "Moldura Real", "Uma moldura digna de realeza.", 3_999L, Color(0xFFE040FB), "♛"),
-        Produto("title_jucineia", "Jucineia", "Um título exclusivo para o seu perfil.", 9_999L, Color(0xFFFF7043), "♠"),
-        Produto("title_donizete", "Donizete", "Um título raro para mostrar no perfil.", 7_499L, Color(0xFF26C6DA), "♣"),
-        Produto("title_erasmo", "Erasmo", "Um título de peso para poucos jogadores.", 12_999L, Color(0xFFFFCA28), "♥"),
-        Produto("title_milena", "Milena", "Um título de destaque para o seu perfil.", 8_499L, Color(0xFFEC407A), "☾"),
-    )
+    val produtos = catalogoLoja
     var mensagem by rememberSaveable { mutableStateOf("") }
     var mensagemErro by rememberSaveable { mutableStateOf(false) }
     var itemEmCompra by rememberSaveable { mutableStateOf("") }
@@ -476,7 +468,47 @@ private fun Estatistica(rotulo: String, valor: String) {
     }
 }
 
-private data class Produto(val id: String, val nome: String, val descricao: String, val precoCentavos: Long, val cor: Color, val simbolo: String)
+internal data class Produto(val id: String, val nome: String, val descricao: String, val precoCentavos: Long, val cor: Color, val simbolo: String)
+
+internal val catalogoLoja = listOf(
+    Produto("frame_aurora", "Moldura Aurora", "Um brilho suave em volta do seu avatar.", 1_299L, Cores.Turquesa, "✦"),
+    Produto("title_lucky", "Sorte Grande", "Um título para mostrar no seu perfil.", 799L, Cores.Laranja, "★"),
+    Produto("frame_neon", "Moldura Neon", "Uma borda vibrante para o seu avatar.", 1_999L, Color(0xFFFF8290), "◈"),
+    Produto("frame_gold", "Moldura Dourada", "Um contorno dourado de alto nível.", 2_499L, Color(0xFFFFD166), "❖"),
+    Produto("title_highroller", "Alto Rolo", "Um título para quem aposta grande.", 1_499L, Color(0xFFB388FF), "♦"),
+    Produto("frame_emerald", "Moldura Esmeralda", "Um verde profundo em volta do avatar.", 1_699L, Color(0xFF3DDC97), "✧"),
+    Produto("title_champion", "Campeão", "O título de quem domina o ranking.", 2_999L, Color(0xFF64B5F6), "✪"),
+    Produto("frame_royal", "Moldura Real", "Uma moldura digna de realeza.", 3_999L, Color(0xFFE040FB), "♛"),
+    Produto("title_jucineia", "Jucineia", "Um título exclusivo para o seu perfil.", 1_250_000L, Color(0xFFFF7043), "♠"),
+    Produto("title_donizete", "Donizete", "Um título raro para mostrar no perfil.", 1_000_000L, Color(0xFF26C6DA), "♣"),
+    Produto("title_erasmo", "Erasmo", "Um título de peso para poucos jogadores.", 1_500_000L, Color(0xFFFFCA28), "♥"),
+    Produto("title_milena", "Milena", "Um título de destaque para o seu perfil.", 1_100_000L, Color(0xFFEC407A), "☾"),
+)
+
+@Composable
+internal fun ItensColecao(ids: List<String>) {
+    val itens = ids.mapNotNull { id -> catalogoLoja.firstOrNull { it.id == id } }
+    if (itens.isEmpty()) {
+        Text("Nenhum item na coleção ainda.", color = Color.White.copy(alpha = 0.65f), fontSize = 13.sp)
+    } else {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            itens.forEach { item ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(item.cor.copy(alpha = 0.14f), RoundedCornerShape(14.dp))
+                        .border(1.dp, item.cor.copy(alpha = 0.5f), RoundedCornerShape(14.dp))
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(item.simbolo, color = item.cor, fontSize = 20.sp, fontWeight = FontWeight.Black)
+                    Text(item.nome, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
 
 internal fun parseValorCentavos(texto: String): Long? {
     val entrada = texto.trim().replace("R$", "").replace(" ", "")

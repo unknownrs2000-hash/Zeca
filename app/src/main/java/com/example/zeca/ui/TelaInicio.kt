@@ -15,8 +15,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -25,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.zeca.Aba
 import com.example.zeca.JogadorRanking
+import com.example.zeca.PerfilPublico
 import com.example.zeca.ui.theme.Cores
 
 @Composable
@@ -34,7 +41,23 @@ fun TelaInicio(
     ranking: List<JogadorRanking> = emptyList(),
     erroSincronizacao: String = "",
     onAbrirAba: (Aba) -> Unit,
+    onBuscarPerfil: (String, (PerfilPublico?, Exception?) -> Unit) -> Unit,
 ) {
+    var jogadorAberto by remember { mutableStateOf<JogadorRanking?>(null) }
+    var perfilPublico by remember { mutableStateOf<PerfilPublico?>(null) }
+    var erroPerfil by remember { mutableStateOf("") }
+    var carregandoPerfil by remember { mutableStateOf(false) }
+
+    jogadorAberto?.let { jogador ->
+        PerfilJogadorDialogo(
+            jogador = jogador,
+            perfil = perfilPublico,
+            carregando = carregandoPerfil,
+            erro = erroPerfil,
+            onFechar = { jogadorAberto = null },
+        )
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -126,6 +149,20 @@ fun TelaInicio(
                                 .fillMaxWidth()
                                 .background(Color.White.copy(alpha = 0.07f), RoundedCornerShape(15.dp))
                                 .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(15.dp))
+                                .clickable {
+                                    jogadorAberto = jogador
+                                    perfilPublico = null
+                                    erroPerfil = ""
+                                    carregandoPerfil = true
+                                    onBuscarPerfil(jogador.uid) { perfil, erro ->
+                                        if (jogadorAberto?.uid == jogador.uid) {
+                                            carregandoPerfil = false
+                                            perfilPublico = perfil
+                                            erroPerfil = erro?.localizedMessage
+                                                ?: if (perfil == null) "Não foi possível carregar o perfil." else ""
+                                        }
+                                    }
+                                }
                                 .padding(horizontal = 14.dp, vertical = 12.dp),
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
@@ -195,5 +232,56 @@ fun TelaEmBreve(titulo: String, descricao: String) {
         Text(titulo, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
         Text(descricao, color = Cores.Cinza, fontSize = 16.sp)
+    }
+}
+
+@Composable
+private fun PerfilJogadorDialogo(
+    jogador: JogadorRanking,
+    perfil: PerfilPublico?,
+    carregando: Boolean,
+    erro: String,
+    onFechar: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onFechar,
+        containerColor = Cores.Cartao,
+        confirmButton = { TextButton(onClick = onFechar) { Text("Fechar") } },
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(jogador.apelido, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Black)
+                Text("Nível ${perfil?.nivel ?: jogador.nivel}", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                when {
+                    carregando -> Text("Carregando perfil...", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
+                    perfil == null -> Text(
+                        erro.ifBlank { "Não foi possível carregar o perfil." },
+                        color = Cores.Laranja,
+                        fontSize = 13.sp,
+                    )
+                    else -> {
+                        DadoJogador("Saldo", formatarReais(perfil.saldoCentavos))
+                        DadoJogador("Partidas", perfil.partidas.toString())
+                        DadoJogador("Vitórias", perfil.vitorias.toString())
+                        Text("Coleção", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        ItensColecao(perfil.inventario)
+                    }
+                }
+            }
+        },
+    )
+}
+
+@Composable
+private fun DadoJogador(rotulo: String, valor: String) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(rotulo, color = Color.White.copy(alpha = 0.62f), fontSize = 13.sp)
+        Text(valor, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
     }
 }

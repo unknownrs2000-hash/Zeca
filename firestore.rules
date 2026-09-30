@@ -19,10 +19,10 @@ service cloud.firestore {
         : itemId == 'frame_emerald' ? 1699
         : itemId == 'title_champion' ? 2999
         : itemId == 'frame_royal' ? 3999
-        : itemId == 'title_jucineia' ? 9999
-        : itemId == 'title_donizete' ? 7499
-        : itemId == 'title_erasmo' ? 12999
-        : itemId == 'title_milena' ? 8499
+        : itemId == 'title_jucineia' ? 1250000
+        : itemId == 'title_donizete' ? 1000000
+        : itemId == 'title_erasmo' ? 1500000
+        : itemId == 'title_milena' ? 1100000
         : -1;
     }
 
