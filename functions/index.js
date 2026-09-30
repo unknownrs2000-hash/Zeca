@@ -82,6 +82,13 @@ function enforceGameCooldown(profile, nowMs) {
   }
 }
 
+function profitTotals(profitCents) {
+  return {
+    totalWonCents: FieldValue.increment(profitCents > 0 ? profitCents : 0),
+    totalLostCents: FieldValue.increment(profitCents < 0 ? -profitCents : 0),
+  };
+}
+
 exports.ensurePlayerProfile = onCall(async (request) => {
   const uid = authenticatedUid(request);
   const authUser = await getAuth().getUser(uid);
@@ -402,6 +409,7 @@ exports.playGame = onCall(async (request) => {
       gamesPlayed,
       wins,
       lastGameActionAtMs: actionAtMs,
+      ...profitTotals(deltaCents),
     });
     transaction.update(rankRef, { balanceCents: balanceAfter });
     transaction.create(transactionRef, {
@@ -552,7 +560,13 @@ exports.cashOutCrash = onCall(async (request) => {
     }
     const gamesPlayed = (profile.gamesPlayed || 0) + 1;
     const wins = (profile.wins || 0) + (profitCents > 0 ? 1 : 0);
-    transaction.update(userRef, { balanceCents: balanceAfter, gamesPlayed, wins, lastGameActionAtMs: nowMs });
+    transaction.update(userRef, {
+      balanceCents: balanceAfter,
+      gamesPlayed,
+      wins,
+      lastGameActionAtMs: nowMs,
+      ...profitTotals(profitCents),
+    });
     transaction.update(rankRef, { balanceCents: balanceAfter });
     transaction.update(gameRef, {
       status: "settled",
@@ -679,7 +693,13 @@ exports.startBlackjack = onCall(async (request) => {
       throw new HttpsError("failed-precondition", "Saldo resultante inválido.");
     }
 
-    transaction.update(userRef, { balanceCents: balanceAfter, gamesPlayed, wins, lastGameActionAtMs: startedAtMs });
+    transaction.update(userRef, {
+      balanceCents: balanceAfter,
+      gamesPlayed,
+      wins,
+      lastGameActionAtMs: startedAtMs,
+      ...(initialGame.status === "settled" ? profitTotals(initialGame.profitCents) : {}),
+    });
     transaction.update(rankRef, { balanceCents: balanceAfter });
     transaction.set(gameRef, initialGame);
     transaction.create(betHistoryRef, {
@@ -817,7 +837,13 @@ exports.blackjackAction = onCall(async (request) => {
       balanceCents: balanceAfter,
     };
 
-    transaction.update(userRef, { balanceCents: balanceAfter, gamesPlayed, wins, lastGameActionAtMs: actionAtMs });
+    transaction.update(userRef, {
+      balanceCents: balanceAfter,
+      gamesPlayed,
+      wins,
+      lastGameActionAtMs: actionAtMs,
+      ...profitTotals(finalGame.profitCents),
+    });
     transaction.update(rankRef, { balanceCents: balanceAfter });
     transaction.update(gameRef, finalGame);
     if (extraWagerCents > 0) {

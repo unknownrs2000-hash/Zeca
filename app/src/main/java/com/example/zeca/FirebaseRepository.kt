@@ -22,6 +22,8 @@ data class PerfilJogador(
     val partidas: Int,
     val vitorias: Int,
     val inventario: List<String>,
+    val ganhoTotalCentavos: Long,
+    val perdaTotalCentavos: Long,
 )
 
 data class JogadorRanking(
@@ -766,6 +768,8 @@ object FirebaseRepository {
         partidas = snapshot.getLong("gamesPlayed")?.toInt() ?: 0,
         vitorias = snapshot.getLong("wins")?.toInt() ?: 0,
         inventario = (snapshot.get("inventory") as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
+        ganhoTotalCentavos = snapshot.getLong("totalWonCents") ?: 0L,
+        perdaTotalCentavos = snapshot.getLong("totalLostCents") ?: 0L,
     )
 
     private fun toJogadorRanking(snapshot: DocumentSnapshot): JogadorRanking? {

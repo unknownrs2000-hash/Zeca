@@ -157,7 +157,13 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                             atividadeRecente = movimentos.take(3).map { it.titulo },
                             ranking = ranking,
                             erroSincronizacao = erroPerfil,
+                            ganhoTotalCentavos = jogador.ganhoTotalCentavos,
+                            perdaTotalCentavos = jogador.perdaTotalCentavos,
                             onAbrirAba = { aba = it },
+                            onAbrirLoja = {
+                                mostrarLoja = true
+                                aba = Aba.Perfil
+                            },
                             onBuscarPerfil = { uid, concluir ->
                                 FirebaseRepository.buscarPerfilPublico(uid, concluir)
                             },

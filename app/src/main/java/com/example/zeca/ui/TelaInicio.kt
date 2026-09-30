@@ -49,7 +49,10 @@ fun TelaInicio(
     atividadeRecente: List<String>,
     ranking: List<JogadorRanking> = emptyList(),
     erroSincronizacao: String = "",
+    ganhoTotalCentavos: Long = 0L,
+    perdaTotalCentavos: Long = 0L,
     onAbrirAba: (Aba) -> Unit,
+    onAbrirLoja: () -> Unit,
     onBuscarPerfil: (String, (PerfilPublico?, Exception?) -> Unit) -> Unit,
 ) {
     var jogadorAberto by remember { mutableStateOf<JogadorRanking?>(null) }
@@ -102,9 +105,11 @@ fun TelaInicio(
                 Text(formatarReais(saldoCentavos), color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Black)
                 Spacer(Modifier.height(18.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    AcaoCarteira("Adicionar via Pix", Modifier.weight(1f), true) { onAbrirAba(Aba.Carteira) }
-                    AcaoCarteira("Sacar", Modifier.weight(1f), false) { onAbrirAba(Aba.Carteira) }
+                    ResumoGanhoPerda("GANHOS", formatarReais(ganhoTotalCentavos), Cores.Verde, Modifier.weight(1f))
+                    ResumoGanhoPerda("PERDAS", formatarReais(perdaTotalCentavos), Color(0xFFFF8790), Modifier.weight(1f))
                 }
+                Spacer(Modifier.height(14.dp))
+                AcaoCarteira("Ir para a loja", Modifier.fillMaxWidth(), true) { onAbrirLoja() }
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -220,6 +225,7 @@ private fun AcaoCarteira(texto: String, modifier: Modifier, destaque: Boolean, o
             .border(1.dp, Color.White.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 13.dp),
+        contentAlignment = Alignment.Center,
     ) {
         Text(
             texto,
@@ -227,6 +233,20 @@ private fun AcaoCarteira(texto: String, modifier: Modifier, destaque: Boolean, o
             fontWeight = FontWeight.Bold,
             fontSize = 13.sp,
         )
+    }
+}
+
+@Composable
+private fun ResumoGanhoPerda(rotulo: String, valor: String, cor: Color, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
+            .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(14.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(rotulo, color = Color.White.copy(alpha = 0.6f), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        Text(valor, color = cor, fontSize = 15.sp, fontWeight = FontWeight.Black, maxLines = 1)
     }
 }
 
