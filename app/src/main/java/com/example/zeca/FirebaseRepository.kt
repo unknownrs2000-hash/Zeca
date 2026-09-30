@@ -530,6 +530,10 @@ object FirebaseRepository {
             "frame_emerald" to ("Moldura Esmeralda" to 1_699L),
             "title_champion" to ("Título: Campeão" to 2_999L),
             "frame_royal" to ("Moldura Real" to 3_999L),
+            "title_jucineia" to ("Título: Jucineia" to 9_999L),
+            "title_donizete" to ("Título: Donizete" to 7_499L),
+            "title_erasmo" to ("Título: Erasmo" to 12_999L),
+            "title_milena" to ("Título: Milena" to 8_499L),
         )
         val produto = produtos[itemId]
         val uid = auth.currentUser?.uid

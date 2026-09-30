@@ -19,6 +19,10 @@ service cloud.firestore {
         : itemId == 'frame_emerald' ? 1699
         : itemId == 'title_champion' ? 2999
         : itemId == 'frame_royal' ? 3999
+        : itemId == 'title_jucineia' ? 9999
+        : itemId == 'title_donizete' ? 7499
+        : itemId == 'title_erasmo' ? 12999
+        : itemId == 'title_milena' ? 8499
         : -1;
     }
 
@@ -31,6 +35,10 @@ service cloud.firestore {
         : itemId == 'frame_emerald' ? 'Moldura Esmeralda'
         : itemId == 'title_champion' ? 'Título: Campeão'
         : itemId == 'frame_royal' ? 'Moldura Real'
+        : itemId == 'title_jucineia' ? 'Título: Jucineia'
+        : itemId == 'title_donizete' ? 'Título: Donizete'
+        : itemId == 'title_erasmo' ? 'Título: Erasmo'
+        : itemId == 'title_milena' ? 'Título: Milena'
         : '';
     }
 

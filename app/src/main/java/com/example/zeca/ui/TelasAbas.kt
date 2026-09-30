@@ -303,6 +303,10 @@ fun TelaLoja(
         Produto("frame_emerald", "Moldura Esmeralda", "Um verde profundo em volta do avatar.", 1_699L, Color(0xFF3DDC97), "✧"),
         Produto("title_champion", "Campeão", "O título de quem domina o ranking.", 2_999L, Color(0xFF64B5F6), "✪"),
         Produto("frame_royal", "Moldura Real", "Uma moldura digna de realeza.", 3_999L, Color(0xFFE040FB), "♛"),
+        Produto("title_jucineia", "Jucineia", "Um título exclusivo para o seu perfil.", 9_999L, Color(0xFFFF7043), "♠"),
+        Produto("title_donizete", "Donizete", "Um título raro para mostrar no perfil.", 7_499L, Color(0xFF26C6DA), "♣"),
+        Produto("title_erasmo", "Erasmo", "Um título de peso para poucos jogadores.", 12_999L, Color(0xFFFFCA28), "♥"),
+        Produto("title_milena", "Milena", "Um título de destaque para o seu perfil.", 8_499L, Color(0xFFEC407A), "☾"),
     )
     var mensagem by rememberSaveable { mutableStateOf("") }
     var mensagemErro by rememberSaveable { mutableStateOf(false) }
