@@ -166,10 +166,10 @@ exports.updatePlayerProfile = onCall(async (request) => {
   if (!username) {
     throw new HttpsError("invalid-argument", "Use um nome de usuário de 3 a 20 caracteres: letras, números e _.");
   }
-  const fotoFirebase = avatarUrl.startsWith("https://firebasestorage.googleapis.com/");
+  const fotoCloudinary = avatarUrl.startsWith("https://res.cloudinary.com/vwctfu9u/image/upload/");
   const fotoGoogle = /^https:\/\/(?:[a-z0-9-]+\.)*googleusercontent\.com\//i.test(avatarUrl);
-  if (avatarUrl && ((!fotoFirebase && !fotoGoogle) || avatarUrl.length > 2_048)) {
-    throw new HttpsError("invalid-argument", "A foto de perfil precisa estar armazenada no Firebase Storage.");
+  if (avatarUrl && ((!fotoCloudinary && !fotoGoogle) || avatarUrl.length > 2_048)) {
+    throw new HttpsError("invalid-argument", "A foto de perfil precisa estar armazenada no Cloudinary.");
   }
 
   const userRef = database.collection("users").doc(uid);

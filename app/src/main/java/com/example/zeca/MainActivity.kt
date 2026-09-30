@@ -56,6 +56,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -136,6 +137,7 @@ fun CassinoApp() {
 
 @Composable
 private fun AppAutenticado(usuario: FirebaseUser) {
+    val contexto = LocalContext.current
     var aba by rememberSaveable { mutableStateOf(Aba.Inicio) }
     var mostrarLoja by rememberSaveable { mutableStateOf(false) }
     var perfil by remember(usuario.uid) { mutableStateOf<PerfilJogador?>(null) }
@@ -282,7 +284,9 @@ private fun AppAutenticado(usuario: FirebaseUser) {
             nomeInicial = jogador.apelido,
             avatarUrlInicial = jogador.avatarUrl,
             onEnviarFoto = { uri, concluir ->
-                FirebaseRepository.enviarFotoPerfil(uri) { url, error -> concluir(url, error?.localizedMessage) }
+                FirebaseRepository.enviarFotoPerfil(uri, contexto.contentResolver) { url, error ->
+                    concluir(url, error?.localizedMessage)
+                }
             },
             onSalvarPerfil = { username, displayName, avatarUrl, concluir ->
                 FirebaseRepository.atualizarPerfil(username, displayName, avatarUrl) { error ->
@@ -413,7 +417,9 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                                     FirebaseRepository.equiparMoldura(itemId) { error -> concluir(error?.localizedMessage) }
                                 },
                                 onEnviarFoto = { uri, concluir ->
-                                    FirebaseRepository.enviarFotoPerfil(uri) { url, error -> concluir(url, error?.localizedMessage) }
+                                    FirebaseRepository.enviarFotoPerfil(uri, contexto.contentResolver) { url, error ->
+                                        concluir(url, error?.localizedMessage)
+                                    }
                                 },
                                 onSalvarPerfil = { username, nome, avatarUrl, concluir ->
                                     FirebaseRepository.atualizarPerfil(username, nome, avatarUrl) { error -> concluir(error?.localizedMessage) }

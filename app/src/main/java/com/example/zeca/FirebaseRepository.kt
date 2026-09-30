@@ -9,7 +9,7 @@ import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
 import com.google.firebase.functions.FirebaseFunctions
 import com.google.firebase.functions.FirebaseFunctionsException
-import com.google.firebase.storage.FirebaseStorage
+import android.content.ContentResolver
 import android.net.Uri
 
 data class PerfilJogador(
@@ -143,8 +143,9 @@ data class EstadoBlackjack(
 object FirebaseRepository {
     val auth: FirebaseAuth by lazy { FirebaseAuth.getInstance() }
     private val database by lazy { FirebaseFirestore.getInstance() }
-    private val storage by lazy { FirebaseStorage.getInstance() }
     private const val SERVER_URL = "https://zeca-jvic.onrender.com"
+    private const val CLOUDINARY_CLOUD_NAME = "vwctfu9u"
+    private const val CLOUDINARY_UPLOAD_PRESET = "zeca_unsigned"
     private val principal = android.os.Handler(android.os.Looper.getMainLooper())
 
     fun garantirPerfil(user: FirebaseUser, callback: (Exception?) -> Unit) {
@@ -435,20 +436,64 @@ object FirebaseRepository {
         ) { _, erro -> callback(erro) }
     }
 
-    fun enviarFotoPerfil(uri: Uri, callback: (String?, Exception?) -> Unit) {
+    fun enviarFotoPerfil(uri: Uri, contentResolver: ContentResolver, callback: (String?, Exception?) -> Unit) {
         val uid = auth.currentUser?.uid
         if (uid == null) {
             callback(null, IllegalStateException("Entre na sua conta novamente."))
             return
         }
-        val foto = storage.reference.child("avatars/$uid/profile")
-        foto.putFile(uri)
-            .continueWithTask { tarefa ->
-                if (!tarefa.isSuccessful) throw tarefa.exception ?: IllegalStateException("Não foi possível enviar a foto.")
-                foto.downloadUrl
+        Thread {
+            var urlFoto: String? = null
+            var erro: Exception? = null
+            try {
+                val mimeType = contentResolver.getType(uri)?.takeIf { it.startsWith("image/") }
+                    ?: "image/jpeg"
+                val extensao = mimeType.substringAfter('/', "jpeg").substringBefore('+')
+                val boundary = "----ZecaUpload${java.util.UUID.randomUUID()}"
+                val conexao = java.net.URL(
+                    "https://api.cloudinary.com/v1_1/$CLOUDINARY_CLOUD_NAME/image/upload",
+                ).openConnection() as java.net.HttpURLConnection
+                try {
+                    conexao.requestMethod = "POST"
+                    conexao.connectTimeout = 15_000
+                    conexao.readTimeout = 60_000
+                    conexao.doOutput = true
+                    conexao.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+                    conexao.outputStream.use { output ->
+                        val writer = output.bufferedWriter(Charsets.UTF_8)
+                        writer.append("--$boundary\r\n")
+                        writer.append("Content-Disposition: form-data; name=\"upload_preset\"\r\n\r\n")
+                        writer.append("$CLOUDINARY_UPLOAD_PRESET\r\n")
+                        writer.append("--$boundary\r\n")
+                        writer.append("Content-Disposition: form-data; name=\"folder\"\r\n\r\n")
+                        writer.append("zeca/avatars/$uid\r\n")
+                        writer.append("--$boundary\r\n")
+                        writer.append("Content-Disposition: form-data; name=\"file\"; filename=\"avatar.$extensao\"\r\n")
+                        writer.append("Content-Type: $mimeType\r\n\r\n")
+                        writer.flush()
+                        contentResolver.openInputStream(uri)?.use { input -> input.copyTo(output) }
+                            ?: throw IllegalStateException("Não foi possível abrir a imagem escolhida.")
+                        output.write("\r\n--$boundary--\r\n".toByteArray(Charsets.UTF_8))
+                        output.flush()
+                    }
+                    val status = conexao.responseCode
+                    val fluxo = if (status in 200..299) conexao.inputStream else conexao.errorStream
+                    val resposta = fluxo?.bufferedReader()?.use { it.readText() }.orEmpty()
+                    val json = runCatching { org.json.JSONObject(resposta) }.getOrNull()
+                    if (status !in 200..299) {
+                        val detalhe = json?.optJSONObject("error")?.optString("message").orEmpty()
+                        throw IllegalStateException(detalhe.ifBlank { "O Cloudinary recusou o upload ($status)." })
+                    }
+                    urlFoto = json?.optString("secure_url")?.takeIf { it.startsWith("https://res.cloudinary.com/") }
+                        ?: throw IllegalStateException("O Cloudinary não retornou uma URL segura para a imagem.")
+                } finally {
+                    conexao.disconnect()
+                }
+            } catch (exception: Exception) {
+                erro = exception
             }
-            .addOnSuccessListener { callback(it.toString(), null) }
-            .addOnFailureListener { callback(null, it) }
+            principal.post { callback(urlFoto, erro) }
+        }.start()
     }
 
     fun registrarChavePix(tipo: String, chave: String, callback: (Exception?) -> Unit) {

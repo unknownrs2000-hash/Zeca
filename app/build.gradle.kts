@@ -53,7 +53,6 @@ dependencies {
     implementation(libs.firebase.auth)
     implementation(libs.firebase.firestore)
     implementation(libs.firebase.functions)
-    implementation(libs.firebase.storage)
     implementation(libs.coil.compose)
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
     implementation(libs.googleid)
