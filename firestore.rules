@@ -146,6 +146,21 @@ service cloud.firestore {
         );
     }
 
+      function isAvatarDefaultsMigration() {
+        let changed = request.resource.data.diff(resource.data).affectedKeys();
+        return changed.size() > 0
+          && changed.hasOnly(['avatarAsProfilePhoto', 'equippedAvatarItems'])
+          && request.resource.data.avatarAsProfilePhoto is bool
+          && request.resource.data.equippedAvatarItems is list
+          && request.resource.data.equippedAvatarItems.size() == 0
+          && (!('avatarAsProfilePhoto' in resource.data)
+            ? request.resource.data.avatarAsProfilePhoto == false
+            : !changed.hasAny(['avatarAsProfilePhoto']))
+          && (!('equippedAvatarItems' in resource.data)
+            ? request.resource.data.equippedAvatarItems.size() == 0
+            : !changed.hasAny(['equippedAvatarItems']));
+      }
+
     match /users/{userId} {
       allow read: if signedIn() && request.auth.uid == userId;
       allow create: if validInitialProfile(userId);
@@ -156,6 +171,7 @@ service cloud.firestore {
           (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName'])
             && validDisplayName(request.resource.data.displayName))
           || isOneTimeBalanceInitialization()
+          || isAvatarDefaultsMigration()
           || (
             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['balanceCents', 'inventory', 'lastPurchaseId'])
             && request.resource.data.diff(resource.data).affectedKeys().size() == 3

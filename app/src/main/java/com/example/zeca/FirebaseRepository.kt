@@ -221,11 +221,10 @@ object FirebaseRepository {
                 val wins = (profile["wins"] as? Number)?.toLong() ?: 0L
                 val canReceiveStartingBalance = !initialized && balance == 0L && gamesPlayed == 0L && wins == 0L
                 val nextBalance = if (canReceiveStartingBalance) 50_000L else balance
+                val updates = mutableMapOf<String, Any>()
                 if (!initialized || nextBalance != balance) {
-                    transaction.update(
-                        userRef,
-                        mapOf("balanceInitialized" to true, "balanceCents" to nextBalance),
-                    )
+                    updates["balanceInitialized"] = true
+                    updates["balanceCents"] = nextBalance
                 }
                 val profileName = profile["displayName"] as? String ?: nomeConta
                 val username = profile["username"] as? String ?: ""
@@ -233,6 +232,9 @@ object FirebaseRepository {
                 val profileAvatar = profile["avatarUrl"] as? String ?: user.photoUrl?.toString().orEmpty()
                 val avatarAsProfilePhoto = profile["avatarAsProfilePhoto"] as? Boolean ?: false
                 val equippedAvatarItems = (profile["equippedAvatarItems"] as? List<*>)?.filterIsInstance<String>().orEmpty()
+                if ("avatarAsProfilePhoto" !in profile) updates["avatarAsProfilePhoto"] = false
+                if ("equippedAvatarItems" !in profile) updates["equippedAvatarItems"] = emptyList<String>()
+                if (updates.isNotEmpty()) transaction.update(userRef, updates)
                 val publicProfile = mapOf(
                     "displayName" to profileName,
                     "username" to username,

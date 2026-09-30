@@ -289,3 +289,31 @@ test("allows purchase of a priced avatar cosmetic", async () => {
   assert.equal(profile.data().balanceCents, 49_001);
   assert.deepEqual(profile.data().inventory, ["avatar_hair_wave"]);
 });
+
+test("allows legacy profiles to receive only safe default avatar fields once", async () => {
+  const uid = "legacy-avatar-profile";
+  await environment.withSecurityRulesDisabled(async (context) => {
+    await context.firestore().doc(`users/${uid}`).set({
+      uid,
+      displayName: "Jogador Legado",
+      email: "legado@example.com",
+      balanceCents: 10_000,
+      balanceInitialized: true,
+      level: 1,
+      avatarUrl: "",
+      username: "legado",
+      profileSetupComplete: true,
+      pixKey: "",
+      pixKeyType: "",
+      pixKeyHash: "",
+      gamesPlayed: 2,
+      wins: 1,
+      inventory: [],
+    });
+  });
+  const database = environment.authenticatedContext(uid).firestore();
+  const userRef = doc(database, "users", uid);
+  await assertSucceeds(updateDoc(userRef, { avatarAsProfilePhoto: false, equippedAvatarItems: [] }));
+  await assertFails(updateDoc(userRef, { equippedAvatarItems: ["avatar_crown_neon"] }));
+  await assertFails(updateDoc(userRef, { avatarAsProfilePhoto: true }));
+});
