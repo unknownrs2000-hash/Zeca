@@ -8,6 +8,8 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -58,6 +60,9 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.PersonRemove
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
@@ -141,6 +146,8 @@ fun TelaChat(
     onEncaminhar: (String?, String?, String, String, (Exception?) -> Unit) -> Unit,
     onCriarGrupo: (String, String, List<String>, String, String, String, (String?, Exception?) -> Unit) -> Unit,
     onAtualizarGrupo: (String, String, String, String, String, (Exception?) -> Unit) -> Unit,
+    onGerenciarMembros: (String, String, String, List<String>, (Exception?) -> Unit) -> Unit,
+    onEnviarFotoGrupo: (String, Uri, (String?) -> Unit) -> Unit,
     onRenomearFoguinho: (String, String, (Exception?) -> Unit) -> Unit,
     onApagarParaMim: (String, String, (Exception?) -> Unit) -> Unit,
     onApagarParaTodos: (String, String, (Exception?) -> Unit) -> Unit,
@@ -176,6 +183,21 @@ fun TelaChat(
     var editarPolicyEditavel by rememberSaveable { mutableStateOf("creator") }
     var enviarPolicyEditavel by rememberSaveable { mutableStateOf("everyone") }
     var salvandoConfigGrupo by remember { mutableStateOf(false) }
+    var adicionarMembrosAberto by remember { mutableStateOf(false) }
+    var salvandoMembros by remember { mutableStateOf(false) }
+    var enviandoFotoGrupo by remember { mutableStateOf(false) }
+    var buscaNovoMembro by rememberSaveable { mutableStateOf("") }
+    val membrosParaAdicionar = remember { mutableStateListOf<String>() }
+    val seletorFotoGrupo = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        val chatIdGrupo = grupoConfigId
+        if (uri != null && chatIdGrupo.isNotBlank()) {
+            enviandoFotoGrupo = true
+            onEnviarFotoGrupo(chatIdGrupo, uri) { error ->
+                enviandoFotoGrupo = false
+                grupoErro = error.orEmpty()
+            }
+        }
+    }
     val destinatario = jogadores.firstOrNull { it.uid == destinatarioUid }
     val perfilJogador = jogadores.firstOrNull { it.uid == perfilUid }
         ?: perfilPublico?.takeIf { it.uid == perfilUid }?.let {
@@ -327,6 +349,8 @@ fun TelaChat(
                 } else {
                     conversasDiretas.forEach { conversa ->
                         val jogador = jogadores.firstOrNull { it.uid == conversa.outroUid }
+                        val diasFoguinho = diasFoguinhoAtivos(conversa)
+                        val nivelFoguinho = if (diasFoguinho == conversa.diasFoguinho) conversa.nivelFoguinho else 0
                         LinhaJogador(
                             nome = jogador?.apelido ?: "Jogador",
                             username = jogador?.username.orEmpty(),
@@ -335,6 +359,8 @@ fun TelaChat(
                             avatarUrl = jogador?.avatarUrl.orEmpty(),
                             avatarItems = jogador?.avatarItensEquipados.orEmpty(),
                             avatarAsProfilePhoto = jogador?.avatarComoFotoPerfil == true,
+                            foguinhoDias = diasFoguinho,
+                            foguinhoNivel = nivelFoguinho,
                             onClick = { destinatarioUid = conversa.outroUid; erro = "" },
                             onPerfil = { perfilUid = conversa.outroUid },
                         )
@@ -373,7 +399,7 @@ fun TelaChat(
                             horizontalArrangement = Arrangement.spacedBy(11.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Icon(Icons.Filled.Groups, contentDescription = null, tint = Cores.Turquesa)
+                            AvatarChat(grupo.nome, 42.dp, photoUrl = grupo.fotoGrupoUrl)
                             Column(Modifier.weight(1f).clickable { grupoUid = grupo.id; erro = "" }) {
                                 Text(grupo.nome, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                                 Text(
@@ -430,7 +456,11 @@ fun TelaChat(
                 rascunho = rascunho,
                 onRascunhoChange = { rascunho = it.take(500); erro = "" },
                 enviando = enviando,
-                podeEnviarMensagem = !emGrupo || conversaGrupo?.politicaEnviar != "creator" || conversaGrupo.criadoPorUid == uidAtual,
+                podeEnviarMensagem = !emGrupo || when (conversaGrupo?.politicaEnviar) {
+                    "creator" -> conversaGrupo.criadoPorUid == uidAtual
+                    "admins" -> conversaGrupo.criadoPorUid == uidAtual || uidAtual in conversaGrupo.adminsUids
+                    else -> true
+                },
                 erro = erro,
                 onEnviar = enviarMensagem,
                 onPerfil = { perfilUid = it },
@@ -457,7 +487,7 @@ fun TelaChat(
                     if (emConversa) {
                         CabecalhoConversa(
                             nome = if (emGrupo) conversaGrupo?.nome ?: "Grupo" else destinatario?.apelido ?: "Jogador",
-                            avatarUrl = if (emGrupo) "" else destinatario?.avatarUrl.orEmpty(),
+                            avatarUrl = if (emGrupo) conversaGrupo?.fotoGrupoUrl.orEmpty() else destinatario?.avatarUrl.orEmpty(),
                             avatarItems = destinatario?.avatarItensEquipados.orEmpty(),
                             avatarAsProfilePhoto = destinatario?.avatarComoFotoPerfil == true,
                             detalhe = if (emGrupo) "${conversaGrupo?.participantes?.size ?: 0} pessoas" else destinatario?.let { "Nível ${it.nivel}" } ?: "",
@@ -592,12 +622,16 @@ fun TelaChat(
                     verticalArrangement = Arrangement.spacedBy(11.dp),
                 ) {
                     Text("Quem pode editar o grupo?", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    OpcoesChat(listOf("Criador", "Todos"), if (editarGrupoPolicy == "creator") "Criador" else "Todos") {
-                        editarGrupoPolicy = if (it == "Criador") "creator" else "members"
+                    OpcoesChat(listOf("Admins", "Todos"), if (editarGrupoPolicy == "creator") "Admins" else "Todos") {
+                        editarGrupoPolicy = if (it == "Admins") "creator" else "members"
                     }
                     Text("Quem pode enviar mensagens?", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    OpcoesChat(listOf("Todos", "Criador"), if (enviarGrupoPolicy == "creator") "Criador" else "Todos") {
-                        enviarGrupoPolicy = if (it == "Criador") "creator" else "everyone"
+                    OpcoesChat(listOf("Todos", "Admins", "Criador"), when (enviarGrupoPolicy) {
+                        "creator" -> "Criador"
+                        "admins" -> "Admins"
+                        else -> "Todos"
+                    }) {
+                        enviarGrupoPolicy = when (it) { "Criador" -> "creator"; "Admins" -> "admins"; else -> "everyone" }
                     }
                 }
                 Text("A sequência diária avança quando todos os participantes enviam uma mensagem.", color = Color.White.copy(alpha = 0.58f), fontSize = 11.sp)
@@ -640,7 +674,23 @@ fun TelaChat(
 
     val grupoEmConfiguracao = grupos.firstOrNull { it.id == grupoConfigId }
     if (grupoEmConfiguracao != null) {
-        val podeEditarGrupo = grupoEmConfiguracao.criadoPorUid == uidAtual || grupoEmConfiguracao.politicaEditar == "members"
+        val ehCriador = grupoEmConfiguracao.criadoPorUid == uidAtual
+        val ehAdmin = ehCriador || uidAtual in grupoEmConfiguracao.adminsUids
+        val podeEditarGrupo = ehAdmin || grupoEmConfiguracao.politicaEditar == "members"
+
+        fun acionarGestaoMembro(action: String, targetUid: String = "", memberUids: List<String> = emptyList()) {
+            salvandoMembros = true
+            grupoErro = ""
+            onGerenciarMembros(grupoEmConfiguracao.id, action, targetUid, memberUids) { error ->
+                salvandoMembros = false
+                if (error != null) grupoErro = error.localizedMessage ?: "Não foi possível atualizar os participantes."
+                else if (action == "add") {
+                    adicionarMembrosAberto = false
+                    membrosParaAdicionar.clear()
+                }
+            }
+        }
+
         Dialog(
             onDismissRequest = { if (!salvandoConfigGrupo) grupoConfigId = "" },
             properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -669,6 +719,20 @@ fun TelaChat(
                         Icon(Icons.Filled.Close, contentDescription = "Fechar", tint = Color.White.copy(alpha = 0.72f))
                     }
                 }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    AvatarChat(grupoEmConfiguracao.nome, 58.dp, photoUrl = grupoEmConfiguracao.fotoGrupoUrl)
+                    Column(Modifier.weight(1f)) {
+                        Text("FOTO DO GRUPO", color = Cores.Verde, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text("Visível para todos os participantes", color = Color.White.copy(alpha = 0.62f), fontSize = 11.sp)
+                    }
+                    IconButton(
+                        onClick = { seletorFotoGrupo.launch("image/*") },
+                        enabled = ehAdmin && !enviandoFotoGrupo,
+                    ) {
+                        Icon(Icons.Filled.PhotoCamera, contentDescription = "Alterar foto do grupo", tint = Cores.Turquesa)
+                    }
+                }
+                if (enviandoFotoGrupo) Text("Enviando foto do grupo...", color = Cores.Turquesa, fontSize = 12.sp)
                 OutlinedTextField(
                     value = nomeGrupoEditavel,
                     onValueChange = { nomeGrupoEditavel = it.take(32); grupoErro = "" },
@@ -687,12 +751,27 @@ fun TelaChat(
                     maxLines = 3,
                 )
                 Text("PARTICIPANTES · ${grupoEmConfiguracao.participantes.size}", color = Cores.Verde, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                if (ehAdmin && grupoEmConfiguracao.participantes.size < 100) {
+                    TextButton(
+                        onClick = {
+                            membrosParaAdicionar.clear()
+                            buscaNovoMembro = ""
+                            adicionarMembrosAberto = !adicionarMembrosAberto
+                            grupoErro = ""
+                        },
+                        enabled = !salvandoMembros,
+                    ) {
+                        Icon(Icons.Filled.PersonAdd, contentDescription = null, tint = Cores.Turquesa)
+                        Text(if (adicionarMembrosAberto) "Fechar seleção" else "Adicionar pessoas", color = Cores.Turquesa)
+                    }
+                }
                 Column(
                     modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color.Black.copy(alpha = 0.16f)).padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(9.dp),
                 ) {
                     grupoEmConfiguracao.participantes.forEach { uid ->
                         val jogador = jogadores.firstOrNull { it.uid == uid }
+                        val membroAdmin = uid == grupoEmConfiguracao.criadoPorUid || uid in grupoEmConfiguracao.adminsUids
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             AvatarChat(
                                 jogador?.apelido ?: "?",
@@ -701,32 +780,107 @@ fun TelaChat(
                                 avatarItems = jogador?.avatarItensEquipados.orEmpty(),
                                 avatarAsProfilePhoto = jogador?.avatarComoFotoPerfil == true,
                             )
-                            Column {
+                            Column(Modifier.weight(1f)) {
                                 Text(jogador?.apelido ?: "Participante", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                                 Text(
-                                    when (uid) {
-                                        grupoEmConfiguracao.criadoPorUid -> "Criador"
-                                        uidAtual -> "Você"
+                                    when {
+                                        uid == grupoEmConfiguracao.criadoPorUid -> "Criador"
+                                        uid == uidAtual && membroAdmin -> "Você · Admin"
+                                        uid == uidAtual -> "Você"
+                                        membroAdmin -> "Admin"
                                         else -> jogador?.username?.let { "@$it" } ?: "Membro"
                                     },
                                     color = Color.White.copy(alpha = 0.58f),
                                     fontSize = 10.sp,
                                 )
                             }
+                            if (ehAdmin && uid != grupoEmConfiguracao.criadoPorUid) {
+                                if (!membroAdmin || ehCriador) {
+                                    TextButton(
+                                        onClick = { acionarGestaoMembro(if (membroAdmin) "demote" else "promote", uid) },
+                                        enabled = !salvandoMembros,
+                                    ) {
+                                        Text(if (membroAdmin) "Rebaixar" else "Promover", color = Cores.Turquesa, fontSize = 10.sp)
+                                    }
+                                }
+                                if (!membroAdmin || ehCriador) {
+                                    IconButton(
+                                        onClick = { acionarGestaoMembro("remove", uid) },
+                                        enabled = !salvandoMembros,
+                                    ) {
+                                        Icon(Icons.Filled.PersonRemove, contentDescription = "Remover participante", tint = Color(0xFFFF8790))
+                                    }
+                                }
+                            }
                         }
                     }
+                }
+                if (adicionarMembrosAberto) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 220.dp)
+                            .verticalScroll(rememberScrollState())
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color.White.copy(alpha = 0.055f))
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        OutlinedTextField(
+                            value = buscaNovoMembro,
+                            onValueChange = { buscaNovoMembro = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Buscar participante") },
+                            singleLine = true,
+                        )
+                        jogadores.filter {
+                            it.uid != uidAtual
+                                && it.uid !in grupoEmConfiguracao.participantes
+                                && (buscaNovoMembro.isBlank()
+                                    || it.apelido.contains(buscaNovoMembro, ignoreCase = true)
+                                    || it.username.contains(buscaNovoMembro, ignoreCase = true))
+                        }.forEach { jogador ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth().clickable {
+                                    if (jogador.uid in membrosParaAdicionar) membrosParaAdicionar.remove(jogador.uid)
+                                    else if (grupoEmConfiguracao.participantes.size + membrosParaAdicionar.size < 100) membrosParaAdicionar.add(jogador.uid)
+                                },
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Checkbox(
+                                    checked = jogador.uid in membrosParaAdicionar,
+                                    enabled = !salvandoMembros,
+                                    onCheckedChange = { checked ->
+                                        if (checked && grupoEmConfiguracao.participantes.size + membrosParaAdicionar.size < 100) membrosParaAdicionar.add(jogador.uid)
+                                        else membrosParaAdicionar.remove(jogador.uid)
+                                    },
+                                )
+                                AvatarChat(jogador.apelido, 32.dp, photoUrl = jogador.avatarUrl, avatarItems = jogador.avatarItensEquipados, avatarAsProfilePhoto = jogador.avatarComoFotoPerfil)
+                                Text(jogador.apelido, modifier = Modifier.padding(start = 9.dp), color = Color.White, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                    Button(
+                        onClick = { acionarGestaoMembro("add", memberUids = membrosParaAdicionar.toList()) },
+                        enabled = ehAdmin && membrosParaAdicionar.isNotEmpty() && !salvandoMembros,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(if (salvandoMembros) "Adicionando..." else "Adicionar ${membrosParaAdicionar.size} pessoas") }
                 }
                 Column(
                     modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color.White.copy(alpha = 0.055f)).padding(14.dp),
                     verticalArrangement = Arrangement.spacedBy(11.dp),
                 ) {
                     Text("Quem pode editar informações?", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    OpcoesChat(listOf("Criador", "Todos"), if (editarPolicyEditavel == "creator") "Criador" else "Todos") {
-                        if (podeEditarGrupo) editarPolicyEditavel = if (it == "Criador") "creator" else "members"
+                    OpcoesChat(listOf("Admins", "Todos"), if (editarPolicyEditavel == "creator") "Admins" else "Todos") {
+                        if (ehAdmin) editarPolicyEditavel = if (it == "Admins") "creator" else "members"
                     }
                     Text("Quem pode enviar mensagens?", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    OpcoesChat(listOf("Todos", "Criador"), if (enviarPolicyEditavel == "creator") "Criador" else "Todos") {
-                        if (podeEditarGrupo) enviarPolicyEditavel = if (it == "Criador") "creator" else "everyone"
+                    OpcoesChat(listOf("Todos", "Admins", "Criador"), when (enviarPolicyEditavel) {
+                        "creator" -> "Criador"
+                        "admins" -> "Admins"
+                        else -> "Todos"
+                    }) {
+                        if (ehAdmin) enviarPolicyEditavel = when (it) { "Criador" -> "creator"; "Admins" -> "admins"; else -> "everyone" }
                     }
                 }
                 if (!podeEditarGrupo) {
@@ -1018,6 +1172,8 @@ private fun LinhaJogador(
     avatarUrl: String = "",
     avatarItems: List<String> = emptyList(),
     avatarAsProfilePhoto: Boolean = false,
+    foguinhoDias: Int = 0,
+    foguinhoNivel: Int = 0,
     onClick: () -> Unit,
     onPerfil: () -> Unit,
 ) {
@@ -1049,12 +1205,25 @@ private fun LinhaJogador(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Text(
-            hora.ifBlank { "Abrir" },
-            color = if (hora.isBlank()) Cores.Verde else Color.White.copy(alpha = 0.5f),
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-        )
+        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                hora.ifBlank { "Abrir" },
+                color = if (hora.isBlank()) Cores.Verde else Color.White.copy(alpha = 0.5f),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            if (foguinhoDias > 0) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Icon(
+                        Icons.Filled.LocalFireDepartment,
+                        contentDescription = "$foguinhoDias dias de foguinho",
+                        tint = corFoguinho(foguinhoNivel),
+                        modifier = Modifier.size(13.dp),
+                    )
+                    Text(foguinhoDias.toString(), color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
     }
 }
 

@@ -1172,7 +1172,9 @@ exports.createChatGroup = onCall(async (request) => {
   const name = typeof request.data?.name === "string" ? request.data.name.trim().replace(/\s+/g, " ") : "";
   const description = typeof request.data?.description === "string" ? request.data.description.trim().slice(0, 160) : "";
   const editPolicy = request.data?.editPolicy === "members" ? "members" : "creator";
-  const sendPolicy = request.data?.sendPolicy === "creator" ? "creator" : "everyone";
+  const sendPolicy = ["creator", "admins"].includes(request.data?.sendPolicy)
+    ? request.data.sendPolicy
+    : "everyone";
   const requestId = request.data?.requestId;
   const selectedUids = request.data?.memberUids;
   if (name.length < 2 || name.length > 32) {
@@ -1209,6 +1211,8 @@ exports.createChatGroup = onCall(async (request) => {
       name,
       description,
       createdBy: uid,
+      adminUids: [uid],
+      photoUrl: "",
       editPolicy,
       sendPolicy,
       participantUids,
@@ -1239,7 +1243,7 @@ exports.updateChatGroup = onCall(async (request) => {
   if (typeof chatId !== "string" || !/^[a-f0-9-]{36}$/i.test(chatId)
       || name.length < 2 || name.length > 32 || description.length > 160
       || !["creator", "members"].includes(editPolicy)
-      || !["creator", "everyone"].includes(sendPolicy)) {
+      || !["creator", "admins", "everyone"].includes(sendPolicy)) {
     throw new HttpsError("invalid-argument", "As configurações do grupo são inválidas.");
   }
   const chatRef = database.collection("chats").doc(chatId);
@@ -1250,10 +1254,116 @@ exports.updateChatGroup = onCall(async (request) => {
       throw new HttpsError("permission-denied", "Você não participa deste grupo.");
     }
     const group = chatSnapshot.data();
-    if (group.createdBy !== uid && group.editPolicy !== "members") {
-      throw new HttpsError("permission-denied", "Somente o criador pode alterar as configurações do grupo.");
+    const admins = Array.isArray(group.adminUids) ? group.adminUids : [group.createdBy];
+    if (!admins.includes(uid) && group.editPolicy !== "members") {
+      throw new HttpsError("permission-denied", "Somente admins podem alterar as configurações do grupo.");
     }
     transaction.update(chatRef, { name, description, editPolicy, sendPolicy });
+  });
+  return { ok: true };
+});
+
+exports.manageChatGroupMembers = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const chatId = request.data?.chatId;
+  const action = request.data?.action;
+  const targetUid = request.data?.targetUid;
+  const requestedUids = request.data?.memberUids;
+  if (typeof chatId !== "string" || !/^[a-f0-9-]{36}$/i.test(chatId)
+      || !["add", "promote", "demote", "remove"].includes(action)) {
+    throw new HttpsError("invalid-argument", "Ação de grupo inválida.");
+  }
+  if (["promote", "demote", "remove"].includes(action)
+      && (typeof targetUid !== "string" || !targetUid)) {
+    throw new HttpsError("invalid-argument", "Selecione um participante.");
+  }
+  if (action === "add"
+      && (!Array.isArray(requestedUids) || requestedUids.some((memberUid) => typeof memberUid !== "string"))) {
+    throw new HttpsError("invalid-argument", "Selecione participantes válidos.");
+  }
+
+  const chatRef = database.collection("chats").doc(chatId);
+  await database.runTransaction(async (transaction) => {
+    const chatSnapshot = await transaction.get(chatRef);
+    if (!chatSnapshot.exists || chatSnapshot.get("type") !== "group") {
+      throw new HttpsError("not-found", "Grupo não encontrado.");
+    }
+    const group = chatSnapshot.data();
+    const participants = Array.isArray(group.participantUids) ? [...new Set(group.participantUids)] : [];
+    const admins = Array.isArray(group.adminUids) ? [...new Set(group.adminUids)] : [group.createdBy];
+    const isCreator = group.createdBy === uid;
+    if (!isCreator && !admins.includes(uid)) {
+      throw new HttpsError("permission-denied", "Somente admins podem gerenciar participantes.");
+    }
+
+    if (action === "add") {
+      const additions = [...new Set(requestedUids)].filter((memberUid) => !participants.includes(memberUid));
+      if (additions.length === 0) return;
+      if (participants.length + additions.length > 100) {
+        throw new HttpsError("resource-exhausted", "O grupo pode ter no máximo 100 participantes.");
+      }
+      const profiles = await Promise.all(
+        additions.map((memberUid) => transaction.get(database.collection("users").doc(memberUid))),
+      );
+      if (profiles.some((profile) => !profile.exists || profile.get("profileSetupComplete") !== true)) {
+        throw new HttpsError("not-found", "Um dos participantes não tem perfil configurado.");
+      }
+      transaction.update(chatRef, { participantUids: [...participants, ...additions].sort() });
+      return;
+    }
+
+    if (!participants.includes(targetUid)) {
+      throw new HttpsError("not-found", "Este usuário não participa do grupo.");
+    }
+    if (targetUid === group.createdBy) {
+      throw new HttpsError("failed-precondition", "O criador deve continuar no grupo como admin.");
+    }
+
+    if (action === "promote") {
+      if (!admins.includes(targetUid)) transaction.update(chatRef, { adminUids: [...admins, targetUid] });
+      return;
+    }
+    if (action === "demote") {
+      if (!isCreator) throw new HttpsError("permission-denied", "Somente o criador pode rebaixar outro admin.");
+      transaction.update(chatRef, { adminUids: admins.filter((adminUid) => adminUid !== targetUid) });
+      return;
+    }
+
+    if (admins.includes(targetUid) && !isCreator) {
+      throw new HttpsError("permission-denied", "Somente o criador pode remover outro admin.");
+    }
+    transaction.update(chatRef, {
+      participantUids: participants.filter((memberUid) => memberUid !== targetUid),
+      adminUids: admins.filter((adminUid) => adminUid !== targetUid),
+    });
+  });
+  return { ok: true };
+});
+
+exports.updateChatGroupPhoto = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const chatId = request.data?.chatId;
+  const photoUrl = request.data?.photoUrl;
+  const cloudinaryPrefix = `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/image/upload/`;
+  if (typeof chatId !== "string" || !/^[a-f0-9-]{36}$/i.test(chatId)
+      || typeof photoUrl !== "string" || photoUrl.length > 2048
+      || !photoUrl.startsWith(cloudinaryPrefix)
+      || !photoUrl.includes(`/zeca/groups/${chatId}/`)) {
+    throw new HttpsError("invalid-argument", "Foto de grupo inválida.");
+  }
+
+  const chatRef = database.collection("chats").doc(chatId);
+  await database.runTransaction(async (transaction) => {
+    const chatSnapshot = await transaction.get(chatRef);
+    if (!chatSnapshot.exists || chatSnapshot.get("type") !== "group") {
+      throw new HttpsError("not-found", "Grupo não encontrado.");
+    }
+    const group = chatSnapshot.data();
+    const admins = Array.isArray(group.adminUids) ? group.adminUids : [group.createdBy];
+    if (!admins.includes(uid)) {
+      throw new HttpsError("permission-denied", "Somente admins podem alterar a foto do grupo.");
+    }
+    transaction.update(chatRef, { photoUrl });
   });
   return { ok: true };
 });
@@ -1389,8 +1499,13 @@ exports.sendChatMessage = onCall(async (request) => {
           || !chatSnapshot.get("participantUids")?.includes(uid)) {
         throw new HttpsError("permission-denied", "Você não participa deste grupo.");
       }
-      if (chatSnapshot.get("sendPolicy") === "creator" && chatSnapshot.get("createdBy") !== uid) {
+      const group = chatSnapshot.data();
+      const groupAdmins = Array.isArray(group.adminUids) ? group.adminUids : [group.createdBy];
+      if (group.sendPolicy === "creator" && group.createdBy !== uid) {
         throw new HttpsError("permission-denied", "Somente o criador pode enviar mensagens neste grupo.");
+      }
+      if (group.sendPolicy === "admins" && !groupAdmins.includes(uid)) {
+        throw new HttpsError("permission-denied", "Somente admins podem enviar mensagens neste grupo.");
       }
     }
 

@@ -83,6 +83,8 @@ data class ConversaChat(
     val politicaEditar: String = "creator",
     val politicaEnviar: String = "everyone",
     val participantes: List<String> = emptyList(),
+    val adminsUids: List<String> = emptyList(),
+    val fotoGrupoUrl: String = "",
     val diasFoguinho: Int = 0,
     val nivelFoguinho: Int = 0,
     val nomeFoguinho: String = "Nosso foguinho",
@@ -349,6 +351,11 @@ object FirebaseRepository {
                         politicaEditar = document.getString("editPolicy") ?: "creator",
                         politicaEnviar = document.getString("sendPolicy") ?: "everyone",
                         participantes = participantes,
+                        adminsUids = (document.get("adminUids") as? List<*>)
+                            ?.filterIsInstance<String>()
+                            ?.ifEmpty { listOf(document.getString("createdBy").orEmpty()) }
+                            .orEmpty(),
+                        fotoGrupoUrl = document.getString("photoUrl") ?: "",
                         diasFoguinho = document.getLong("streakDays")?.toInt() ?: 0,
                         nivelFoguinho = document.getLong("streakLevel")?.toInt() ?: 0,
                         nomeFoguinho = document.getString("streakName") ?: "Nosso foguinho",
@@ -423,6 +430,26 @@ object FirebaseRepository {
                 "editPolicy" to editPolicy,
                 "sendPolicy" to sendPolicy,
             ),
+        ) { _, error -> callback(error) }
+    }
+
+    fun gerenciarMembrosGrupo(
+        chatId: String,
+        action: String,
+        targetUid: String = "",
+        memberUids: List<String> = emptyList(),
+        callback: (Exception?) -> Unit,
+    ) {
+        val data = mutableMapOf<String, Any>("chatId" to chatId, "action" to action)
+        if (targetUid.isNotBlank()) data["targetUid"] = targetUid
+        if (memberUids.isNotEmpty()) data["memberUids"] = memberUids
+        chamarFunction("manageChatGroupMembers", data) { _, error -> callback(error) }
+    }
+
+    fun atualizarFotoGrupo(chatId: String, photoUrl: String, callback: (Exception?) -> Unit) {
+        chamarFunction(
+            "updateChatGroupPhoto",
+            mapOf("chatId" to chatId, "photoUrl" to photoUrl),
         ) { _, error -> callback(error) }
     }
 
@@ -525,6 +552,32 @@ object FirebaseRepository {
             callback(null, IllegalStateException("Entre na sua conta novamente."))
             return
         }
+        enviarImagemCloudinary(uri, contentResolver, "zeca/avatars/$uid", "avatar", callback)
+    }
+
+    fun enviarFotoGrupo(uri: Uri, chatId: String, contentResolver: ContentResolver, callback: (Exception?) -> Unit) {
+        if (auth.currentUser == null) {
+            callback(IllegalStateException("Entre na sua conta novamente."))
+            return
+        }
+        enviarImagemCloudinary(uri, contentResolver, "zeca/groups/$chatId", "group") { photoUrl, uploadError ->
+            if (uploadError != null || photoUrl == null) {
+                callback(uploadError ?: IllegalStateException("O upload não retornou uma foto válida."))
+            } else {
+                chamarFunction("updateChatGroupPhoto", mapOf("chatId" to chatId, "photoUrl" to photoUrl)) { _, error ->
+                    callback(error)
+                }
+            }
+        }
+    }
+
+    private fun enviarImagemCloudinary(
+        uri: Uri,
+        contentResolver: ContentResolver,
+        folder: String,
+        filePrefix: String,
+        callback: (String?, Exception?) -> Unit,
+    ) {
         Thread {
             var urlFoto: String? = null
             var erro: Exception? = null
@@ -549,9 +602,9 @@ object FirebaseRepository {
                         writer.append("$CLOUDINARY_UPLOAD_PRESET\r\n")
                         writer.append("--$boundary\r\n")
                         writer.append("Content-Disposition: form-data; name=\"folder\"\r\n\r\n")
-                        writer.append("zeca/avatars/$uid\r\n")
+                        writer.append("$folder\r\n")
                         writer.append("--$boundary\r\n")
-                        writer.append("Content-Disposition: form-data; name=\"file\"; filename=\"avatar.$extensao\"\r\n")
+                        writer.append("Content-Disposition: form-data; name=\"file\"; filename=\"$filePrefix.$extensao\"\r\n")
                         writer.append("Content-Type: $mimeType\r\n\r\n")
                         writer.flush()
                         contentResolver.openInputStream(uri)?.use { input -> input.copyTo(output) }

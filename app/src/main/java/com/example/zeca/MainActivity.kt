@@ -404,6 +404,14 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                             onAtualizarGrupo = { chatId, nome, descricao, editPolicy, sendPolicy, concluir ->
                                 FirebaseRepository.atualizarGrupo(chatId, nome, descricao, editPolicy, sendPolicy, concluir)
                             },
+                            onGerenciarMembros = { chatId, action, targetUid, memberUids, concluir ->
+                                FirebaseRepository.gerenciarMembrosGrupo(chatId, action, targetUid, memberUids, concluir)
+                            },
+                            onEnviarFotoGrupo = { chatId, uri, concluir ->
+                                FirebaseRepository.enviarFotoGrupo(uri, chatId, contexto.contentResolver) { error ->
+                                    concluir(error?.localizedMessage)
+                                }
+                            },
                             onRenomearFoguinho = { chatId, nome, concluir ->
                                 FirebaseRepository.renomearFoguinho(chatId, nome, concluir)
                             },
