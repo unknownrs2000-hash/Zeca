@@ -51,10 +51,13 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -66,6 +69,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -120,14 +124,17 @@ import kotlin.math.roundToInt
 fun TelaChat(
     uidAtual: String,
     jogadores: List<JogadorRanking>,
-    onEnviar: (String?, String, String, RespostaChat?, (Exception?) -> Unit) -> Unit,
-    onEncaminhar: (String?, String, String, (Exception?) -> Unit) -> Unit,
+    onEnviar: (String?, String?, String, String, RespostaChat?, (Exception?) -> Unit) -> Unit,
+    onEncaminhar: (String?, String?, String, String, (Exception?) -> Unit) -> Unit,
+    onCriarGrupo: (String, List<String>, String, (String?, Exception?) -> Unit) -> Unit,
+    onRenomearFoguinho: (String, String, (Exception?) -> Unit) -> Unit,
     onApagarParaMim: (String, String, (Exception?) -> Unit) -> Unit,
     onApagarParaTodos: (String, String, (Exception?) -> Unit) -> Unit,
     onBuscarPerfil: (String, (PerfilPublico?, Exception?) -> Unit) -> Unit,
 ) {
     var modo by rememberSaveable { mutableStateOf("Global") }
     var destinatarioUid by rememberSaveable { mutableStateOf("") }
+    var grupoUid by rememberSaveable { mutableStateOf("") }
     var perfilUid by rememberSaveable { mutableStateOf("") }
     var rascunho by rememberSaveable { mutableStateOf("") }
     var enviando by rememberSaveable { mutableStateOf(false) }
@@ -137,21 +144,38 @@ fun TelaChat(
     var perfilPublico by remember { mutableStateOf<PerfilPublico?>(null) }
     var carregandoPerfil by remember { mutableStateOf(false) }
     var erroPerfil by remember { mutableStateOf("") }
+    var criarGrupoAberto by remember { mutableStateOf(false) }
+    var nomeGrupo by rememberSaveable { mutableStateOf("") }
+    val membrosGrupo = remember { mutableStateListOf<String>() }
+    var criandoGrupo by remember { mutableStateOf(false) }
+    var grupoErro by rememberSaveable { mutableStateOf("") }
+    var editarFoguinho by remember { mutableStateOf(false) }
+    var nomeFoguinhoEditavel by rememberSaveable { mutableStateOf("") }
+    var salvandoFoguinho by remember { mutableStateOf(false) }
     val destinatario = jogadores.firstOrNull { it.uid == destinatarioUid }
     val perfilJogador = jogadores.firstOrNull { it.uid == perfilUid }
         ?: perfilPublico?.takeIf { it.uid == perfilUid }?.let {
             JogadorRanking(it.uid, it.apelido, it.saldoCentavos, it.nivel, it.avatarUrl)
         }
-    val emConversa = modo == "Privado" && destinatarioUid.isNotBlank()
+    val conversaGrupo = conversas.firstOrNull { it.id == grupoUid && it.tipo == "group" }
+    val conversasDiretas = conversas.filter { it.tipo != "group" }
+    val grupos = conversas.filter { it.tipo == "group" }
+    val emGrupo = grupoUid.isNotBlank()
+    val emConversa = emGrupo || (modo == "Privado" && destinatarioUid.isNotBlank())
     val chatId = when {
+        emGrupo -> grupoUid
         modo == "Global" -> "global"
         destinatarioUid.isNotBlank() -> FirebaseRepository.idConversaPrivada(uidAtual, destinatarioUid)
         else -> null
     }
+    val conversaSelecionada = conversaGrupo ?: conversas.firstOrNull { it.id == chatId }
 
     BackHandler(enabled = perfilUid.isNotBlank() || emConversa) {
         if (perfilUid.isNotBlank()) {
             perfilUid = ""
+        } else if (emGrupo) {
+            grupoUid = ""
+            erro = ""
         } else {
             destinatarioUid = ""
             erro = ""
@@ -185,7 +209,8 @@ fun TelaChat(
             enviando = true
             erro = ""
             onEnviar(
-                if (modo == "Global") null else destinatarioUid,
+                if (emGrupo || modo == "Global") null else destinatarioUid,
+                grupoUid.takeIf { emGrupo },
                 texto,
                 UUID.randomUUID().toString(),
                 resposta,
@@ -247,14 +272,15 @@ fun TelaChat(
                 OpcoesChat(listOf("Global", "Privado"), modo) {
                     modo = it
                     destinatarioUid = ""
+                    grupoUid = ""
                     erro = ""
                 }
 
                 Text("Conversas recentes", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                if (conversas.isEmpty()) {
+                if (conversasDiretas.isEmpty()) {
                     Text("Ainda não há conversas privadas.", color = Color.White.copy(alpha = 0.62f), fontSize = 13.sp)
                 } else {
-                    conversas.forEach { conversa ->
+                    conversasDiretas.forEach { conversa ->
                         val jogador = jogadores.firstOrNull { it.uid == conversa.outroUid }
                         LinhaJogador(
                             nome = jogador?.apelido ?: "Jogador",
@@ -265,6 +291,45 @@ fun TelaChat(
                             onClick = { destinatarioUid = conversa.outroUid; erro = "" },
                             onPerfil = { perfilUid = conversa.outroUid },
                         )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Grupos", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                    TextButton(onClick = {
+                        nomeGrupo = ""
+                        membrosGrupo.clear()
+                        grupoErro = ""
+                        criarGrupoAberto = true
+                    }) { Text("+ Criar grupo", color = Cores.Verde) }
+                }
+                if (grupos.isEmpty()) {
+                    Text("Crie um grupo para conversar e manter um foguinho coletivo.", color = Color.White.copy(alpha = 0.62f), fontSize = 13.sp)
+                } else {
+                    grupos.forEach { grupo ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(13.dp))
+                                .background(Color.White.copy(alpha = 0.07f))
+                                .border(1.dp, Color.White.copy(alpha = 0.13f), RoundedCornerShape(13.dp))
+                                .clickable { grupoUid = grupo.id; erro = "" }
+                                .padding(horizontal = 12.dp, vertical = 11.dp),
+                            horizontalArrangement = Arrangement.spacedBy(11.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(Icons.Filled.Groups, contentDescription = null, tint = Cores.Turquesa)
+                            Column(Modifier.weight(1f)) {
+                                Text(grupo.nome, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                Text("${grupo.participantes.size} pessoas · ${grupo.ultimaMensagem}", color = Color.White.copy(alpha = 0.62f), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            Icon(Icons.Filled.LocalFireDepartment, contentDescription = "${grupo.diasFoguinho} dias de sequência", tint = corFoguinho(grupo.nivelFoguinho))
+                            Text(grupo.diasFoguinho.toString(), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
                     }
                 }
 
@@ -320,12 +385,23 @@ fun TelaChat(
                 cabecalho = {
                     if (emConversa) {
                         CabecalhoConversa(
-                            nome = destinatario?.apelido ?: "Jogador",
-                            avatarUrl = destinatario?.avatarUrl.orEmpty(),
-                            detalhe = destinatario?.let { "Nível ${it.nivel}" } ?: "",
-                            onVoltar = { destinatarioUid = ""; erro = "" },
+                            nome = if (emGrupo) conversaGrupo?.nome ?: "Grupo" else destinatario?.apelido ?: "Jogador",
+                            avatarUrl = if (emGrupo) "" else destinatario?.avatarUrl.orEmpty(),
+                            detalhe = if (emGrupo) "${conversaGrupo?.participantes?.size ?: 0} pessoas" else destinatario?.let { "Nível ${it.nivel}" } ?: "",
+                            onVoltar = { if (emGrupo) grupoUid = "" else destinatarioUid = ""; erro = "" },
                             onPerfil = { perfilUid = destinatarioUid },
                         )
+                        conversaSelecionada?.let { conversa ->
+                            FoguinhoChip(
+                                nome = conversa.nomeFoguinho,
+                                dias = diasFoguinhoAtivos(conversa),
+                                nivel = if (diasFoguinhoAtivos(conversa) == conversa.diasFoguinho) conversa.nivelFoguinho else 0,
+                                onClick = {
+                                    nomeFoguinhoEditavel = conversa.nomeFoguinho
+                                    editarFoguinho = true
+                                },
+                            )
+                        }
                     } else {
                         Column {
                             Text("Chat", color = Color.White, fontSize = 29.sp, fontWeight = FontWeight.Black)
@@ -340,6 +416,149 @@ fun TelaChat(
                 },
             )
         }
+    }
+
+    if (criarGrupoAberto) {
+        AlertDialog(
+            onDismissRequest = { if (!criandoGrupo) criarGrupoAberto = false },
+            title = { Text("Criar grupo") },
+            text = {
+                Column(
+                    modifier = Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedTextField(
+                        value = nomeGrupo,
+                        onValueChange = { nomeGrupo = it.take(32); grupoErro = "" },
+                        label = { Text("Nome do grupo") },
+                        singleLine = true,
+                    )
+                    Text("Escolha de 1 a 19 pessoas. Todos precisam participar diariamente para manter a sequência.", fontSize = 12.sp)
+                    jogadores.filter { it.uid != uidAtual }.forEach { jogador ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                if (jogador.uid in membrosGrupo) membrosGrupo.remove(jogador.uid)
+                                else if (membrosGrupo.size < 19) membrosGrupo.add(jogador.uid)
+                            },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Checkbox(
+                                checked = jogador.uid in membrosGrupo,
+                                onCheckedChange = { selecionado ->
+                                    if (selecionado && membrosGrupo.size < 19) membrosGrupo.add(jogador.uid)
+                                    else membrosGrupo.remove(jogador.uid)
+                                },
+                            )
+                            AvatarChat(jogador.apelido, 34.dp, photoUrl = jogador.avatarUrl)
+                            Column(Modifier.padding(start = 10.dp)) {
+                                Text(jogador.apelido, color = Color.White, fontWeight = FontWeight.SemiBold)
+                                Text("@${jogador.username}", color = Color.White.copy(alpha = 0.58f), fontSize = 11.sp)
+                            }
+                        }
+                    }
+                    if (grupoErro.isNotBlank()) Text(grupoErro, color = Cores.Laranja, fontSize = 12.sp)
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        criandoGrupo = true
+                        grupoErro = ""
+                        onCriarGrupo(nomeGrupo.trim(), membrosGrupo.toList(), UUID.randomUUID().toString()) { novoGrupo, error ->
+                            criandoGrupo = false
+                            if (error != null || novoGrupo == null) {
+                                grupoErro = error?.localizedMessage ?: "Não foi possível criar o grupo."
+                            } else {
+                                criarGrupoAberto = false
+                                grupoUid = novoGrupo
+                            }
+                        }
+                    },
+                    enabled = nomeGrupo.trim().length in 2..32 && membrosGrupo.isNotEmpty() && !criandoGrupo,
+                ) { Text(if (criandoGrupo) "Criando..." else "Criar") }
+            },
+            dismissButton = {
+                TextButton(onClick = { criarGrupoAberto = false }, enabled = !criandoGrupo) { Text("Cancelar") }
+            },
+        )
+    }
+
+    if (editarFoguinho && conversaSelecionada != null) {
+        AlertDialog(
+            onDismissRequest = { editarFoguinho = false },
+            title = { Text("Nome do foguinho") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = nomeFoguinhoEditavel,
+                        onValueChange = { nomeFoguinhoEditavel = it.take(24) },
+                        label = { Text("Nome compartilhado") },
+                        singleLine = true,
+                    )
+                    Text("O nível evolui com os dias em que todos conversam.", color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp)
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        salvandoFoguinho = true
+                        onRenomearFoguinho(conversaSelecionada.id, nomeFoguinhoEditavel.trim()) { error ->
+                            salvandoFoguinho = false
+                            if (error == null) editarFoguinho = false
+                            else erro = error.localizedMessage ?: "Não foi possível renomear o foguinho."
+                        }
+                    },
+                    enabled = nomeFoguinhoEditavel.trim().isNotEmpty() && !salvandoFoguinho,
+                ) { Text(if (salvandoFoguinho) "Salvando..." else "Salvar") }
+            },
+            dismissButton = { TextButton(onClick = { editarFoguinho = false }) { Text("Cancelar") } },
+        )
+    }
+}
+
+private fun diasFoguinhoAtivos(conversa: ConversaChat): Int {
+    val hoje = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
+        timeZone = java.util.TimeZone.getTimeZone("UTC")
+    }.format(Date())
+    val ontem = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
+        timeZone = java.util.TimeZone.getTimeZone("UTC")
+    }.format(Date(System.currentTimeMillis() - 24 * 60 * 60 * 1000L))
+    return if (conversa.ultimaSequenciaUtc == hoje || conversa.ultimaSequenciaUtc == ontem) conversa.diasFoguinho else 0
+}
+
+private fun corFoguinho(nivel: Int): Color = when (nivel) {
+    0 -> Color.White.copy(alpha = 0.45f)
+    1 -> Color(0xFFFFA044)
+    2 -> Color(0xFFFF6B35)
+    3 -> Color(0xFFFF3D5A)
+    4 -> Color(0xFF42D9FF)
+    else -> Color(0xFFFFD166)
+}
+
+@Composable
+private fun FoguinhoChip(nome: String, dias: Int, nivel: Int, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(15.dp))
+            .background(corFoguinho(nivel).copy(alpha = 0.12f))
+            .border(1.dp, corFoguinho(nivel).copy(alpha = 0.35f), RoundedCornerShape(15.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Filled.LocalFireDepartment,
+            contentDescription = "Foguinho nível $nivel",
+            tint = corFoguinho(nivel),
+            modifier = Modifier.size((19 + nivel * 2).dp),
+        )
+        Column(Modifier.weight(1f)) {
+            Text(nome, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(if (dias > 0) "$dias dias de sequência · nível $nivel" else "Conversem hoje para acender", color = Color.White.copy(alpha = 0.65f), fontSize = 10.sp)
+        }
+        Text("Editar", color = Cores.Turquesa, fontSize = 11.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -581,7 +800,7 @@ private fun TelaConversa(
     mensagens: List<MensagemChat>,
     jogadores: List<JogadorRanking>,
     uidAtual: String,
-    onEncaminhar: (String?, String, String, (Exception?) -> Unit) -> Unit,
+    onEncaminhar: (String?, String?, String, String, (Exception?) -> Unit) -> Unit,
     ehGlobal: Boolean,
     rascunho: String,
     onRascunhoChange: (String) -> Unit,
@@ -761,7 +980,7 @@ private fun TelaConversa(
             jogadores = jogadores.filter { it.uid != uidAtual },
             onEscolher = { destinoUid ->
                 encaminhando = null
-                onEncaminhar(destinoUid, alvo.texto, UUID.randomUUID().toString()) { e ->
+                onEncaminhar(destinoUid, null, alvo.texto, UUID.randomUUID().toString()) { e ->
                     val aviso = if (e == null) "Mensagem encaminhada"
                     else e.localizedMessage ?: "Não foi possível encaminhar."
                     Toast.makeText(contexto, aviso, Toast.LENGTH_SHORT).show()

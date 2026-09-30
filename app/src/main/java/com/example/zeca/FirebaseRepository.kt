@@ -69,6 +69,13 @@ data class ConversaChat(
     val atualizadaEmMs: Long,
     val ultimaMensagemId: String = "",
     val ultimoRemetenteUid: String = "",
+    val tipo: String = "direct",
+    val nome: String = "",
+    val participantes: List<String> = emptyList(),
+    val diasFoguinho: Int = 0,
+    val nivelFoguinho: Int = 0,
+    val nomeFoguinho: String = "Nosso foguinho",
+    val ultimaSequenciaUtc: String = "",
 )
 
 data class JogadorDestino(
@@ -277,14 +284,21 @@ object FirebaseRepository {
                 val conversas = snapshot?.documents.orEmpty().mapNotNull { document ->
                     val participantes = (document.get("participantUids") as? List<*>)
                         ?.filterIsInstance<String>() ?: return@mapNotNull null
-                    val outroUid = participantes.firstOrNull { it != uid } ?: return@mapNotNull null
+                    if (uid !in participantes) return@mapNotNull null
                     ConversaChat(
                         id = document.id,
-                        outroUid = outroUid,
+                        outroUid = participantes.firstOrNull { it != uid }.orEmpty(),
                         ultimaMensagem = document.getString("lastMessage") ?: "",
                         atualizadaEmMs = document.getTimestamp("lastMessageAt")?.toDate()?.time ?: 0L,
                         ultimaMensagemId = document.getString("lastMessageId") ?: "",
                         ultimoRemetenteUid = document.getString("lastMessageSenderUid") ?: "",
+                        tipo = document.getString("type") ?: "direct",
+                        nome = document.getString("name") ?: "",
+                        participantes = participantes,
+                        diasFoguinho = document.getLong("streakDays")?.toInt() ?: 0,
+                        nivelFoguinho = document.getLong("streakLevel")?.toInt() ?: 0,
+                        nomeFoguinho = document.getString("streakName") ?: "Nosso foguinho",
+                        ultimaSequenciaUtc = document.getString("streakLastQualifiedDate") ?: "",
                     )
                 }.sortedByDescending { it.atualizadaEmMs }
                 callback(conversas, error, snapshot?.metadata?.isFromCache ?: true)
@@ -298,92 +312,34 @@ object FirebaseRepository {
         requestId: String,
         resposta: RespostaChat?,
         encaminhada: Boolean = false,
+        chatId: String? = null,
         callback: (String?, Exception?) -> Unit,
     ) {
-        val uid = auth.currentUser?.uid
         val message = texto.trim()
-        if (uid == null) {
-            callback(null, IllegalStateException("Entre na sua conta para enviar mensagens."))
-            return
-        }
         if (message.isEmpty() || message.length > 500) {
             callback(null, IllegalArgumentException("A mensagem deve ter entre 1 e 500 caracteres."))
             return
         }
-        if (destinatarioUid == uid) {
-            callback(null, IllegalArgumentException("Escolha outro jogador para a conversa privada."))
-            return
+        val dados = mutableMapOf<String, Any>("text" to message, "requestId" to requestId)
+        destinatarioUid?.let { dados["recipientUid"] = it }
+        chatId?.let { dados["chatId"] = it }
+        resposta?.let { dados["reply"] = mapOf("id" to it.id, "name" to it.autor, "text" to it.texto.take(200)) }
+        if (encaminhada) dados["forwarded"] = true
+        chamarFunction("sendChatMessage", dados) { result, error ->
+            callback(result?.get("chatId") as? String, error)
+        }
         }
 
-        val participants = destinatarioUid?.let { listOf(uid, it).sorted() }.orEmpty()
-        val chatId = if (destinatarioUid == null) "global" else participants.joinToString("_")
-        val chatRef = database.collection("chats").document(chatId)
-        val messageRef = chatRef.collection("messages").document(requestId)
-        val senderRef = database.collection("users").document(uid)
-        val recipientRankRef = destinatarioUid?.let { database.collection("leaderboard").document(it) }
+    fun criarGrupo(nome: String, memberUids: List<String>, requestId: String, callback: (String?, Exception?) -> Unit) {
+        chamarFunction(
+            "createChatGroup",
+            mapOf("name" to nome, "memberUids" to memberUids, "requestId" to requestId),
+        ) { data, error -> callback(data?.get("chatId") as? String, error) }
+    }
 
-        database.runTransaction { transaction ->
-            val previousMessage = transaction.get(messageRef)
-            if (previousMessage.exists()) {
-                if (previousMessage.getString("senderUid") != uid || previousMessage.getString("text") != message) {
-                    throw IllegalStateException("Identificador de mensagem já utilizado.")
-                }
-                return@runTransaction chatId
-            }
-
-            val senderSnapshot = transaction.get(senderRef)
-            val conversationSnapshot = if (recipientRankRef != null) transaction.get(chatRef) else null
-            val recipientSnapshot = recipientRankRef?.let(transaction::get)
-            if (!senderSnapshot.exists()) throw IllegalStateException("Perfil do remetente não encontrado.")
-            if (recipientRankRef != null && recipientSnapshot?.exists() != true) {
-                throw IllegalStateException("Destinatário não encontrado.")
-            }
-            if (conversationSnapshot?.exists() == true) {
-                val savedParticipants = conversationSnapshot.get("participantUids") as? List<*>
-                if (savedParticipants?.filterIsInstance<String>() != participants) {
-                    throw IllegalStateException("Conversa inválida.")
-                }
-            }
-
-            val senderName = senderSnapshot.getString("displayName") ?: "Jogador"
-            val serverTime = com.google.firebase.firestore.FieldValue.serverTimestamp()
-            if (recipientRankRef != null) {
-                val conversationData = mapOf(
-                    "participantUids" to participants,
-                    "lastMessage" to message,
-                    "lastMessageAt" to serverTime,
-                    "lastMessageId" to requestId,
-                    "lastMessageSenderUid" to uid,
-                )
-                if (conversationSnapshot?.exists() == true) {
-                    transaction.update(chatRef, conversationData)
-                } else {
-                    transaction.set(
-                        chatRef,
-                        conversationData + ("createdAt" to serverTime),
-                    )
-                }
-            }
-            val dadosMensagem = mutableMapOf<String, Any>(
-                "senderUid" to uid,
-                "senderName" to senderName,
-                "senderUsername" to (senderSnapshot.getString("username") ?: ""),
-                "senderAvatarUrl" to (senderSnapshot.getString("avatarUrl") ?: ""),
-                "text" to message,
-                "createdAt" to serverTime,
-            )
-            if (resposta != null) {
-                dadosMensagem["replyToId"] = resposta.id
-                dadosMensagem["replyToName"] = resposta.autor
-                dadosMensagem["replyToText"] = resposta.texto.take(200)
-            }
-            if (encaminhada) dadosMensagem["forwarded"] = true
-            transaction.set(messageRef, dadosMensagem)
-            chatId
-        }
-            .addOnSuccessListener { callback(it, null) }
-            .addOnFailureListener { callback(null, it) }
-        }
+    fun renomearFoguinho(chatId: String, nome: String, callback: (Exception?) -> Unit) {
+        chamarFunction("renameChatFlame", mapOf("chatId" to chatId, "name" to nome)) { _, error -> callback(error) }
+    }
 
     fun apagarMensagemParaMim(chatId: String, mensagemId: String, callback: (Exception?) -> Unit) {
         val uid = auth.currentUser?.uid

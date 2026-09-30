@@ -372,15 +372,34 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                         Aba.Chat -> TelaChat(
                             uidAtual = usuario.uid,
                             jogadores = ranking,
-                            onEnviar = { destinatarioUid, texto, requestId, resposta, concluir ->
-                                FirebaseRepository.enviarMensagemChat(destinatarioUid, texto, requestId, resposta) { _, error ->
+                            onEnviar = { destinatarioUid, grupoId, texto, requestId, resposta, concluir ->
+                                FirebaseRepository.enviarMensagemChat(
+                                    destinatarioUid,
+                                    texto,
+                                    requestId,
+                                    resposta,
+                                    chatId = grupoId,
+                                ) { _, error ->
                                     concluir(error)
                                 }
                             },
-                            onEncaminhar = { destinatarioUid, texto, requestId, concluir ->
-                                FirebaseRepository.enviarMensagemChat(destinatarioUid, texto, requestId, null, true) { _, error ->
+                            onEncaminhar = { destinatarioUid, grupoId, texto, requestId, concluir ->
+                                FirebaseRepository.enviarMensagemChat(
+                                    destinatarioUid,
+                                    texto,
+                                    requestId,
+                                    null,
+                                    encaminhada = true,
+                                    chatId = grupoId,
+                                ) { _, error ->
                                     concluir(error)
                                 }
+                            },
+                            onCriarGrupo = { nome, membros, requestId, concluir ->
+                                FirebaseRepository.criarGrupo(nome, membros, requestId) { id, error -> concluir(id, error) }
+                            },
+                            onRenomearFoguinho = { chatId, nome, concluir ->
+                                FirebaseRepository.renomearFoguinho(chatId, nome, concluir)
                             },
                             onApagarParaMim = { chatId, mensagemId, concluir ->
                                 FirebaseRepository.apagarMensagemParaMim(chatId, mensagemId, concluir)

@@ -203,7 +203,7 @@ service cloud.firestore {
 
     match /chats/{chatId} {
       allow get: if signedIn()
-        && (chatId == 'global' || request.auth.uid in chatId.split('_'));
+        && (chatId == 'global' || request.auth.uid in resource.data.get('participantUids', []));
       allow list: if signedIn()
         && request.auth.uid in resource.data.participantUids;
       allow create: if signedIn()
@@ -227,6 +227,7 @@ service cloud.firestore {
         && request.resource.data.createdAt == request.time
         && request.resource.data.lastMessageAt == request.time;
       allow update: if signedIn()
+        && resource.data.get('type', 'direct') == 'direct'
         && request.auth.uid in resource.data.participantUids
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'lastMessage', 'lastMessageAt', 'lastMessageId', 'lastMessageSenderUid'
@@ -242,7 +243,7 @@ service cloud.firestore {
       match /messages/{messageId} {
         allow read: if signedIn()
           && (chatId == 'global'
-            || request.auth.uid in chatId.split('_'));
+            || request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participantUids);
         allow create: if signedIn()
           && request.resource.data.keys().hasOnly([
             'senderUid', 'senderName', 'senderUsername', 'senderAvatarUrl', 'text', 'createdAt',
@@ -269,7 +270,8 @@ service cloud.firestore {
           && (chatId == 'global'
             || request.auth.uid in getAfter(/databases/$(database)/documents/chats/$(chatId)).data.participantUids);
         allow update: if signedIn()
-          && (chatId == 'global' || request.auth.uid in chatId.split('_'))
+          && (chatId == 'global'
+            || request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participantUids)
           && (
             (resource.data.senderUid == request.auth.uid
               && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deletedForAll', 'text'])

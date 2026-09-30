@@ -17,6 +17,7 @@ const {
   validateWager,
 } = require("./game-logic");
 const { initializeBalance, levelProgress, normalizeUsername } = require("./profile-logic");
+const { applyStreakMessage, dateUtc } = require("./chat-logic");
 
 const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
 initializeApp(serviceAccount ? { credential: cert(JSON.parse(serviceAccount)) } : {});
@@ -1068,10 +1069,86 @@ exports.getPlayerProfile = onCall(async (request) => {
   };
 });
 
+exports.createChatGroup = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const name = typeof request.data?.name === "string" ? request.data.name.trim().replace(/\s+/g, " ") : "";
+  const requestId = request.data?.requestId;
+  const selectedUids = request.data?.memberUids;
+  if (name.length < 2 || name.length > 32) {
+    throw new HttpsError("invalid-argument", "O nome do grupo deve ter entre 2 e 32 caracteres.");
+  }
+  if (typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)) {
+    throw new HttpsError("invalid-argument", "Identificador do grupo inválido.");
+  }
+  if (!Array.isArray(selectedUids) || selectedUids.some((memberUid) => typeof memberUid !== "string")) {
+    throw new HttpsError("invalid-argument", "Selecione os participantes do grupo.");
+  }
+  const participantUids = [...new Set([uid, ...selectedUids])].sort();
+  if (participantUids.length < 2 || participantUids.length > 20) {
+    throw new HttpsError("invalid-argument", "Um grupo precisa ter de 2 a 20 pessoas.");
+  }
+
+  const chatRef = database.collection("chats").doc(requestId);
+  const participantRefs = participantUids.map((memberUid) => database.collection("users").doc(memberUid));
+  let response;
+  await database.runTransaction(async (transaction) => {
+    const existing = await transaction.get(chatRef);
+    if (existing.exists) {
+      if (existing.get("createdBy") !== uid) throw new HttpsError("already-exists", "Identificador do grupo já utilizado.");
+      response = { chatId: requestId };
+      return;
+    }
+    const profiles = await Promise.all(participantRefs.map((ref) => transaction.get(ref)));
+    if (profiles.some((profile) => !profile.exists || profile.get("profileSetupComplete") !== true)) {
+      throw new HttpsError("not-found", "Um dos participantes não tem perfil configurado.");
+    }
+    const now = FieldValue.serverTimestamp();
+    transaction.create(chatRef, {
+      type: "group",
+      name,
+      createdBy: uid,
+      participantUids,
+      lastMessage: "Grupo criado",
+      lastMessageAt: now,
+      lastMessageId: requestId,
+      lastMessageSenderUid: uid,
+      createdAt: now,
+      streakDays: 0,
+      streakLevel: 0,
+      streakName: "Nosso foguinho",
+      streakLastQualifiedDate: "",
+      streakActivityDate: "",
+      streakParticipantsToday: [],
+    });
+    response = { chatId: requestId };
+  });
+  return response;
+});
+
+exports.renameChatFlame = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const chatId = request.data?.chatId;
+  const name = typeof request.data?.name === "string" ? request.data.name.trim().replace(/\s+/g, " ") : "";
+  if (typeof chatId !== "string" || !/^[a-z0-9_-]{3,160}$/i.test(chatId)
+      || name.length < 1 || name.length > 24) {
+    throw new HttpsError("invalid-argument", "Nome do foguinho inválido.");
+  }
+  const chatRef = database.collection("chats").doc(chatId);
+  await database.runTransaction(async (transaction) => {
+    const chatSnapshot = await transaction.get(chatRef);
+    if (!chatSnapshot.exists || !chatSnapshot.data().participantUids?.includes(uid)) {
+      throw new HttpsError("permission-denied", "Você não participa desta conversa.");
+    }
+    transaction.update(chatRef, { streakName: name });
+  });
+  return { ok: true, name };
+});
+
 exports.sendChatMessage = onCall(async (request) => {
   const uid = authenticatedUid(request);
   const text = typeof request.data?.text === "string" ? request.data.text.trim() : "";
   const recipientUid = request.data?.recipientUid || null;
+  const requestedChatId = request.data?.chatId || null;
   const requestId = request.data?.requestId;
   if (text.length < 1 || text.length > 500) {
     throw new HttpsError("invalid-argument", "A mensagem deve ter entre 1 e 500 caracteres.");
@@ -1082,11 +1159,18 @@ exports.sendChatMessage = onCall(async (request) => {
   if (recipientUid !== null && (typeof recipientUid !== "string" || recipientUid === uid)) {
     throw new HttpsError("invalid-argument", "Destinatário inválido.");
   }
+  if (recipientUid && requestedChatId) {
+    throw new HttpsError("invalid-argument", "Escolha uma conversa privada ou um grupo.");
+  }
+  if (requestedChatId !== null && (typeof requestedChatId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestedChatId))) {
+    throw new HttpsError("invalid-argument", "Grupo inválido.");
+  }
 
   const senderRef = database.collection("users").doc(uid);
   const recipientRef = recipientUid ? database.collection("users").doc(recipientUid) : null;
   const participants = recipientUid ? [uid, recipientUid].sort() : [];
-  const chatId = recipientUid ? participants.join("_") : "global";
+  const chatId = requestedChatId || (recipientUid ? participants.join("_") : "global");
+  const hasConversation = Boolean(recipientRef || requestedChatId);
   const chatRef = database.collection("chats").doc(chatId);
   const messageRef = chatRef.collection("messages").doc(requestId);
   const sentAtMs = Date.now();
@@ -1095,6 +1179,7 @@ exports.sendChatMessage = onCall(async (request) => {
   await database.runTransaction(async (transaction) => {
     const reads = [transaction.get(messageRef), transaction.get(senderRef)];
     if (recipientRef) reads.push(transaction.get(recipientRef), transaction.get(chatRef));
+    else if (requestedChatId) reads.push(transaction.get(chatRef));
     const snapshots = await Promise.all(reads);
     const [existingMessage, senderSnapshot] = snapshots;
     if (existingMessage.exists) {
@@ -1130,30 +1215,63 @@ exports.sendChatMessage = onCall(async (request) => {
           throw new HttpsError("permission-denied", "Conversa inválida.");
         }
       }
+    } else if (requestedChatId) {
+      chatSnapshot = snapshots[2];
+      if (!chatSnapshot.exists || chatSnapshot.get("type") !== "group"
+          || !chatSnapshot.get("participantUids")?.includes(uid)) {
+        throw new HttpsError("permission-denied", "Você não participa deste grupo.");
+      }
     }
 
     const now = FieldValue.serverTimestamp();
-    if (recipientRef) {
-      const chatData = {
+    let progression = null;
+    if (hasConversation) {
+      const currentChat = chatSnapshot?.data() || {
         participantUids: participants,
+        streakDays: 0,
+        streakLastQualifiedDate: "",
+        streakActivityDate: "",
+        streakParticipantsToday: [],
+      };
+      progression = applyStreakMessage(currentChat, uid, dateUtc(sentAtMs));
+      const chatData = {
         lastMessage: text,
         lastMessageAt: now,
         lastMessageId: requestId,
         lastMessageSenderUid: uid,
+        ...progression,
       };
-      if (chatSnapshot.exists) transaction.update(chatRef, chatData);
-      else transaction.create(chatRef, { ...chatData, createdAt: now });
+      if (!requestedChatId) Object.assign(chatData, { participantUids: participants, type: "direct" });
+      if (chatSnapshot?.exists) transaction.update(chatRef, chatData);
+      else transaction.create(chatRef, {
+        ...chatData,
+        streakName: "Nosso foguinho",
+        createdAt: now,
+      });
     }
     transaction.update(senderRef, { lastChatAtMs: sentAtMs });
-    transaction.create(messageRef, {
+    const messageData = {
       senderUid: uid,
       senderName,
       senderUsername: sender.username || "",
       senderAvatarUrl: sender.avatarUrl || "",
       text,
       createdAt: now,
-    });
-    response = { chatId, messageId: requestId };
+    };
+    const reply = request.data?.reply;
+    if (reply && typeof reply.id === "string" && typeof reply.name === "string" && typeof reply.text === "string") {
+      messageData.replyToId = reply.id.slice(0, 128);
+      messageData.replyToName = reply.name.slice(0, 40);
+      messageData.replyToText = reply.text.slice(0, 200);
+    }
+    if (request.data?.forwarded === true) messageData.forwarded = true;
+    transaction.create(messageRef, messageData);
+    response = {
+      chatId,
+      messageId: requestId,
+      streakDays: progression?.streakDays ?? null,
+      streakLevel: progression?.streakLevel ?? null,
+    };
   });
 
   return response;

@@ -221,3 +221,50 @@ test("denies direct client writes to username reservations", async () => {
   const database = environment.authenticatedContext("username-attacker").firestore();
   await assertFails(setDoc(doc(database, "usernames", "already_taken"), { uid: "username-attacker" }));
 });
+
+test("group members can read their group and its messages but outsiders cannot", async () => {
+  const chatId = "group-chat-test-00000000000000000000";
+  await environment.withSecurityRulesDisabled(async (context) => {
+    const database = context.firestore();
+    await database.doc(`chats/${chatId}`).set({
+      type: "group",
+      name: "Teste",
+      participantUids: ["group-member-a", "group-member-b"],
+      streakDays: 0,
+    });
+    await database.doc(`chats/${chatId}/messages/message-1`).set({ text: "Olá" });
+  });
+
+  const member = environment.authenticatedContext("group-member-a").firestore();
+  const outsider = environment.authenticatedContext("group-outsider").firestore();
+  await assertSucceeds(getDoc(doc(member, "chats", chatId)));
+  await assertSucceeds(getDoc(doc(member, "chats", chatId, "messages", "message-1")));
+  await assertFails(getDoc(doc(outsider, "chats", chatId)));
+  await assertFails(getDoc(doc(outsider, "chats", chatId, "messages", "message-1")));
+  await assertSucceeds(updateDoc(doc(member, "chats", chatId, "messages", "message-1"), {
+    deletedFor: ["group-member-a"],
+  }));
+  await assertFails(updateDoc(doc(outsider, "chats", chatId, "messages", "message-1"), {
+    deletedFor: ["group-outsider"],
+  }));
+});
+
+test("group members cannot edit streak or last-message metadata directly", async () => {
+  const chatId = "group-chat-locked-000000000000000000";
+  await environment.withSecurityRulesDisabled(async (context) => {
+    await context.firestore().doc(`chats/${chatId}`).set({
+      type: "group",
+      participantUids: ["group-owner", "group-member"],
+      streakDays: 3,
+      lastMessage: "Antes",
+      lastMessageAt: new Date(),
+      lastMessageId: "old-message",
+      lastMessageSenderUid: "group-owner",
+    });
+  });
+  const member = environment.authenticatedContext("group-member").firestore();
+  await assertFails(updateDoc(doc(member, "chats", chatId), {
+    streakDays: 99,
+    lastMessage: "Falso",
+  }));
+});
