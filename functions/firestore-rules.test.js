@@ -317,3 +317,39 @@ test("allows legacy profiles to receive only safe default avatar fields once", a
   await assertFails(updateDoc(userRef, { equippedAvatarItems: ["avatar_crown_neon"] }));
   await assertFails(updateDoc(userRef, { avatarAsProfilePhoto: true }));
 });
+
+test("allows legacy balance initialization and avatar defaults in one atomic update", async () => {
+  const uid = "legacy-balance-avatar-profile";
+  await environment.withSecurityRulesDisabled(async (context) => {
+    await context.firestore().doc(`users/${uid}`).set({
+      uid,
+      displayName: "Jogador Antigo",
+      email: "antigo@example.com",
+      balanceCents: 0,
+      balanceInitialized: false,
+      level: 1,
+      avatarUrl: "",
+      username: "antigo",
+      profileSetupComplete: true,
+      pixKey: "",
+      pixKeyType: "",
+      pixKeyHash: "",
+      gamesPlayed: 0,
+      wins: 0,
+      inventory: [],
+    });
+  });
+  const database = environment.authenticatedContext(uid).firestore();
+  await assertSucceeds(updateDoc(doc(database, "users", uid), {
+    balanceCents: 50_000,
+    balanceInitialized: true,
+    avatarAsProfilePhoto: false,
+    equippedAvatarItems: [],
+  }));
+  await assertFails(updateDoc(doc(database, "users", uid), {
+    balanceCents: 50_000,
+    balanceInitialized: true,
+    avatarAsProfilePhoto: false,
+    equippedAvatarItems: ["avatar_crown_neon"],
+  }));
+});

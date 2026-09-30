@@ -136,14 +136,23 @@ service cloud.firestore {
     function isOneTimeBalanceInitialization() {
       return resource.data.get('balanceInitialized', false) != true
         && request.resource.data.balanceInitialized == true
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['balanceCents', 'balanceInitialized'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'balanceCents', 'balanceInitialized', 'avatarAsProfilePhoto', 'equippedAvatarItems'
+        ])
         && (
           request.resource.data.balanceCents == resource.data.get('balanceCents', 0)
           || (request.resource.data.balanceCents == 50000
             && (!('balanceCents' in resource.data) || resource.data.balanceCents == 0)
             && (!('gamesPlayed' in resource.data) || resource.data.gamesPlayed == 0)
             && (!('wins' in resource.data) || resource.data.wins == 0))
-        );
+        )
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['avatarAsProfilePhoto'])
+          || (!('avatarAsProfilePhoto' in resource.data)
+            && request.resource.data.avatarAsProfilePhoto == false))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['equippedAvatarItems'])
+          || (!('equippedAvatarItems' in resource.data)
+            && request.resource.data.equippedAvatarItems is list
+            && request.resource.data.equippedAvatarItems.size() == 0));
     }
 
       function isAvatarDefaultsMigration() {
