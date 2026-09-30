@@ -75,6 +75,8 @@ data class PerfilPublico(
     val partidas: Int,
     val vitorias: Int,
     val inventario: List<String>,
+    val chavePix: String,
+    val tipoChavePix: String,
 )
 
 data class ResultadoTransferencia(
@@ -414,6 +416,28 @@ object FirebaseRepository {
         chamarFunction("registerPixKey", mapOf("type" to tipo, "key" to chave.trim())) { _, erro -> callback(erro) }
     }
 
+    fun reenviarVerificacaoEmail(callback: (Exception?) -> Unit) {
+        val usuario = auth.currentUser
+        if (usuario == null) {
+            callback(IllegalStateException("Entre na sua conta novamente."))
+            return
+        }
+        usuario.sendEmailVerification()
+            .addOnSuccessListener { callback(null) }
+            .addOnFailureListener { callback(erroParaUsuario(it)) }
+    }
+
+    fun conferirEmailVerificado(callback: (Boolean, Exception?) -> Unit) {
+        val usuario = auth.currentUser
+        if (usuario == null) {
+            callback(false, IllegalStateException("Entre na sua conta novamente."))
+            return
+        }
+        usuario.reload()
+            .addOnSuccessListener { callback(auth.currentUser?.isEmailVerified == true, null) }
+            .addOnFailureListener { callback(false, erroParaUsuario(it)) }
+    }
+
     fun buscarChavePix(chave: String, callback: (JogadorDestino?, Exception?) -> Unit) {
         chamarFunction("lookupPixKey", mapOf("key" to chave.trim())) { data, erro ->
             val destino = data?.let {
@@ -440,6 +464,8 @@ object FirebaseRepository {
                     partidas = (it["gamesPlayed"] as? Number)?.toInt() ?: 0,
                     vitorias = (it["wins"] as? Number)?.toInt() ?: 0,
                     inventario = (it["inventory"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
+                    chavePix = it["pixKey"] as? String ?: "",
+                    tipoChavePix = it["pixKeyType"] as? String ?: "",
                 )
             }
             callback(perfil, erro)

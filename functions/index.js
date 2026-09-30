@@ -914,6 +914,8 @@ exports.getPlayerProfile = onCall(async (request) => {
     inventory: Array.isArray(profile.inventory)
       ? profile.inventory.filter((id) => typeof id === "string")
       : [],
+    pixKey: typeof profile.pixKey === "string" ? profile.pixKey : "",
+    pixKeyType: typeof profile.pixKeyType === "string" ? profile.pixKeyType : "",
   };
 });
 

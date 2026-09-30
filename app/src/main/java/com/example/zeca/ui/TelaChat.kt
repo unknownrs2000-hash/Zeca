@@ -103,6 +103,7 @@ import com.example.zeca.ConversaChat
 import com.example.zeca.FirebaseRepository
 import com.example.zeca.JogadorRanking
 import com.example.zeca.MensagemChat
+import com.example.zeca.PerfilPublico
 import com.example.zeca.RespostaChat
 import com.example.zeca.ui.theme.Cores
 import kotlinx.coroutines.delay
@@ -121,6 +122,7 @@ fun TelaChat(
     onEncaminhar: (String?, String, String, (Exception?) -> Unit) -> Unit,
     onApagarParaMim: (String, String, (Exception?) -> Unit) -> Unit,
     onApagarParaTodos: (String, String, (Exception?) -> Unit) -> Unit,
+    onBuscarPerfil: (String, (PerfilPublico?, Exception?) -> Unit) -> Unit,
 ) {
     var modo by rememberSaveable { mutableStateOf("Global") }
     var destinatarioUid by rememberSaveable { mutableStateOf("") }
@@ -130,8 +132,14 @@ fun TelaChat(
     var erro by rememberSaveable { mutableStateOf("") }
     var mensagens by remember { mutableStateOf<List<MensagemChat>>(emptyList()) }
     var conversas by remember { mutableStateOf<List<ConversaChat>>(emptyList()) }
+    var perfilPublico by remember { mutableStateOf<PerfilPublico?>(null) }
+    var carregandoPerfil by remember { mutableStateOf(false) }
+    var erroPerfil by remember { mutableStateOf("") }
     val destinatario = jogadores.firstOrNull { it.uid == destinatarioUid }
     val perfilJogador = jogadores.firstOrNull { it.uid == perfilUid }
+        ?: perfilPublico?.takeIf { it.uid == perfilUid }?.let {
+            JogadorRanking(it.uid, it.apelido, it.saldoCentavos, it.nivel, it.avatarUrl)
+        }
     val emConversa = modo == "Privado" && destinatarioUid.isNotBlank()
     val chatId = when {
         modo == "Global" -> "global"
@@ -191,21 +199,39 @@ fun TelaChat(
         }
     }
 
-    if (perfilUid.isNotBlank()) {
-        TelaChatBase {
-            PerfilChat(
-                jogador = perfilJogador,
-                posicao = jogadores.indexOfFirst { it.uid == perfilUid } + 1,
-                ehVoce = perfilUid == uidAtual,
-                onVoltar = { perfilUid = "" },
-                onConversar = {
-                    modo = "Privado"
-                    destinatarioUid = perfilUid
-                    perfilUid = ""
-                    erro = ""
-                },
-            )
+    LaunchedEffect(perfilUid) {
+        perfilPublico = null
+        erroPerfil = ""
+        if (perfilUid.isBlank()) {
+            carregandoPerfil = false
+        } else {
+            val alvoUid = perfilUid
+            carregandoPerfil = true
+            onBuscarPerfil(alvoUid) { perfil, error ->
+                if (perfilUid == alvoUid) {
+                    carregandoPerfil = false
+                    perfilPublico = perfil
+                    erroPerfil = error?.localizedMessage
+                        ?: if (perfil == null) "Não foi possível carregar o perfil." else ""
+                }
+            }
         }
+    }
+
+    if (perfilUid.isNotBlank()) {
+        TelaPerfilJogador(
+            jogador = perfilJogador ?: JogadorRanking(perfilUid, "Jogador", 0L, 1, ""),
+            perfil = perfilPublico,
+            carregando = carregandoPerfil,
+            erro = erroPerfil,
+            onFechar = { perfilUid = "" },
+            onConversar = if (perfilUid != uidAtual) ({
+                modo = "Privado"
+                destinatarioUid = perfilUid
+                perfilUid = ""
+                erro = ""
+            }) else null,
+        )
     } else if (modo == "Privado" && !emConversa) {
         TelaChatBase {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {

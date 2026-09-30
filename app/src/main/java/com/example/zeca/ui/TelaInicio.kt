@@ -1,28 +1,37 @@
 package com.example.zeca.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -47,16 +56,6 @@ fun TelaInicio(
     var perfilPublico by remember { mutableStateOf<PerfilPublico?>(null) }
     var erroPerfil by remember { mutableStateOf("") }
     var carregandoPerfil by remember { mutableStateOf(false) }
-
-    jogadorAberto?.let { jogador ->
-        PerfilJogadorDialogo(
-            jogador = jogador,
-            perfil = perfilPublico,
-            carregando = carregandoPerfil,
-            erro = erroPerfil,
-            onFechar = { jogadorAberto = null },
-        )
-    }
 
     Box(
         modifier = Modifier
@@ -176,8 +175,18 @@ fun TelaInicio(
                         }
                     }
                 }
-                Text("A chave Pix dos jogadores não é pública; use-a na Carteira para transferir.", color = Color.White.copy(alpha = 0.52f), fontSize = 11.sp)
+                Text("Toque em um jogador para ver o perfil e a chave Pix.", color = Color.White.copy(alpha = 0.52f), fontSize = 11.sp)
             }
+        }
+
+        jogadorAberto?.let { jogador ->
+            TelaPerfilJogador(
+                jogador = jogador,
+                perfil = perfilPublico,
+                carregando = carregandoPerfil,
+                erro = erroPerfil,
+                onFechar = { jogadorAberto = null },
+            )
         }
     }
 }
@@ -236,46 +245,108 @@ fun TelaEmBreve(titulo: String, descricao: String) {
 }
 
 @Composable
-private fun PerfilJogadorDialogo(
+internal fun TelaPerfilJogador(
     jogador: JogadorRanking,
     perfil: PerfilPublico?,
     carregando: Boolean,
     erro: String,
     onFechar: () -> Unit,
+    onConversar: (() -> Unit)? = null,
 ) {
-    AlertDialog(
-        onDismissRequest = onFechar,
-        containerColor = Cores.Cartao,
-        confirmButton = { TextButton(onClick = onFechar) { Text("Fechar") } },
-        title = {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(jogador.apelido, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Black)
-                Text("Nível ${perfil?.nivel ?: jogador.nivel}", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
+    BackHandler(onBack = onFechar)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Brush.verticalGradient(listOf(Color(0xFF151A1D), Cores.Fundo, Color(0xFF090D10))))
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {},
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(start = 20.dp, top = 28.dp, end = 20.dp, bottom = 118.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onFechar) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar", tint = Color.White)
+                }
+                Text("Dados do jogador", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
             }
-        },
-        text = {
+
             Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                when {
-                    carregando -> Text("Carregando perfil...", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
-                    perfil == null -> Text(
-                        erro.ifBlank { "Não foi possível carregar o perfil." },
-                        color = Cores.Laranja,
-                        fontSize = 13.sp,
-                    )
-                    else -> {
+                Box(
+                    modifier = Modifier
+                        .size(112.dp)
+                        .background(Cores.Verde.copy(alpha = 0.2f), CircleShape)
+                        .border(1.dp, Color.White.copy(alpha = 0.4f), CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(jogador.apelido.take(1).uppercase(), color = Cores.Verde, fontSize = 48.sp, fontWeight = FontWeight.Black)
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(jogador.apelido, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Black)
+                Text("Nível ${perfil?.nivel ?: jogador.nivel}", color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp)
+            }
+
+            when {
+                carregando -> Text("Carregando perfil...", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
+                perfil == null -> Text(
+                    erro.ifBlank { "Não foi possível carregar o perfil." },
+                    color = Cores.Laranja,
+                    fontSize = 13.sp,
+                )
+                else -> {
+                    SecaoJogador("Chave Pix") {
+                        if (perfil.chavePix.isBlank()) {
+                            Text(
+                                "Este jogador ainda não cadastrou uma chave Pix.",
+                                color = Color.White.copy(alpha = 0.65f),
+                                fontSize = 14.sp,
+                            )
+                        } else {
+                            Text(perfil.chavePix, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                if (perfil.tipoChavePix == "email") "E-mail" else "Chave aleatória",
+                                color = Color.White.copy(alpha = 0.58f),
+                                fontSize = 12.sp,
+                            )
+                        }
+                    }
+                    SecaoJogador("Estatísticas") {
                         DadoJogador("Saldo", formatarReais(perfil.saldoCentavos))
                         DadoJogador("Partidas", perfil.partidas.toString())
                         DadoJogador("Vitórias", perfil.vitorias.toString())
-                        Text("Coleção", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    }
+                    SecaoJogador("Coleção") {
                         ItensColecao(perfil.inventario)
+                    }
+                    if (onConversar != null) {
+                        Button(onClick = onConversar, modifier = Modifier.fillMaxWidth()) { Text("Enviar mensagem") }
                     }
                 }
             }
-        },
-    )
+        }
+    }
+}
+
+@Composable
+private fun SecaoJogador(titulo: String, content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.White.copy(alpha = 0.07f), RoundedCornerShape(18.dp))
+            .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(18.dp))
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(titulo, color = Cores.Verde, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        content()
+    }
 }
 
 @Composable

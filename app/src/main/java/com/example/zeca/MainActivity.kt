@@ -188,6 +188,18 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                             chavePix = jogador.chavePix,
                             tipoChavePix = jogador.tipoChavePix,
                             historico = movimentos,
+                            emailConta = usuario.email.orEmpty(),
+                            emailVerificadoInicial = usuario.isEmailVerified,
+                            onReenviarVerificacao = { concluir ->
+                                FirebaseRepository.reenviarVerificacaoEmail { error ->
+                                    concluir(error?.localizedMessage)
+                                }
+                            },
+                            onConferirVerificacao = { concluir ->
+                                FirebaseRepository.conferirEmailVerificado { verificado, error ->
+                                    concluir(verificado, error?.localizedMessage)
+                                }
+                            },
                             onSalvarChave = { tipo, chave, concluir ->
                                 FirebaseRepository.registrarChavePix(tipo, chave) { error ->
                                     concluir(error?.localizedMessage)
@@ -222,6 +234,9 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                             },
                             onApagarParaTodos = { chatId, mensagemId, concluir ->
                                 FirebaseRepository.apagarMensagemParaTodos(chatId, mensagemId, concluir)
+                            },
+                            onBuscarPerfil = { uid, concluir ->
+                                FirebaseRepository.buscarPerfilPublico(uid, concluir)
                             },
                         )
                         Aba.Perfil -> if (mostrarLoja) {

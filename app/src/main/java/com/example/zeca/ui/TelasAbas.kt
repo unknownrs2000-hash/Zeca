@@ -69,6 +69,10 @@ fun TelaCarteira(
     chavePix: String,
     tipoChavePix: String,
     historico: List<Movimento>,
+    emailConta: String,
+    emailVerificadoInicial: Boolean,
+    onReenviarVerificacao: ((String?) -> Unit) -> Unit,
+    onConferirVerificacao: ((Boolean, String?) -> Unit) -> Unit,
     onSalvarChave: (String, String, (String?) -> Unit) -> Unit,
     onBuscarDestinatario: (String, (JogadorDestino?, String?) -> Unit) -> Unit,
     onTransferir: (String, Long, String, (ResultadoTransferencia?, String?) -> Unit) -> Unit,
@@ -82,6 +86,9 @@ fun TelaCarteira(
     var mensagemTransferencia by rememberSaveable { mutableStateOf("") }
     var destinatario by remember { mutableStateOf<JogadorDestino?>(null) }
     var transferenciaOcupada by remember { mutableStateOf(false) }
+    var emailVerificado by remember { mutableStateOf(emailVerificadoInicial) }
+    var mensagemVerificacao by rememberSaveable { mutableStateOf("") }
+    var verificacaoOcupada by remember { mutableStateOf(false) }
     val chaveValida = when (tipoEdicao) {
         "E-mail" -> Regex("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$").matches(chaveEditavel.trim())
         else -> Regex("^[A-Fa-f0-9]{32}$").matches(chaveEditavel.trim())
@@ -119,6 +126,44 @@ fun TelaCarteira(
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                 )
+                if (emailVerificado) {
+                    Text("E-mail da conta verificado.", color = Cores.Verde, fontSize = 12.sp)
+                } else {
+                    Text(
+                        "Verifique o e-mail da conta ($emailConta) para cadastrá-lo como chave Pix.",
+                        color = Cores.Laranja,
+                        fontSize = 12.sp,
+                    )
+                    Button(
+                        onClick = {
+                            verificacaoOcupada = true
+                            mensagemVerificacao = ""
+                            onReenviarVerificacao { erro ->
+                                verificacaoOcupada = false
+                                mensagemVerificacao = erro ?: "Enviamos o link de verificação para $emailConta."
+                            }
+                        },
+                        enabled = !verificacaoOcupada,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Reenviar e-mail de verificação") }
+                    Button(
+                        onClick = {
+                            verificacaoOcupada = true
+                            mensagemVerificacao = ""
+                            onConferirVerificacao { verificado, erro ->
+                                verificacaoOcupada = false
+                                if (verificado) emailVerificado = true
+                                mensagemVerificacao = erro
+                                    ?: if (verificado) "E-mail verificado." else "Ainda não verificado. Abra o link enviado ao seu e-mail."
+                            }
+                        },
+                        enabled = !verificacaoOcupada,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Já verifiquei") }
+                    if (mensagemVerificacao.isNotBlank()) {
+                        Text(mensagemVerificacao, color = Color.White.copy(alpha = 0.76f), fontSize = 12.sp)
+                    }
+                }
             } else {
                 OutlinedTextField(
                     value = chaveEditavel,
@@ -139,7 +184,7 @@ fun TelaCarteira(
                         mensagem = erro ?: "Chave salva."
                     }
                 },
-                enabled = chaveValida,
+                enabled = chaveValida && (tipoEdicao != "E-mail" || emailVerificado),
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Salvar chave") }
             if (mensagem.isNotBlank()) Text(mensagem, color = Cores.Verde, fontSize = 13.sp)
