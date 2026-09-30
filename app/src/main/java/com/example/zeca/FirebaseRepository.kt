@@ -39,6 +39,16 @@ data class MensagemChat(
     val texto: String,
     val minha: Boolean,
     val enviadaEmMs: Long,
+    val respostaId: String = "",
+    val respostaAutor: String = "",
+    val respostaTexto: String = "",
+    val apagadaParaTodos: Boolean = false,
+)
+
+data class RespostaChat(
+    val id: String,
+    val autor: String,
+    val texto: String,
 )
 
 data class ConversaChat(
@@ -200,6 +210,8 @@ object FirebaseRepository {
         .addSnapshotListener { snapshot, error ->
             val mensagens = snapshot?.documents.orEmpty().mapNotNull { document ->
                 val data = document.data ?: return@mapNotNull null
+                val ocultaPara = (data["deletedFor"] as? List<*>)?.filterIsInstance<String>().orEmpty()
+                if (uidAtual in ocultaPara) return@mapNotNull null
                 MensagemChat(
                     id = document.id,
                     autorUid = data["senderUid"] as? String ?: return@mapNotNull null,
@@ -207,6 +219,10 @@ object FirebaseRepository {
                     texto = data["text"] as? String ?: return@mapNotNull null,
                     minha = data["senderUid"] == uidAtual,
                     enviadaEmMs = (data["createdAt"] as? com.google.firebase.Timestamp)?.toDate()?.time ?: 0L,
+                    respostaId = data["replyToId"] as? String ?: "",
+                    respostaAutor = data["replyToName"] as? String ?: "",
+                    respostaTexto = data["replyToText"] as? String ?: "",
+                    apagadaParaTodos = data["deletedForAll"] as? Boolean ?: false,
                 )
             }.sortedBy { it.enviadaEmMs }
             callback(mensagens, error)
@@ -237,6 +253,7 @@ object FirebaseRepository {
         destinatarioUid: String?,
         texto: String,
         requestId: String,
+        resposta: RespostaChat?,
         callback: (String?, Exception?) -> Unit,
     ) {
         val uid = auth.currentUser?.uid
@@ -301,20 +318,46 @@ object FirebaseRepository {
                     )
                 }
             }
-            transaction.set(
-                messageRef,
-                mapOf(
-                    "senderUid" to uid,
-                    "senderName" to senderName,
-                    "text" to message,
-                    "createdAt" to serverTime,
-                ),
+            val dadosMensagem = mutableMapOf<String, Any>(
+                "senderUid" to uid,
+                "senderName" to senderName,
+                "text" to message,
+                "createdAt" to serverTime,
             )
+            if (resposta != null) {
+                dadosMensagem["replyToId"] = resposta.id
+                dadosMensagem["replyToName"] = resposta.autor
+                dadosMensagem["replyToText"] = resposta.texto.take(200)
+            }
+            transaction.set(messageRef, dadosMensagem)
             chatId
         }
             .addOnSuccessListener { callback(it, null) }
             .addOnFailureListener { callback(null, it) }
         }
+
+    fun apagarMensagemParaMim(chatId: String, mensagemId: String, callback: (Exception?) -> Unit) {
+        val uid = auth.currentUser?.uid
+        if (uid == null) {
+            callback(IllegalStateException("Entre na sua conta novamente."))
+            return
+        }
+        database.collection("chats").document(chatId).collection("messages").document(mensagemId)
+            .update("deletedFor", com.google.firebase.firestore.FieldValue.arrayUnion(uid))
+            .addOnSuccessListener { callback(null) }
+            .addOnFailureListener { callback(erroParaUsuario(it)) }
+    }
+
+    fun apagarMensagemParaTodos(chatId: String, mensagemId: String, callback: (Exception?) -> Unit) {
+        if (auth.currentUser == null) {
+            callback(IllegalStateException("Entre na sua conta novamente."))
+            return
+        }
+        database.collection("chats").document(chatId).collection("messages").document(mensagemId)
+            .update(mapOf("deletedForAll" to true, "text" to ""))
+            .addOnSuccessListener { callback(null) }
+            .addOnFailureListener { callback(erroParaUsuario(it)) }
+    }
 
     fun observarMovimentos(uid: String, callback: (List<Movimento>) -> Unit): ListenerRegistration =
         database.collection("users").document(uid).collection("transactions")

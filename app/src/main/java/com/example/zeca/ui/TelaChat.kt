@@ -1,21 +1,42 @@
 package com.example.zeca.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -23,44 +44,80 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Reply
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.example.zeca.ConversaChat
 import com.example.zeca.FirebaseRepository
 import com.example.zeca.JogadorRanking
 import com.example.zeca.MensagemChat
+import com.example.zeca.RespostaChat
 import com.example.zeca.ui.theme.Cores
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import kotlin.math.roundToInt
 
 @Composable
 fun TelaChat(
     uidAtual: String,
     jogadores: List<JogadorRanking>,
-    onEnviar: (String?, String, String, (Exception?) -> Unit) -> Unit,
+    onEnviar: (String?, String, String, RespostaChat?, (Exception?) -> Unit) -> Unit,
+    onApagarParaMim: (String, String, (Exception?) -> Unit) -> Unit,
+    onApagarParaTodos: (String, String, (Exception?) -> Unit) -> Unit,
 ) {
     var modo by rememberSaveable { mutableStateOf("Global") }
     var destinatarioUid by rememberSaveable { mutableStateOf("") }
@@ -97,8 +154,8 @@ fun TelaChat(
     }
 
     DisposableEffect(uidAtual, chatId) {
+        mensagens = emptyList()
         if (chatId == null) {
-            mensagens = emptyList()
             onDispose { }
         } else {
             val registration = FirebaseRepository.observarMensagensChat(chatId, uidAtual) { novas, error ->
@@ -109,8 +166,30 @@ fun TelaChat(
         }
     }
 
-    TelaChatBase {
-        if (perfilUid.isNotBlank()) {
+    val enviarMensagem: (RespostaChat?, () -> Unit) -> Unit = { resposta, aoSucesso ->
+        val texto = rascunho.trim()
+        if (texto.isNotEmpty() && !enviando) {
+            enviando = true
+            erro = ""
+            onEnviar(
+                if (modo == "Global") null else destinatarioUid,
+                texto,
+                UUID.randomUUID().toString(),
+                resposta,
+            ) { error ->
+                enviando = false
+                if (error == null) {
+                    rascunho = ""
+                    aoSucesso()
+                } else {
+                    erro = error.localizedMessage ?: "Não foi possível enviar a mensagem."
+                }
+            }
+        }
+    }
+
+    if (perfilUid.isNotBlank()) {
+        TelaChatBase {
             PerfilChat(
                 jogador = perfilJogador,
                 posicao = jogadores.indexOfFirst { it.uid == perfilUid } + 1,
@@ -123,35 +202,23 @@ fun TelaChat(
                     erro = ""
                 },
             )
-            return@TelaChatBase
         }
-
-        if (emConversa) {
-            CabecalhoConversa(
-                nome = destinatario?.apelido ?: "Jogador",
-                detalhe = destinatario?.let { "Nível ${it.nivel}" } ?: "",
-                onVoltar = { destinatarioUid = ""; erro = "" },
-                onPerfil = { perfilUid = destinatarioUid },
-            )
-        } else {
+    } else if (modo == "Privado" && !emConversa) {
+        TelaChatBase {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column {
                     Text("Chat", color = Color.White, fontSize = 29.sp, fontWeight = FontWeight.Black)
                     Text("Converse com os jogadores.", color = Color.White.copy(alpha = 0.62f), fontSize = 13.sp)
                 }
             }
-        }
 
-        PainelChat {
-            if (!emConversa) {
+            PainelChat {
                 OpcoesChat(listOf("Global", "Privado"), modo) {
                     modo = it
                     destinatarioUid = ""
                     erro = ""
                 }
-            }
 
-            if (modo == "Privado" && !emConversa) {
                 Text("Conversas recentes", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
                 if (conversas.isEmpty()) {
                     Text("Ainda não há conversas privadas.", color = Color.White.copy(alpha = 0.62f), fontSize = 13.sp)
@@ -183,96 +250,56 @@ fun TelaChat(
                         )
                     }
                 }
-            } else {
-                if (modo == "Global") {
-                    Column {
-                        Text("Sala global", color = Cores.Turquesa, fontWeight = FontWeight.Bold)
-                        Text("Todos os jogadores podem ver estas mensagens.", color = Color.White.copy(alpha = 0.55f), fontSize = 11.sp)
-                    }
-                }
 
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (mensagens.isEmpty()) {
-                        Text("Envie a primeira mensagem.", color = Color.White.copy(alpha = 0.62f), fontSize = 13.sp)
-                    }
-                    mensagens.takeLast(80).forEach { mensagem ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = if (mensagem.minha) Arrangement.End else Arrangement.Start,
-                            verticalAlignment = Alignment.Bottom,
-                        ) {
-                            if (!mensagem.minha) {
-                                AvatarChat(
-                                    nome = mensagem.autor,
-                                    tamanho = 32.dp,
-                                    modifier = Modifier.clickable { perfilUid = mensagem.autorUid },
-                                )
-                                Spacer(Modifier.width(8.dp))
-                            }
-                            Column(
-                                modifier = Modifier
-                                    .weight(1f, fill = false)
-                                    .background(
-                                        if (mensagem.minha) Cores.Verde.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.08f),
-                                        RoundedCornerShape(15.dp),
-                                    )
-                                    .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(15.dp))
-                                    .padding(12.dp),
-                            ) {
-                                if (!mensagem.minha && modo == "Global") {
-                                    Text(
-                                        mensagem.autor,
-                                        color = Cores.Turquesa,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.clickable { perfilUid = mensagem.autorUid },
-                                    )
-                                }
-                                Text(mensagem.texto, color = Color.White, fontSize = 14.sp)
-                                if (mensagem.enviadaEmMs > 0) {
-                                    Text(
-                                        SimpleDateFormat("HH:mm", Locale.forLanguageTag("pt-BR")).format(Date(mensagem.enviadaEmMs)),
-                                        color = Color.White.copy(alpha = 0.48f),
-                                        fontSize = 10.sp,
-                                    )
-                                }
-                            }
+                if (erro.isNotBlank()) Text(erro, color = Cores.Laranja, fontSize = 12.sp)
+            }
+        }
+    } else {
+        key(chatId) {
+            TelaConversa(
+                mensagens = mensagens,
+                ehGlobal = modo == "Global",
+                rascunho = rascunho,
+                onRascunhoChange = { rascunho = it.take(500); erro = "" },
+                enviando = enviando,
+                erro = erro,
+                onEnviar = enviarMensagem,
+                onPerfil = { perfilUid = it },
+                onApagarParaMim = { mensagemId ->
+                    if (chatId != null) {
+                        onApagarParaMim(chatId, mensagemId) { e ->
+                            if (e != null) erro = e.localizedMessage ?: "Não foi possível apagar a mensagem."
                         }
                     }
-                }
-
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        value = rascunho,
-                        onValueChange = { rascunho = it.take(500); erro = "" },
-                        modifier = Modifier.weight(1f),
-                        label = { Text("Mensagem") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
-                    )
-                    Button(
-                        onClick = {
-                            val texto = rascunho.trim()
-                            if (texto.isNotEmpty() && !enviando) {
-                                enviando = true
-                                erro = ""
-                                onEnviar(
-                                    if (modo == "Global") null else destinatarioUid,
-                                    texto,
-                                    UUID.randomUUID().toString(),
-                                ) { error ->
-                                    enviando = false
-                                    if (error == null) rascunho = ""
-                                    else erro = error.localizedMessage ?: "Não foi possível enviar a mensagem."
-                                }
-                            }
-                        },
-                        enabled = rascunho.isNotBlank() && !enviando && (modo == "Global" || destinatarioUid.isNotBlank()),
-                    ) { Text(if (enviando) "..." else "Enviar") }
-                }
-            }
-
-            if (erro.isNotBlank()) Text(erro, color = Cores.Laranja, fontSize = 12.sp)
+                },
+                onApagarParaTodos = { mensagemId ->
+                    if (chatId != null) {
+                        onApagarParaTodos(chatId, mensagemId) { e ->
+                            if (e != null) erro = e.localizedMessage ?: "Não foi possível apagar a mensagem."
+                        }
+                    }
+                },
+                cabecalho = {
+                    if (emConversa) {
+                        CabecalhoConversa(
+                            nome = destinatario?.apelido ?: "Jogador",
+                            detalhe = destinatario?.let { "Nível ${it.nivel}" } ?: "",
+                            onVoltar = { destinatarioUid = ""; erro = "" },
+                            onPerfil = { perfilUid = destinatarioUid },
+                        )
+                    } else {
+                        Column {
+                            Text("Chat", color = Color.White, fontSize = 29.sp, fontWeight = FontWeight.Black)
+                            Text("Todos os jogadores podem ver a sala global.", color = Color.White.copy(alpha = 0.62f), fontSize = 13.sp)
+                        }
+                        OpcoesChat(listOf("Global", "Privado"), modo) {
+                            modo = it
+                            destinatarioUid = ""
+                            erro = ""
+                        }
+                    }
+                },
+            )
         }
     }
 }
@@ -485,4 +512,457 @@ private fun OpcoesChat(opcoes: List<String>, selecionada: String, onSelecionar: 
             }
         }
     }
+}
+
+@Composable
+private fun TelaConversa(
+    mensagens: List<MensagemChat>,
+    ehGlobal: Boolean,
+    rascunho: String,
+    onRascunhoChange: (String) -> Unit,
+    enviando: Boolean,
+    erro: String,
+    onEnviar: (RespostaChat?, () -> Unit) -> Unit,
+    onPerfil: (String) -> Unit,
+    onApagarParaMim: (String) -> Unit,
+    onApagarParaTodos: (String) -> Unit,
+    cabecalho: @Composable ColumnScope.() -> Unit,
+) {
+    val contexto = LocalContext.current
+    val haptic = LocalHapticFeedback.current
+    val foco = LocalFocusManager.current
+    val escopo = rememberCoroutineScope()
+    val estadoLista = rememberLazyListState()
+    val campoFoco = remember { FocusRequester() }
+    val tecladoAberto = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    var respondendo by remember { mutableStateOf<MensagemChat?>(null) }
+    var menu by remember { mutableStateOf<MensagemChat?>(null) }
+    var apagando by remember { mutableStateOf<MensagemChat?>(null) }
+    val invertida = remember(mensagens) { mensagens.asReversed() }
+    val podeEnviar = rascunho.isNotBlank() && !enviando
+
+    val fecharTeclado: () -> Unit = { foco.clearFocus() }
+    val conexaoRolagem = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (available.y != 0f) foco.clearFocus()
+                return Offset.Zero
+            }
+        }
+    }
+
+    LaunchedEffect(mensagens.lastOrNull()?.id) {
+        if (mensagens.isNotEmpty()) estadoLista.animateScrollToItem(0)
+    }
+
+    LaunchedEffect(respondendo?.id) {
+        if (respondendo != null) {
+            delay(150)
+            campoFoco.requestFocus()
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Brush.verticalGradient(listOf(Color(0xFF151A1D), Cores.Fundo, Color(0xFF090D10))))
+            .statusBarsPadding()
+            .imePadding(),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp, top = 12.dp, end = 20.dp, bottom = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            content = cabecalho,
+        )
+
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .pointerInput(Unit) { detectTapGestures(onTap = { fecharTeclado() }) },
+        ) {
+            if (invertida.isEmpty()) {
+                Text(
+                    "Envie a primeira mensagem.",
+                    modifier = Modifier.align(Alignment.Center),
+                    color = Color.White.copy(alpha = 0.62f),
+                    fontSize = 13.sp,
+                )
+            }
+            LazyColumn(
+                state = estadoLista,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .nestedScroll(conexaoRolagem),
+                reverseLayout = true,
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(invertida, key = { it.id }) { mensagem ->
+                    BolhaMensagem(
+                        mensagem = mensagem,
+                        mostrarAutor = ehGlobal && !mensagem.minha,
+                        onPerfil = { onPerfil(mensagem.autorUid) },
+                        onMenu = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            menu = mensagem
+                        },
+                        onResponder = { if (!mensagem.apagadaParaTodos) respondendo = mensagem },
+                        onIrParaOriginal = { id ->
+                            val indice = invertida.indexOfFirst { it.id == id }
+                            if (indice >= 0) escopo.launch { estadoLista.animateScrollToItem(indice) }
+                        },
+                    )
+                }
+            }
+        }
+
+        respondendo?.let { alvo ->
+            PreviaResposta(alvo, onFechar = { respondendo = null })
+        }
+
+        if (erro.isNotBlank()) {
+            Text(
+                erro,
+                color = Cores.Laranja,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+            )
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = if (tecladoAberto) 8.dp else 100.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.Bottom,
+        ) {
+            OutlinedTextField(
+                value = rascunho,
+                onValueChange = onRascunhoChange,
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(campoFoco),
+                placeholder = { Text("Mensagem") },
+                shape = RoundedCornerShape(26.dp),
+                maxLines = 4,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Text,
+                    capitalization = KeyboardCapitalization.Sentences,
+                ),
+            )
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(CircleShape)
+                    .background(if (podeEnviar) Cores.Verde else Color.White.copy(alpha = 0.12f))
+                    .clickable(enabled = podeEnviar) {
+                        val alvo = respondendo
+                        val resposta = alvo?.let {
+                            RespostaChat(it.id, it.autor, if (it.apagadaParaTodos) "Mensagem apagada" else it.texto)
+                        }
+                        onEnviar(resposta) { respondendo = null }
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.Send,
+                    contentDescription = "Enviar",
+                    tint = if (podeEnviar) Color(0xFF07130F) else Color.White.copy(alpha = 0.4f),
+                )
+            }
+        }
+    }
+
+    menu?.let { alvo ->
+        MenuMensagem(
+            mensagem = alvo,
+            onDispensar = { menu = null },
+            onResponder = { respondendo = alvo; menu = null },
+            onCopiar = { copiarTexto(contexto, alvo.texto); menu = null },
+            onCompartilhar = { compartilharTexto(contexto, alvo.texto); menu = null },
+            onPerfil = if (!alvo.minha) ({ onPerfil(alvo.autorUid); menu = null }) else null,
+            onApagar = { apagando = alvo; menu = null },
+        )
+    }
+
+    apagando?.let { alvo ->
+        DialogoApagar(
+            podeParaTodos = alvo.minha && !alvo.apagadaParaTodos,
+            onParaMim = { onApagarParaMim(alvo.id); apagando = null },
+            onParaTodos = { onApagarParaTodos(alvo.id); apagando = null },
+            onCancelar = { apagando = null },
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun BolhaMensagem(
+    mensagem: MensagemChat,
+    mostrarAutor: Boolean,
+    onPerfil: () -> Unit,
+    onMenu: () -> Unit,
+    onResponder: () -> Unit,
+    onIrParaOriginal: (String) -> Unit,
+) {
+    var arraste by remember { mutableStateOf(0f) }
+    val limite = with(LocalDensity.current) { 64.dp.toPx() }
+    val responder by rememberUpdatedState(onResponder)
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        if (arraste > limite * 0.4f) {
+            Icon(
+                Icons.AutoMirrored.Filled.Reply,
+                contentDescription = null,
+                tint = Cores.Turquesa,
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .size(22.dp),
+            )
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .offset { IntOffset(arraste.roundToInt(), 0) }
+                .pointerInput(mensagem.id) {
+                    detectHorizontalDragGestures(
+                        onDragEnd = {
+                            if (arraste >= limite) responder()
+                            arraste = 0f
+                        },
+                        onDragCancel = { arraste = 0f },
+                        onHorizontalDrag = { change, dx ->
+                            change.consume()
+                            arraste = (arraste + dx).coerceIn(0f, limite * 1.4f)
+                        },
+                    )
+                },
+            horizontalArrangement = if (mensagem.minha) Arrangement.End else Arrangement.Start,
+            verticalAlignment = Alignment.Bottom,
+        ) {
+            if (!mensagem.minha) {
+                AvatarChat(mensagem.autor, 32.dp, Modifier.clickable(onClick = onPerfil))
+                Spacer(Modifier.width(8.dp))
+            }
+            Column(
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .widthIn(max = 320.dp)
+                    .clip(RoundedCornerShape(15.dp))
+                    .background(
+                        if (mensagem.minha) Cores.Verde.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.08f),
+                    )
+                    .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(15.dp))
+                    .combinedClickable(onClick = {}, onLongClick = onMenu)
+                    .padding(12.dp),
+            ) {
+                if (mostrarAutor) {
+                    Text(
+                        mensagem.autor,
+                        color = Cores.Turquesa,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.clickable(onClick = onPerfil),
+                    )
+                }
+                if (mensagem.respostaId.isNotBlank() && !mensagem.apagadaParaTodos) {
+                    Row(
+                        modifier = Modifier
+                            .padding(vertical = 4.dp)
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color.Black.copy(alpha = 0.22f))
+                            .clickable { onIrParaOriginal(mensagem.respostaId) }
+                            .height(IntrinsicSize.Min),
+                    ) {
+                        Box(
+                            Modifier
+                                .width(3.dp)
+                                .fillMaxHeight()
+                                .background(Cores.Turquesa),
+                        )
+                        Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+                            Text(
+                                mensagem.respostaAutor,
+                                color = Cores.Turquesa,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                mensagem.respostaTexto,
+                                color = Color.White.copy(alpha = 0.7f),
+                                fontSize = 12.sp,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+                if (mensagem.apagadaParaTodos) {
+                    Text(
+                        "🚫 Mensagem apagada",
+                        color = Color.White.copy(alpha = 0.55f),
+                        fontSize = 13.sp,
+                        fontStyle = FontStyle.Italic,
+                    )
+                } else {
+                    Text(mensagem.texto, color = Color.White, fontSize = 14.sp)
+                }
+                if (mensagem.enviadaEmMs > 0) {
+                    Text(
+                        SimpleDateFormat("HH:mm", Locale.forLanguageTag("pt-BR")).format(Date(mensagem.enviadaEmMs)),
+                        color = Color.White.copy(alpha = 0.48f),
+                        fontSize = 10.sp,
+                        modifier = Modifier.align(Alignment.End),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PreviaResposta(alvo: MensagemChat, onFechar: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 12.dp, end = 12.dp, top = 6.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.White.copy(alpha = 0.08f))
+            .height(IntrinsicSize.Min),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .width(4.dp)
+                .fillMaxHeight()
+                .background(Cores.Turquesa),
+        )
+        Column(
+            Modifier
+                .weight(1f)
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+        ) {
+            Text(
+                "Respondendo a ${alvo.autor}",
+                color = Cores.Turquesa,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                if (alvo.apagadaParaTodos) "Mensagem apagada" else alvo.texto,
+                color = Color.White.copy(alpha = 0.7f),
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        IconButton(onClick = onFechar) {
+            Icon(Icons.Filled.Close, contentDescription = "Cancelar resposta", tint = Color.White)
+        }
+    }
+}
+
+@Composable
+private fun MenuMensagem(
+    mensagem: MensagemChat,
+    onDispensar: () -> Unit,
+    onResponder: () -> Unit,
+    onCopiar: () -> Unit,
+    onCompartilhar: () -> Unit,
+    onPerfil: (() -> Unit)?,
+    onApagar: () -> Unit,
+) {
+    Dialog(onDismissRequest = onDispensar) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFF1A2126), RoundedCornerShape(22.dp))
+                .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(22.dp))
+                .padding(vertical = 8.dp),
+        ) {
+            Text(
+                if (mensagem.apagadaParaTodos) "Mensagem apagada" else mensagem.texto,
+                color = Color.White.copy(alpha = 0.6f),
+                fontSize = 12.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+            )
+            if (!mensagem.apagadaParaTodos) {
+                AcaoMenu(Icons.AutoMirrored.Filled.Reply, "Responder", onResponder)
+                AcaoMenu(Icons.Filled.ContentCopy, "Copiar", onCopiar)
+                AcaoMenu(Icons.Filled.Share, "Compartilhar", onCompartilhar)
+                if (onPerfil != null) AcaoMenu(Icons.Filled.Person, "Ver perfil", onPerfil)
+            }
+            AcaoMenu(Icons.Filled.Delete, "Apagar", onApagar, Color(0xFFFF6879))
+        }
+    }
+}
+
+@Composable
+private fun AcaoMenu(icone: ImageVector, titulo: String, onClick: () -> Unit, cor: Color = Color.White) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Icon(icone, contentDescription = null, tint = cor, modifier = Modifier.size(22.dp))
+        Text(titulo, color = cor, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+@Composable
+private fun DialogoApagar(
+    podeParaTodos: Boolean,
+    onParaMim: () -> Unit,
+    onParaTodos: () -> Unit,
+    onCancelar: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onCancelar,
+        containerColor = Color(0xFF1A2126),
+        title = { Text("Apagar mensagem?", color = Color.White, fontWeight = FontWeight.Bold) },
+        text = {
+            Text(
+                if (podeParaTodos) "Você pode apagar só para você ou para todos da conversa."
+                else "A mensagem será apagada só para você.",
+                color = Color.White.copy(alpha = 0.7f),
+                fontSize = 13.sp,
+            )
+        },
+        confirmButton = {
+            Column(horizontalAlignment = Alignment.End) {
+                if (podeParaTodos) {
+                    TextButton(onClick = onParaTodos) { Text("Apagar para todos", color = Color(0xFFFF6879)) }
+                }
+                TextButton(onClick = onParaMim) { Text("Apagar para mim", color = Color(0xFFFF6879)) }
+                TextButton(onClick = onCancelar) { Text("Cancelar") }
+            }
+        },
+    )
+}
+
+private fun copiarTexto(contexto: Context, texto: String) {
+    val gerente = contexto.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    gerente.setPrimaryClip(ClipData.newPlainText("mensagem", texto))
+    Toast.makeText(contexto, "Mensagem copiada", Toast.LENGTH_SHORT).show()
+}
+
+private fun compartilharTexto(contexto: Context, texto: String) {
+    val envio = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, texto)
+    }
+    contexto.startActivity(Intent.createChooser(envio, "Compartilhar mensagem"))
 }

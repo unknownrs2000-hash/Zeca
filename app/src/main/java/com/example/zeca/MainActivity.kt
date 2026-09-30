@@ -204,10 +204,16 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                         Aba.Chat -> TelaChat(
                             uidAtual = usuario.uid,
                             jogadores = ranking,
-                            onEnviar = { destinatarioUid, texto, requestId, concluir ->
-                                FirebaseRepository.enviarMensagemChat(destinatarioUid, texto, requestId) { _, error ->
+                            onEnviar = { destinatarioUid, texto, requestId, resposta, concluir ->
+                                FirebaseRepository.enviarMensagemChat(destinatarioUid, texto, requestId, resposta) { _, error ->
                                     concluir(error)
                                 }
+                            },
+                            onApagarParaMim = { chatId, mensagemId, concluir ->
+                                FirebaseRepository.apagarMensagemParaMim(chatId, mensagemId, concluir)
+                            },
+                            onApagarParaTodos = { chatId, mensagemId, concluir ->
+                                FirebaseRepository.apagarMensagemParaTodos(chatId, mensagemId, concluir)
                             },
                         )
                         Aba.Perfil -> if (mostrarLoja) {
