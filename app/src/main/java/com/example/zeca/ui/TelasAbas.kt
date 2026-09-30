@@ -101,7 +101,7 @@ fun TelaConfigurarPerfil(
     var username by rememberSaveable { mutableStateOf("") }
     var displayName by rememberSaveable { mutableStateOf(nomeInicial) }
     var avatarUrl by rememberSaveable { mutableStateOf(avatarUrlInicial) }
-    var avatarComoFoto by rememberSaveable { mutableStateOf(avatarUrlInicial.isBlank()) }
+    var avatarComoFoto by rememberSaveable { mutableStateOf(false) }
     var mensagem by rememberSaveable { mutableStateOf("") }
     var enviandoFoto by remember { mutableStateOf(false) }
     var salvando by remember { mutableStateOf(false) }
@@ -1107,7 +1107,9 @@ internal fun AvatarComMoldura(
         contentAlignment = Alignment.Center,
     ) {
         Box(Modifier.size(tamanho).clip(CircleShape).border(1.dp, Color.White.copy(alpha = 0.4f), CircleShape)) {
-            if (photoUrl.isNotBlank() && !avatarAsProfilePhoto) {
+            if (avatarAsProfilePhoto) {
+                AvatarPersonagem(inicial, avatarItems, tamanho)
+            } else if (photoUrl.isNotBlank()) {
                 AsyncImage(
                     model = photoUrl,
                     contentDescription = "Foto de perfil",
@@ -1115,7 +1117,7 @@ internal fun AvatarComMoldura(
                     contentScale = ContentScale.Crop,
                 )
             } else {
-                AvatarPersonagem(inicial, avatarItems, tamanho)
+                Text(inicial, color = Cores.Verde, fontSize = (tamanho.value * 0.42f).sp, fontWeight = FontWeight.Black)
             }
         }
     }

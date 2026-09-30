@@ -229,7 +229,8 @@ object FirebaseRepository {
                 val profileName = profile["displayName"] as? String ?: nomeConta
                 val username = profile["username"] as? String ?: ""
                 val profileLevel = (profile["level"] as? Number)?.toLong()?.takeIf { it > 0L } ?: 1L
-                val profileAvatar = profile["avatarUrl"] as? String ?: user.photoUrl?.toString().orEmpty()
+                val profileAvatar = (profile["avatarUrl"] as? String).orEmpty()
+                    .ifBlank { user.photoUrl?.toString().orEmpty() }
                 val avatarAsProfilePhoto = profile["avatarAsProfilePhoto"] as? Boolean ?: false
                 val equippedAvatarItems = (profile["equippedAvatarItems"] as? List<*>)?.filterIsInstance<String>().orEmpty()
                 if ("avatarAsProfilePhoto" !in profile) updates["avatarAsProfilePhoto"] = false
@@ -260,7 +261,12 @@ object FirebaseRepository {
             }
             null
         }
-            .addOnSuccessListener { callback(null) }
+            .addOnSuccessListener {
+                callback(null)
+                if (!user.photoUrl?.toString().isNullOrBlank()) {
+                    chamarFunction("ensurePlayerProfile", emptyMap()) { _, _ -> }
+                }
+            }
             .addOnFailureListener { callback(erroParaUsuario(it)) }
     }
 

@@ -851,7 +851,9 @@ private fun AvatarChat(
             .border(1.dp, Color.White.copy(alpha = 0.25f), CircleShape),
         contentAlignment = Alignment.Center,
     ) {
-        if (photoUrl.isNotBlank() && !avatarAsProfilePhoto) {
+        if (avatarAsProfilePhoto) {
+            AvatarPersonagem(nome.trim().take(1).uppercase(), avatarItems, tamanho)
+        } else if (photoUrl.isNotBlank()) {
             AsyncImage(
                 model = photoUrl,
                 contentDescription = "Foto de $nome",
@@ -859,7 +861,12 @@ private fun AvatarChat(
                 contentScale = ContentScale.Crop,
             )
         } else {
-            AvatarPersonagem(nome.trim().take(1).uppercase(), avatarItems, tamanho)
+            Text(
+                nome.trim().take(1).uppercase(),
+                color = Color.White,
+                fontSize = (tamanho.value * 0.42f).sp,
+                fontWeight = FontWeight.Black,
+            )
         }
     }
 }
@@ -1165,10 +1172,19 @@ private fun TelaConversa(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(invertida, key = { it.id }) { mensagem ->
+                    val avatarDoRanking = jogadores.firstOrNull { it.uid == mensagem.autorUid }
+                    val mensagemTemAvatarSalvo = mensagem.avatarUrlAutor.isNotBlank()
+                        || mensagem.avatarItensAutor.isNotEmpty()
+                        || mensagem.avatarComoFotoAutor
+                    val mensagemComAvatar = if (mensagemTemAvatarSalvo) mensagem else mensagem.copy(
+                        avatarUrlAutor = avatarDoRanking?.avatarUrl.orEmpty(),
+                        avatarItensAutor = avatarDoRanking?.avatarItensEquipados.orEmpty(),
+                        avatarComoFotoAutor = avatarDoRanking?.avatarComoFotoPerfil == true,
+                    )
                     BolhaMensagem(
-                        mensagem = mensagem,
+                        mensagem = mensagemComAvatar,
                         mostrarAutor = ehGlobal && !mensagem.minha,
-                        avatarUrl = mensagem.avatarUrlAutor,
+                        avatarUrl = mensagemComAvatar.avatarUrlAutor,
                         onPerfil = { onPerfil(mensagem.autorUid) },
                         onMenu = {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
