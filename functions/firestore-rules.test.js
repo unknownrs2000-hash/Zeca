@@ -353,3 +353,55 @@ test("allows legacy balance initialization and avatar defaults in one atomic upd
     equippedAvatarItems: ["avatar_crown_neon"],
   }));
 });
+
+test("allows profile reconciliation to synchronize avatar metadata to the leaderboard", async () => {
+  const uid = "legacy-ranking-avatar-sync";
+  await environment.withSecurityRulesDisabled(async (context) => {
+    const database = context.firestore();
+    await database.doc(`users/${uid}`).set({
+      uid,
+      displayName: "Perfil Antigo",
+      email: "perfil@example.com",
+      balanceCents: 19_010,
+      balanceInitialized: true,
+      level: 2,
+      avatarUrl: "",
+      username: "perfilantigo",
+      profileSetupComplete: true,
+      pixKey: "",
+      pixKeyType: "",
+      pixKeyHash: "",
+      gamesPlayed: 10,
+      wins: 3,
+      inventory: [],
+    });
+    await database.doc(`leaderboard/${uid}`).set({
+      displayName: "Perfil Antigo",
+      balanceCents: 19_010,
+      level: 2,
+      avatarUrl: "",
+      username: "perfilantigo",
+    });
+  });
+
+  const database = environment.authenticatedContext(uid).firestore();
+  const userRef = doc(database, "users", uid);
+  const rankRef = doc(database, "leaderboard", uid);
+  await assertSucceeds(runTransaction(database, async (transaction) => {
+    transaction.update(userRef, {
+      avatarAsProfilePhoto: false,
+      equippedAvatarItems: [],
+    });
+    transaction.update(rankRef, {
+      displayName: "Perfil Antigo",
+      username: "perfilantigo",
+      balanceCents: 19_010,
+      level: 2,
+      avatarUrl: "",
+      avatarAsProfilePhoto: false,
+      equippedAvatarItems: [],
+    });
+  }));
+
+  await assertFails(updateDoc(rankRef, { equippedAvatarItems: ["avatar_crown_neon"] }));
+});

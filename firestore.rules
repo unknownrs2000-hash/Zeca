@@ -233,12 +233,25 @@ service cloud.firestore {
       allow delete: if false;
       allow update: if signedIn()
         && request.auth.uid == userId
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'balanceCents'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'displayName', 'balanceCents', 'username', 'level', 'avatarUrl',
+          'avatarAsProfilePhoto', 'equippedAvatarItems'
+        ])
         && validDisplayName(request.resource.data.displayName)
         && request.resource.data.displayName
           == getAfter(/databases/$(database)/documents/users/$(userId)).data.displayName
         && request.resource.data.balanceCents
-          == getAfter(/databases/$(database)/documents/users/$(userId)).data.balanceCents;
+          == getAfter(/databases/$(database)/documents/users/$(userId)).data.balanceCents
+        && request.resource.data.username
+          == getAfter(/databases/$(database)/documents/users/$(userId)).data.username
+        && request.resource.data.level
+          == getAfter(/databases/$(database)/documents/users/$(userId)).data.level
+        && request.resource.data.avatarUrl
+          == getAfter(/databases/$(database)/documents/users/$(userId)).data.avatarUrl
+        && request.resource.data.avatarAsProfilePhoto
+          == getAfter(/databases/$(database)/documents/users/$(userId)).data.avatarAsProfilePhoto
+        && request.resource.data.equippedAvatarItems
+          == getAfter(/databases/$(database)/documents/users/$(userId)).data.equippedAvatarItems;
     }
 
     match /usernames/{username} {
