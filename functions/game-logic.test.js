@@ -8,11 +8,12 @@ const {
   crashMultiplierBasisPoints,
   crashPointBasisPoints,
   createShuffledDeck,
+  createMinefield,
   diceGuessResult,
   footballShotResult,
   rouletteResult,
   settleBlackjack,
-  minesPickResult,
+  minesCashoutPayout,
   parityDiceResult,
   scratchCardResult,
   spinSlots,
@@ -87,14 +88,35 @@ test("coin flip, exact dice and parity settle the server-selected outcomes", () 
   assert.equal(parityDiceResult("even", 1_000, () => 0).payoutCents, 0);
 });
 
-test("mines and scratch cards pay only their predefined winning outcomes", () => {
-  assert.equal(minesPickResult("3", 1_000, () => 2).payoutCents, 0);
-  assert.equal(minesPickResult("3", 1_000, () => 1).payoutCents, 1_180);
+test("scratch cards pay only their predefined winning outcomes", () => {
   assert.equal(scratchCardResult(1_000, () => 0).payoutCents, 20_000);
   assert.equal(scratchCardResult(1_000, () => 5).payoutCents, 4_000);
   assert.equal(scratchCardResult(1_000, () => 100).payoutCents, 2_000);
   assert.equal(scratchCardResult(1_000, () => 320).payoutCents, 0);
-  assert.throws(() => minesPickResult("6", 1_000, () => 0), RangeError);
+  assert.throws(() => scratchCardResult(0), RangeError);
+});
+
+test("mines cash-out uses the 5x5 safe-pick probability at 98% RTP", () => {
+  assert.deepEqual(minesCashoutPayout(400, 1, 1), {
+    payoutCents: 408,
+    multiplierBps: 10_208,
+  });
+  assert.ok(minesCashoutPayout(400, 5, 1).payoutCents > 400);
+  assert.ok(minesCashoutPayout(400, 5, 2).payoutCents > minesCashoutPayout(400, 5, 1).payoutCents);
+  assert.deepEqual(minesCashoutPayout(1_000_000, 1, 24), {
+    payoutCents: 24_500_000,
+    multiplierBps: 245_000,
+  });
+  assert.throws(() => minesCashoutPayout(400, 0, 1), RangeError);
+  assert.throws(() => minesCashoutPayout(400, 24, 2), RangeError);
+});
+
+test("mines field contains the configured number of unique cells", () => {
+  const mines = createMinefield(8, () => 0);
+  assert.equal(mines.length, 8);
+  assert.equal(new Set(mines).size, 8);
+  assert.ok(mines.every((cell) => cell >= 0 && cell < 25));
+  assert.throws(() => createMinefield(25), RangeError);
 });
 
 test("football shots score past the server-selected goalkeeper and pay 1.40x", () => {

@@ -6,6 +6,12 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function activeUser() {
+      let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
+      return signedIn()
+        && (!exists(userPath) || get(userPath).data.get('isBlocked', false) != true);
+    }
+
     function validDisplayName(name) {
       return name is string && name.size() >= 2 && name.size() <= 24;
     }
@@ -79,7 +85,7 @@ service cloud.firestore {
       let newRank = getAfter(/databases/$(database)/documents/leaderboard/$(userId)).data;
       let itemId = purchase.itemId;
       let price = cosmeticPrice(itemId);
-      return signedIn()
+      return activeUser()
         && request.auth.uid == userId
         && purchaseId is string
         && purchaseId.size() >= 16
@@ -100,7 +106,7 @@ service cloud.firestore {
     }
 
     function validInitialProfile(userId) {
-      return signedIn()
+      return activeUser()
         && request.auth.uid == userId
         && request.resource.data.keys().hasAll([
           'uid', 'displayName', 'email', 'balanceCents', 'balanceInitialized', 'level',
@@ -171,10 +177,10 @@ service cloud.firestore {
       }
 
     match /users/{userId} {
-      allow read: if signedIn() && request.auth.uid == userId;
+      allow read: if activeUser() && request.auth.uid == userId;
       allow create: if validInitialProfile(userId);
       allow delete: if false;
-      allow update: if signedIn()
+      allow update: if activeUser()
         && request.auth.uid == userId
         && (
           (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName'])
@@ -189,14 +195,14 @@ service cloud.firestore {
         );
 
       match /transactions/{transactionId} {
-        allow read: if signedIn() && request.auth.uid == userId;
+        allow read: if activeUser() && request.auth.uid == userId;
         allow create: if request.resource.data.keys().hasOnly(['description', 'deltaCents', 'itemId', 'createdAt'])
           && validCosmeticPurchase(userId, transactionId);
         allow update, delete: if false;
       }
 
       match /purchases/{purchaseId} {
-        allow read: if signedIn() && request.auth.uid == userId;
+        allow read: if activeUser() && request.auth.uid == userId;
         allow create: if request.resource.data.keys().hasOnly(['uid', 'itemId', 'amountCents', 'createdAt'])
           && validCosmeticPurchase(userId, purchaseId);
         allow update, delete: if false;
@@ -204,8 +210,8 @@ service cloud.firestore {
     }
 
     match /leaderboard/{userId} {
-      allow read: if signedIn();
-      allow create: if signedIn()
+      allow read: if activeUser();
+      allow create: if activeUser()
         && request.auth.uid == userId
         && request.resource.data.keys().hasOnly([
           'displayName', 'balanceCents', 'level', 'avatarUrl', 'username',
@@ -230,7 +236,7 @@ service cloud.firestore {
         && request.resource.data.equippedAvatarItems
           == getAfter(/databases/$(database)/documents/users/$(userId)).data.equippedAvatarItems;
       allow delete: if false;
-      allow update: if signedIn()
+      allow update: if activeUser()
         && request.auth.uid == userId
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'displayName', 'balanceCents', 'username', 'level', 'avatarUrl',
@@ -262,18 +268,18 @@ service cloud.firestore {
     }
 
     match /transfers/{transferId} {
-      allow read: if signedIn()
+      allow read: if activeUser()
         && (resource.data.senderUid == request.auth.uid
           || resource.data.recipientUid == request.auth.uid);
       allow write: if false;
     }
 
     match /chats/{chatId} {
-      allow get: if signedIn()
+      allow get: if activeUser()
         && (chatId == 'global' || request.auth.uid in resource.data.get('participantUids', []));
-      allow list: if signedIn()
+      allow list: if activeUser()
         && request.auth.uid in resource.data.participantUids;
-      allow create: if signedIn()
+      allow create: if activeUser()
         && chatId != 'global'
         && request.resource.data.keys().hasOnly([
           'participantUids', 'lastMessage', 'lastMessageAt', 'lastMessageId',
@@ -293,7 +299,7 @@ service cloud.firestore {
         && request.resource.data.lastMessageSenderUid == request.auth.uid
         && request.resource.data.createdAt == request.time
         && request.resource.data.lastMessageAt == request.time;
-      allow update: if signedIn()
+      allow update: if activeUser()
         && resource.data.get('type', 'direct') == 'direct'
         && request.auth.uid in resource.data.participantUids
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -308,11 +314,11 @@ service cloud.firestore {
       allow delete: if false;
 
       match /messages/{messageId} {
-        allow read: if signedIn()
+        allow read: if activeUser()
           && (chatId == 'global'
               || !exists(/databases/$(database)/documents/chats/$(chatId))
             || request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participantUids);
-        allow create: if signedIn()
+        allow create: if activeUser()
           && request.resource.data.keys().hasOnly([
             'senderUid', 'senderName', 'senderUsername', 'senderAvatarUrl', 'senderAvatarItems',
             'senderAvatarAsProfilePhoto', 'text', 'createdAt',
@@ -342,7 +348,7 @@ service cloud.firestore {
             && request.resource.data.replyToText.size() <= 200))
           && (chatId == 'global'
             || request.auth.uid in getAfter(/databases/$(database)/documents/chats/$(chatId)).data.participantUids);
-        allow update: if signedIn()
+        allow update: if activeUser()
           && (chatId == 'global'
             || request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participantUids)
           && (

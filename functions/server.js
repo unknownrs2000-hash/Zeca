@@ -2,6 +2,7 @@
 
 const express = require("express");
 const { getAuth } = require("firebase-admin/auth");
+const { getFirestore } = require("firebase-admin/firestore");
 const handlers = require("./index");
 const { HttpsError, STATUS } = require("./callable");
 
@@ -25,6 +26,10 @@ app.post("/call/:name", async (req, res) => {
         auth = { uid: decoded.uid, token: decoded };
       } catch {
         throw new HttpsError("unauthenticated", "Sessão inválida. Entre novamente.");
+      }
+      const profile = await getFirestore().collection("users").doc(auth.uid).get();
+      if (profile.exists && profile.get("isBlocked") === true) {
+        throw new HttpsError("permission-denied", "Esta conta está desativada.");
       }
     }
     const result = await handlers[name]({ auth, data: req.body?.data ?? {} });

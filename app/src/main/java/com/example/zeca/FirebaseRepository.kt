@@ -149,6 +149,74 @@ data class ResultadoCrash(
     val vitorias: Int,
 )
 
+data class EstadoMinas(
+    val gameId: String,
+    val status: String,
+    val apostaCentavos: Long,
+    val quantidadeMinas: Int,
+    val casasSeguras: List<Int>,
+    val casasMinas: List<Int>,
+    val saqueCentavos: Long,
+    val multiplicadorBps: Int,
+    val lucroCentavos: Long = 0,
+    val saldoCentavos: Long = 0,
+    val partidas: Int = 0,
+    val vitorias: Int = 0,
+    val premioNivelCentavos: Long = 0,
+    val casaAtingida: Int? = null,
+    val retomada: Boolean = false,
+)
+
+private fun Map<String, Any>.toEstadoMinas(
+    apostaPadrao: Long = 0,
+    minasPadrao: Int = 5,
+): EstadoMinas = EstadoMinas(
+    gameId = this["gameId"] as? String ?: "",
+    status = this["status"] as? String ?: "active",
+    apostaCentavos = (this["amountCents"] as? Number)?.toLong() ?: apostaPadrao,
+    quantidadeMinas = (this["mineCount"] as? Number)?.toInt() ?: minasPadrao,
+    casasSeguras = (this["safeCells"] as? List<*>)?.mapNotNull { (it as? Number)?.toInt() }.orEmpty(),
+    casasMinas = (this["mineCells"] as? List<*>)?.mapNotNull { (it as? Number)?.toInt() }.orEmpty(),
+    saqueCentavos = (this["payoutCents"] as? Number)?.toLong() ?: 0L,
+    multiplicadorBps = (this["multiplierBps"] as? Number)?.toInt() ?: 10_000,
+    lucroCentavos = (this["profitCents"] as? Number)?.toLong() ?: 0L,
+    saldoCentavos = (this["balanceCents"] as? Number)?.toLong() ?: 0L,
+    partidas = (this["gamesPlayed"] as? Number)?.toInt() ?: 0,
+    vitorias = (this["wins"] as? Number)?.toInt() ?: 0,
+    premioNivelCentavos = (this["levelRewardCents"] as? Number)?.toLong() ?: 0L,
+    casaAtingida = (this["hitCell"] as? Number)?.toInt(),
+    retomada = this["resumed"] as? Boolean ?: false,
+)
+
+data class UsuarioAdmin(
+    val uid: String,
+    val nome: String,
+    val username: String,
+    val email: String,
+    val saldoCentavos: Long,
+    val bloqueado: Boolean,
+)
+
+data class MovimentoAdmin(
+    val id: String,
+    val descricao: String,
+    val deltaCentavos: Long,
+    val criadoEmMs: Long,
+)
+
+data class DetalhesAdmin(
+    val usuario: UsuarioAdmin,
+    val partidas: Int,
+    val vitorias: Int,
+    val movimentacoes: List<MovimentoAdmin>,
+)
+
+data class ConfiguracaoMinas(
+    val rtpBps: Int,
+    val minimoMinas: Int,
+    val maximoMinas: Int,
+)
+
 data class CartaBlackjack(val rank: String, val suit: String)
 
 data class EstadoBlackjack(
@@ -782,6 +850,177 @@ object FirebaseRepository {
             }
             callback(resultado, erro)
         }
+    }
+
+    fun iniciarMinas(
+        apostaCentavos: Long,
+        quantidadeMinas: Int,
+        requestId: String,
+        callback: (EstadoMinas?, Exception?) -> Unit,
+    ) {
+        chamarFunction(
+            "startMines",
+            mapOf("amountCents" to apostaCentavos, "mineCount" to quantidadeMinas, "requestId" to requestId),
+        ) { data, erro -> callback(data?.toEstadoMinas(apostaCentavos, quantidadeMinas), erro) }
+    }
+
+    fun carregarMinasAtiva(callback: (EstadoMinas?, Exception?) -> Unit) {
+        chamarFunction("getActiveMines", emptyMap()) { data, error ->
+            val state = data?.takeIf { it["status"] == "active" }?.toEstadoMinas()
+            callback(state, error)
+        }
+    }
+
+    fun revelarCasaMinas(
+        gameId: String,
+        casa: Int,
+        requestId: String,
+        callback: (EstadoMinas?, Exception?) -> Unit,
+    ) {
+        chamarFunction(
+            "revealMinesCell",
+            mapOf("gameId" to gameId, "cell" to casa, "requestId" to requestId),
+        ) { data, erro -> callback(data?.toEstadoMinas(), erro) }
+    }
+
+    fun sacarMinas(gameId: String, requestId: String, callback: (EstadoMinas?, Exception?) -> Unit) {
+        chamarFunction("cashOutMines", mapOf("gameId" to gameId, "requestId" to requestId)) { data, erro ->
+            callback(data?.toEstadoMinas(), erro)
+        }
+    }
+
+    fun verificarAdmin(callback: (Boolean) -> Unit) {
+        val usuario = auth.currentUser
+        if (usuario == null) {
+            callback(false)
+            return
+        }
+        usuario.getIdToken(true)
+            .addOnSuccessListener { callback(it.claims["admin"] == true) }
+            .addOnFailureListener { callback(false) }
+    }
+
+    fun listarUsuariosAdmin(
+        cursor: String,
+        callback: (List<UsuarioAdmin>, String, Exception?) -> Unit,
+    ) {
+        chamarFunction("adminListUsers", mapOf("cursor" to cursor)) { data, error ->
+            val users = (data?.get("users") as? List<*>)?.mapNotNull { raw ->
+                val user = raw as? Map<*, *> ?: return@mapNotNull null
+                val uid = user["uid"] as? String ?: return@mapNotNull null
+                UsuarioAdmin(
+                    uid = uid,
+                    nome = user["displayName"] as? String ?: "Jogador",
+                    username = user["username"] as? String ?: "",
+                    email = user["email"] as? String ?: "",
+                    saldoCentavos = (user["balanceCents"] as? Number)?.toLong() ?: 0L,
+                    bloqueado = user["isBlocked"] as? Boolean ?: false,
+                )
+            }.orEmpty()
+            callback(users, data?.get("nextCursor") as? String ?: "", error)
+        }
+    }
+
+    fun carregarDetalhesAdmin(uid: String, callback: (DetalhesAdmin?, Exception?) -> Unit) {
+        chamarFunction("adminGetUserDetails", mapOf("uid" to uid)) { data, error ->
+            val user = data?.get("user") as? Map<*, *>
+            val detalhes = if (user == null) null else {
+                val jogador = UsuarioAdmin(
+                    uid = user["uid"] as? String ?: uid,
+                    nome = user["displayName"] as? String ?: "Jogador",
+                    username = user["username"] as? String ?: "",
+                    email = user["email"] as? String ?: "",
+                    saldoCentavos = (user["balanceCents"] as? Number)?.toLong() ?: 0L,
+                    bloqueado = user["isBlocked"] as? Boolean ?: false,
+                )
+                val transactions = (data["transactions"] as? List<*>)?.mapNotNull { raw ->
+                    val transaction = raw as? Map<*, *> ?: return@mapNotNull null
+                    MovimentoAdmin(
+                        id = transaction["id"] as? String ?: "",
+                        descricao = transaction["description"] as? String ?: "Movimentação",
+                        deltaCentavos = (transaction["deltaCents"] as? Number)?.toLong() ?: 0L,
+                        criadoEmMs = (transaction["createdAtMs"] as? Number)?.toLong() ?: 0L,
+                    )
+                }.orEmpty()
+                DetalhesAdmin(
+                    usuario = jogador,
+                    partidas = (user["gamesPlayed"] as? Number)?.toInt() ?: 0,
+                    vitorias = (user["wins"] as? Number)?.toInt() ?: 0,
+                    movimentacoes = transactions,
+                )
+            }
+            callback(detalhes, error)
+        }
+    }
+
+    fun carregarConfiguracaoMinas(callback: (ConfiguracaoMinas?, Exception?) -> Unit) {
+        chamarFunction("getGameSettings", emptyMap()) { data, error ->
+            val settings = data?.let {
+                ConfiguracaoMinas(
+                    rtpBps = (it["minesRtpBps"] as? Number)?.toInt() ?: 9_800,
+                    minimoMinas = (it["minesMinCount"] as? Number)?.toInt() ?: 1,
+                    maximoMinas = (it["minesMaxCount"] as? Number)?.toInt() ?: 24,
+                )
+            }
+            callback(settings, error)
+        }
+    }
+
+    fun atualizarConfiguracaoMinasAdmin(
+        configuracao: ConfiguracaoMinas,
+        motivo: String,
+        requestId: String,
+        callback: (Exception?) -> Unit,
+    ) {
+        chamarFunction(
+            "adminUpdateGameSettings",
+            mapOf(
+                "minesRtpBps" to configuracao.rtpBps,
+                "minesMinCount" to configuracao.minimoMinas,
+                "minesMaxCount" to configuracao.maximoMinas,
+                "reason" to motivo,
+                "requestId" to requestId,
+            ),
+        ) { _, error -> callback(error) }
+    }
+
+    fun ajustarSaldoAdmin(
+        uid: String,
+        deltaCentavos: Long,
+        motivo: String,
+        requestId: String,
+        callback: (Long?, Exception?) -> Unit,
+    ) {
+        chamarFunction(
+            "adminAdjustBalance",
+            mapOf("uid" to uid, "deltaCents" to deltaCentavos, "reason" to motivo, "requestId" to requestId),
+        ) { data, error -> callback((data?.get("balanceCents") as? Number)?.toLong(), error) }
+    }
+
+    fun definirBloqueioAdmin(
+        uid: String,
+        bloqueado: Boolean,
+        motivo: String,
+        requestId: String,
+        callback: (Exception?) -> Unit,
+    ) {
+        chamarFunction(
+            "adminSetUserBlocked",
+            mapOf("uid" to uid, "blocked" to bloqueado, "reason" to motivo, "requestId" to requestId),
+        ) { _, error -> callback(error) }
+    }
+
+    fun excluirUsuarioAdmin(
+        uid: String,
+        confirmUid: String,
+        motivo: String,
+        requestId: String,
+        callback: (Exception?) -> Unit,
+    ) {
+        chamarFunction(
+            "adminDeleteUser",
+            mapOf("uid" to uid, "confirmUid" to confirmUid, "reason" to motivo, "requestId" to requestId),
+        ) { _, error -> callback(error) }
     }
 
     fun iniciarBlackjack(apostaCentavos: Long, requestId: String, callback: (EstadoBlackjack?, Exception?) -> Unit) {

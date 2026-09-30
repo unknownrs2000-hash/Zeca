@@ -50,6 +50,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.zeca.CartaBlackjack
+import com.example.zeca.ConfiguracaoMinas
+import com.example.zeca.EstadoMinas
 import com.example.zeca.EstadoBlackjack
 import com.example.zeca.ResultadoCrash
 import com.example.zeca.ResultadoJogo
@@ -64,6 +66,11 @@ import kotlin.math.exp
 fun TelaJogos(
     saldoCentavos: Long,
     partidas: Int,
+    onCarregarConfiguracaoMinas: ((ConfiguracaoMinas?, Exception?) -> Unit) -> Unit,
+    onCarregarMinasAtiva: ((EstadoMinas?, Exception?) -> Unit) -> Unit,
+    onIniciarMinas: (Long, Int, String, (EstadoMinas?, Exception?) -> Unit) -> Unit,
+    onRevelarMinas: (String, Int, String, (EstadoMinas?, Exception?) -> Unit) -> Unit,
+    onSacarMinas: (String, String, (EstadoMinas?, Exception?) -> Unit) -> Unit,
     onJogar: (String, Long, String, String, String, (ResultadoJogo?, Exception?) -> Unit) -> Unit,
     onIniciarCrash: (Long, String, (SessaoCrash?, Exception?) -> Unit) -> Unit,
     onSacarCrash: (String, String, (ResultadoCrash?, Exception?) -> Unit) -> Unit,
@@ -78,7 +85,9 @@ fun TelaJogos(
     var ladoMoeda by rememberSaveable { mutableStateOf("Cara") }
     var numeroDado by rememberSaveable { mutableStateOf("1") }
     var paridadeDado by rememberSaveable { mutableStateOf("Par") }
-    var casaMinas by rememberSaveable { mutableStateOf("1") }
+    var quantidadeMinas by rememberSaveable { mutableStateOf(5) }
+    var minimoMinas by remember { mutableStateOf(1) }
+    var maximoMinas by remember { mutableStateOf(24) }
     var cantoFutebol by rememberSaveable { mutableStateOf("Centro") }
     var resultado by rememberSaveable { mutableStateOf("Escolha um jogo para começar") }
     var mensagem by rememberSaveable { mutableStateOf("") }
@@ -93,6 +102,7 @@ fun TelaJogos(
     var crashBps by remember { mutableStateOf(100) }
     var saqueCrashPendente by remember { mutableStateOf(false) }
     var estadoBlackjack by remember { mutableStateOf<EstadoBlackjack?>(null) }
+    var estadoMinas by remember { mutableStateOf<EstadoMinas?>(null) }
     val historicoRoleta = remember { mutableStateListOf<Int>() }
 
     val apostaCentavos = parseValorCentavos(apostaTexto)
@@ -100,6 +110,7 @@ fun TelaJogos(
     val apostaTravada = when (jogo) {
         "Crash" -> sessaoCrash != null
         "Blackjack" -> estadoBlackjack?.status == "active"
+        "Minas" -> estadoMinas?.status == "active"
         else -> false
     }
 
@@ -110,6 +121,29 @@ fun TelaJogos(
             val elapsedMs = (System.currentTimeMillis() - sessao.iniciadoEmMs).coerceAtLeast(0L)
             crashBps = (100 * exp(elapsedMs / 5_000.0)).toInt().coerceIn(100, 1_000_000)
             delay(80)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        onCarregarConfiguracaoMinas { config, error ->
+            if (config != null) {
+                minimoMinas = config.minimoMinas
+                maximoMinas = config.maximoMinas
+                if (estadoMinas?.status != "active") {
+                    quantidadeMinas = quantidadeMinas.coerceIn(config.minimoMinas, config.maximoMinas)
+                }
+            } else if (error != null) {
+                mensagem = error.localizedMessage ?: "Não foi possível carregar as regras de Minas."
+            }
+        }
+        onCarregarMinasAtiva { state, error ->
+            if (state != null) {
+                estadoMinas = state
+                quantidadeMinas = state.quantidadeMinas
+                mensagem = "Partida retomada."
+            } else if (error != null) {
+                mensagem = error.localizedMessage ?: "Não foi possível recuperar a partida de Minas."
+            }
         }
     }
 
@@ -374,12 +408,78 @@ fun TelaJogos(
                         }
                     },
                 )
+                "Minas" -> MinasJogo(
+                    apostaCentavos = apostaCentavos,
+                    apostaValida = apostaValida,
+                    quantidadeMinas = quantidadeMinas,
+                    minimoMinas = minimoMinas,
+                    maximoMinas = maximoMinas,
+                    estado = estadoMinas,
+                    carregando = ocupado,
+                    mensagem = mensagemTela,
+                    onQuantidadeMinasChange = { quantidadeMinas = it.coerceIn(minimoMinas, maximoMinas) },
+                    onIniciar = {
+                        val wager = apostaCentavos ?: return@MinasJogo
+                        ocupado = true
+                        onIniciarMinas(wager, quantidadeMinas, UUID.randomUUID().toString()) { state, error ->
+                            ocupado = false
+                            if (error != null || state == null) {
+                                mensagem = error?.localizedMessage ?: "Não foi possível iniciar Minas."
+                            } else {
+                                estadoMinas = state
+                                atrasoSaldo = 0L
+                                mensagem = if (state.retomada) "Partida retomada." else "Partida iniciada. Revele uma casa ou saque após um acerto."
+                                lucroUltimo = 0L
+                            }
+                        }
+                    },
+                    onRevelar = { cell ->
+                        val state = estadoMinas ?: return@MinasJogo
+                        ocupado = true
+                        onRevelarMinas(state.gameId, cell, UUID.randomUUID().toString()) { nextState, error ->
+                            ocupado = false
+                            if (error != null || nextState == null) {
+                                mensagem = error?.localizedMessage ?: "Não foi possível revelar a casa."
+                            } else {
+                                estadoMinas = nextState
+                                if (nextState.status == "lost") {
+                                    atrasoSaldo = 1_300L
+                                    lucroUltimo = nextState.lucroCentavos
+                                    mensagem = "Mina encontrada. A aposta foi perdida."
+                                    rodada += 1
+                                } else {
+                                    lucroUltimo = 0L
+                                    mensagem = "Casa segura. Saque disponível: ${formatarReais(nextState.saqueCentavos)}"
+                                }
+                            }
+                        }
+                    },
+                    onSacar = {
+                        val state = estadoMinas ?: return@MinasJogo
+                        ocupado = true
+                        onSacarMinas(state.gameId, UUID.randomUUID().toString()) { nextState, error ->
+                            ocupado = false
+                            if (error != null || nextState == null) {
+                                mensagem = error?.localizedMessage ?: "Não foi possível sacar."
+                            } else {
+                                estadoMinas = nextState.copy(
+                                    apostaCentavos = state.apostaCentavos,
+                                    quantidadeMinas = state.quantidadeMinas,
+                                    casasMinas = state.casasMinas,
+                                )
+                                atrasoSaldo = 1_300L
+                                lucroUltimo = nextState.lucroCentavos
+                                mensagem = "Saque de ${formatarReais(nextState.saqueCentavos)} · ${formatarMultiplicador(nextState.multiplicadorBps)}"
+                                rodada += 1
+                            }
+                        }
+                    },
+                )
                 else -> {
                     val opcoes = when (jogo) {
                         "Cara ou coroa" -> listOf("Cara", "Coroa")
                         "Dado" -> listOf("1", "2", "3", "4", "5", "6")
                         "Par ou ímpar" -> listOf("Par", "Ímpar")
-                        "Minas" -> emptyList()
                         "Futebol" -> listOf("Esquerda", "Centro", "Direita")
                         else -> emptyList()
                     }
@@ -387,7 +487,6 @@ fun TelaJogos(
                         "Cara ou coroa" -> ladoMoeda
                         "Dado" -> numeroDado
                         "Par ou ímpar" -> paridadeDado
-                        "Minas" -> casaMinas
                         "Futebol" -> cantoFutebol
                         else -> ""
                     }
@@ -395,7 +494,6 @@ fun TelaJogos(
                         "Cara ou coroa" -> "Escolha um lado. Acerto paga 1,90x."
                         "Dado" -> "Adivinhe o resultado de 1 a 6. Acerto paga 5,50x."
                         "Par ou ímpar" -> "Escolha a paridade do dado. Acerto paga 1,90x."
-                        "Minas" -> "Escolha uma casa entre cinco. Quatro são seguras e pagam 1,18x."
                         "Futebol" -> "Escolha um canto. Se o goleiro pular para outro lado, é gol e paga 1,40x."
                         else -> "Três estrelas pagam 20x, sinos 4x e cerejas 2x."
                     }
@@ -403,7 +501,6 @@ fun TelaJogos(
                         "Cara ou coroa" -> "coin"
                         "Dado" -> "dice"
                         "Par ou ímpar" -> "parity"
-                        "Minas" -> "mines"
                         "Futebol" -> "football"
                         else -> "scratch"
                     }
@@ -411,7 +508,6 @@ fun TelaJogos(
                         "Cara ou coroa" -> if (ladoMoeda == "Cara") "heads" else "tails"
                         "Dado" -> numeroDado
                         "Par ou ímpar" -> if (paridadeDado == "Par") "even" else "odd"
-                        "Minas" -> casaMinas
                         "Futebol" -> when (cantoFutebol) {
                             "Esquerda" -> "left"
                             "Direita" -> "right"
@@ -429,7 +525,6 @@ fun TelaJogos(
                                 "Cara ou coroa" -> ladoMoeda = escolha
                                 "Dado" -> numeroDado = escolha
                                 "Par ou ímpar" -> paridadeDado = escolha
-                                "Minas" -> casaMinas = escolha
                                 "Futebol" -> cantoFutebol = escolha
                             }
                             resultado = "Escolha um jogo para começar"
@@ -445,6 +540,144 @@ fun TelaJogos(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun MinasJogo(
+    apostaCentavos: Long?,
+    apostaValida: Boolean,
+    quantidadeMinas: Int,
+    minimoMinas: Int,
+    maximoMinas: Int,
+    estado: EstadoMinas?,
+    carregando: Boolean,
+    mensagem: String,
+    onQuantidadeMinasChange: (Int) -> Unit,
+    onIniciar: () -> Unit,
+    onRevelar: (Int) -> Unit,
+    onSacar: () -> Unit,
+) {
+    val ativo = estado?.status == "active"
+    val casasSeguras = estado?.casasSeguras.orEmpty()
+    val casasMinas = estado?.casasMinas.orEmpty()
+    val corDestaque = Color(0xFFFF7C83)
+    val podeMudarMinas = !ativo && !carregando
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(Brush.verticalGradient(listOf(Color(0xFF2A2025), Color(0xFF14191C), Color(0xFF0D1215))))
+            .border(1.5.dp, corDestaque.copy(alpha = 0.54f), RoundedCornerShape(18.dp))
+            .padding(14.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(11.dp),
+    ) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("MINAS", color = corDestaque, fontSize = 11.sp, fontWeight = FontWeight.Black)
+            Text("5 × 5", color = Color.White.copy(alpha = 0.58f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        }
+        Text(
+            "Mais minas aumentam o prêmio e o risco. Saque após qualquer casa segura.",
+            modifier = Modifier.fillMaxWidth(),
+            color = Color.White.copy(alpha = 0.7f),
+            fontSize = 11.sp,
+        )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Button(
+                onClick = { onQuantidadeMinasChange(quantidadeMinas - 1) },
+                enabled = podeMudarMinas && quantidadeMinas > minimoMinas,
+                modifier = Modifier.size(44.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.12f)),
+            ) { Text("−", color = Color.White, fontSize = 20.sp) }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("$quantidadeMinas minas", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    "${(25 - quantidadeMinas) * 4}% de chance na 1ª casa",
+                    color = Color.White.copy(alpha = 0.58f),
+                    fontSize = 10.sp,
+                )
+            }
+            Button(
+                onClick = { onQuantidadeMinasChange(quantidadeMinas + 1) },
+                enabled = podeMudarMinas && quantidadeMinas < maximoMinas,
+                modifier = Modifier.size(44.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.12f)),
+            ) { Text("+", color = Color.White, fontSize = 20.sp) }
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            (0 until 5).forEach { row ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    (0 until 5).forEach { column ->
+                        val cell = row * 5 + column
+                        val segura = cell in casasSeguras
+                        val mina = cell in casasMinas
+                        val atingida = cell == estado?.casaAtingida
+                        val corCasa = when {
+                            atingida || mina -> Color(0xFFB73C52)
+                            segura -> Color(0xFF26845F)
+                            else -> Color.White.copy(alpha = 0.075f)
+                        }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .aspectRatio(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Brush.verticalGradient(listOf(corCasa, Color(0xFF11191C))))
+                                .border(1.dp, if (segura || mina || atingida) corDestaque.copy(alpha = 0.75f) else Color.White.copy(alpha = 0.11f), RoundedCornerShape(8.dp))
+                                .clickable(enabled = ativo && !carregando && !segura) { onRevelar(cell) },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                when {
+                                    atingida || mina -> "✹"
+                                    segura -> "✓"
+                                    else -> "·"
+                                },
+                                color = if (segura) Color.White else corDestaque,
+                                fontSize = if (segura || mina || atingida) 19.sp else 16.sp,
+                                fontWeight = FontWeight.Black,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        if (ativo && casasSeguras.isNotEmpty()) {
+            Text(
+                "Saque disponível · ${formatarMultiplicador(estado?.multiplicadorBps ?: 10_000)}",
+                color = Color(0xFF9BE8BD),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Button(
+                onClick = onSacar,
+                enabled = !carregando,
+                modifier = Modifier.fillMaxWidth().height(50.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF58D28A)),
+            ) {
+                Text("Sacar ${formatarReais(estado?.saqueCentavos ?: 0L)}", color = Color(0xFF101417), fontWeight = FontWeight.Black)
+            }
+        } else if (ativo) {
+            Text("Revele uma casa para liberar o saque.", color = Color.White.copy(alpha = 0.65f), fontSize = 11.sp)
+        } else {
+            Button(
+                onClick = onIniciar,
+                enabled = apostaValida && !carregando,
+                modifier = Modifier.fillMaxWidth().height(50.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = corDestaque),
+            ) {
+                Text(if (carregando) "Iniciando..." else if (estado == null) "Iniciar partida · ${formatarReais(apostaCentavos ?: 0L)}" else "Nova partida", color = Color(0xFF101417), fontWeight = FontWeight.Black)
+            }
+        }
+        if (mensagem.isNotBlank()) {
+            Text(mensagem, modifier = Modifier.fillMaxWidth(), color = Color.White.copy(alpha = 0.76f), fontSize = 11.sp)
         }
     }
 }

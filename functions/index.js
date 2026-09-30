@@ -3,7 +3,8 @@
 const { createHash, randomInt, randomUUID } = require("node:crypto");
 const { getAuth } = require("firebase-admin/auth");
 const { cert, initializeApp } = require("firebase-admin/app");
-const { FieldValue, getFirestore } = require("firebase-admin/firestore");
+const { v2: cloudinary } = require("cloudinary");
+const { FieldPath, FieldValue, getFirestore } = require("firebase-admin/firestore");
 const { HttpsError, onCall } = require("./callable");
 const {
   blackjackHandValue,
@@ -11,10 +12,11 @@ const {
   crashMultiplierBasisPoints,
   crashPointBasisPoints,
   createShuffledDeck,
+  createMinefield,
   diceGuessResult,
   footballShotResult,
   isBlackjack,
-  minesPickResult,
+  minesCashoutPayout,
   parityDiceResult,
   rouletteResult,
   scratchCardResult,
@@ -34,6 +36,8 @@ const INITIAL_BALANCE_CENTS = 50_000;
 const MAX_TRANSFER_CENTS = 1_000_000;
 const GAME_COOLDOWN_MS = 250;
 const CHAT_COOLDOWN_MS = 300;
+const DEFAULT_MINES_RTP_BPS = 9_800;
+const CLOUDINARY_CLOUD_NAME = "vwctfu9u";
 const COSMETICS = {
   frame_aurora: { name: "Moldura Aurora", priceCents: 1_299 },
   title_lucky: { name: "Título: Sorte Grande", priceCents: 799 },
@@ -63,6 +67,79 @@ function authenticatedUid(request) {
     throw new HttpsError("unauthenticated", "Entre na sua conta para continuar.");
   }
   return request.auth.uid;
+}
+
+function requireAdmin(request) {
+  const uid = authenticatedUid(request);
+  if (request.auth.token?.admin !== true) {
+    throw new HttpsError("permission-denied", "Acesso restrito à administração.");
+  }
+  return uid;
+}
+
+async function deleteMatchingDocuments(query) {
+  while (true) {
+    const snapshot = await query.limit(400).get();
+    if (snapshot.empty) return;
+    const batch = database.batch();
+    snapshot.docs.forEach((document) => batch.delete(document.ref));
+    await batch.commit();
+  }
+}
+
+function timestampMillis(value) {
+  return value && typeof value.toMillis === "function" ? value.toMillis() : null;
+}
+
+async function deleteCloudinaryAvatarFolder(uid) {
+  const apiKey = process.env.CLOUDINARY_API_KEY;
+  const apiSecret = process.env.CLOUDINARY_API_SECRET;
+  if (!apiKey || !apiSecret) {
+    throw new HttpsError("failed-precondition", "Configure as credenciais administrativas do Cloudinary antes de excluir contas.");
+  }
+  cloudinary.config({
+    cloud_name: CLOUDINARY_CLOUD_NAME,
+    api_key: apiKey,
+    api_secret: apiSecret,
+    secure: true,
+  });
+  try {
+    let nextCursor;
+    try {
+      do {
+        const options = { max_results: 500 };
+        if (nextCursor) options.next_cursor = nextCursor;
+        const result = await cloudinary.api.resources_by_asset_folder(`zeca/avatars/${uid}`, options);
+        const publicIds = (result.resources || []).map((resource) => resource.public_id).filter(Boolean);
+        for (let index = 0; index < publicIds.length; index += 100) {
+          await cloudinary.api.delete_resources(publicIds.slice(index, index + 100), {
+            resource_type: "image",
+            type: "upload",
+            invalidate: true,
+          });
+        }
+        nextCursor = result.next_cursor || null;
+      } while (nextCursor);
+    } catch (error) {
+      if (error.http_code !== 404 && error.error?.http_code !== 404) throw error;
+      nextCursor = null;
+      do {
+        const options = {
+          resource_type: "image",
+          type: "upload",
+          invalidate: true,
+        };
+        if (nextCursor) options.next_cursor = nextCursor;
+        const result = await cloudinary.api.delete_resources_by_prefix(`zeca/avatars/${uid}/`, options);
+        nextCursor = result.partial === true ? result.next_cursor : null;
+        if (result.partial === true && !nextCursor) {
+          throw new Error("Cloudinary omitted the next cursor for a partial deletion.");
+        }
+      } while (nextCursor);
+    }
+  } catch {
+    throw new HttpsError("failed-precondition", "Não foi possível remover os avatares do Cloudinary; nenhum dado da conta foi apagado.");
+  }
 }
 
 function normalizePixKey(key) {
@@ -421,7 +498,7 @@ exports.playGame = onCall(async (request) => {
   if (!validateWager(amountCents, MAX_TRANSFER_CENTS)) {
     throw new HttpsError("invalid-argument", "Valor da aposta inválido.");
   }
-  if (!new Set(["slots", "roulette", "coin", "dice", "parity", "mines", "scratch", "football"]).has(game)
+  if (!new Set(["slots", "roulette", "coin", "dice", "parity", "scratch", "football"]).has(game)
       || typeof requestId !== "string"
       || !/^[a-f0-9-]{36}$/i.test(requestId)) {
     throw new HttpsError("invalid-argument", "Jogo ou identificador inválido.");
@@ -476,7 +553,6 @@ exports.playGame = onCall(async (request) => {
         if (game === "coin") result = coinFlipResult(request.data?.selection, amountCents);
         else if (game === "dice") result = diceGuessResult(request.data?.selection, amountCents);
         else if (game === "parity") result = parityDiceResult(request.data?.selection, amountCents);
-        else if (game === "mines") result = minesPickResult(request.data?.selection, amountCents);
         else if (game === "football") result = footballShotResult(request.data?.selection, amountCents);
         else result = scratchCardResult(amountCents);
         returnedCents = result.payoutCents;
@@ -501,7 +577,6 @@ exports.playGame = onCall(async (request) => {
       coin: "Cara ou coroa",
       dice: "Dado",
       parity: "Par ou ímpar",
-      mines: "Minas",
       scratch: "Raspadinha",
       football: "Futebol",
     };
@@ -539,6 +614,303 @@ exports.playGame = onCall(async (request) => {
       wins,
       level: progression.level,
       gamesTowardNextLevel: progression.gamesTowardNextLevel,
+      levelRewardCents: progression.rewardCents,
+    };
+    transaction.create(requestRef, { response, createdAt: FieldValue.serverTimestamp() });
+  });
+
+  return response;
+});
+
+function minesStateResponse(game, resumed = false) {
+  const safeCells = Array.isArray(game.safeCells) ? game.safeCells : [];
+  const payout = safeCells.length > 0
+    ? minesCashoutPayout(game.amountCents, game.mineCount, safeCells.length, game.rtpBps)
+    : { payoutCents: 0, multiplierBps: 10_000 };
+  return {
+    gameId: game.gameId,
+    status: game.status,
+    amountCents: game.amountCents,
+    mineCount: game.mineCount,
+    safeCells,
+    mineCells: game.status === "lost" ? game.mineCells : [],
+    payoutCents: game.status === "active" ? payout.payoutCents : game.payoutCents || 0,
+    multiplierBps: game.status === "active" ? payout.multiplierBps : game.multiplierBps || 10_000,
+    resumed,
+  };
+}
+
+exports.startMines = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const amountCents = request.data?.amountCents;
+  const mineCount = request.data?.mineCount;
+  const requestId = request.data?.requestId;
+  if (!validateWager(amountCents, MAX_TRANSFER_CENTS)
+      || !Number.isInteger(mineCount) || mineCount < 1 || mineCount > 24
+      || typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)) {
+    throw new HttpsError("invalid-argument", "Aposta, quantidade de minas ou identificador inválido.");
+  }
+
+  const userRef = database.collection("users").doc(uid);
+  const rankRef = database.collection("leaderboard").doc(uid);
+  const gameRef = userRef.collection("games").doc("mines");
+  const requestRef = userRef.collection("gameRequests").doc(requestId);
+  const settingsRef = database.collection("systemSettings").doc("games");
+  const historyRef = userRef.collection("transactions").doc(`${requestId}_mines_bet`);
+  const gameId = randomUUID();
+  const mineCells = createMinefield(mineCount);
+  const startedAtMs = Date.now();
+  let response;
+
+  await database.runTransaction(async (transaction) => {
+    const previousRequest = await transaction.get(requestRef);
+    if (previousRequest.exists) {
+      response = previousRequest.data().response;
+      return;
+    }
+    const [gameSnapshot, userSnapshot, rankSnapshot, settingsSnapshot] = await Promise.all([
+      transaction.get(gameRef),
+      transaction.get(userRef),
+      transaction.get(rankRef),
+      transaction.get(settingsRef),
+    ]);
+    if (gameSnapshot.exists && gameSnapshot.get("status") === "active") {
+      response = minesStateResponse(gameSnapshot.data(), true);
+      transaction.create(requestRef, { response, createdAt: FieldValue.serverTimestamp() });
+      return;
+    }
+    if (!userSnapshot.exists || !rankSnapshot.exists) {
+      throw new HttpsError("failed-precondition", "Perfil ainda não foi criado.");
+    }
+    const settings = settingsSnapshot.data() || {};
+    const minimumMines = Number.isInteger(settings.minesMinCount) ? settings.minesMinCount : 1;
+    const maximumMines = Number.isInteger(settings.minesMaxCount) ? settings.minesMaxCount : 24;
+    const rtpBps = Number.isInteger(settings.minesRtpBps) ? settings.minesRtpBps : DEFAULT_MINES_RTP_BPS;
+    if (mineCount < minimumMines || mineCount > maximumMines) {
+      throw new HttpsError("failed-precondition", `Escolha entre ${minimumMines} e ${maximumMines} minas.`);
+    }
+    if (rtpBps < 9_000 || rtpBps > 10_000) {
+      throw new HttpsError("failed-precondition", "Configuração de retorno de Minas inválida.");
+    }
+    const profile = userSnapshot.data();
+    enforceGameCooldown(profile, startedAtMs);
+    const balance = profile.balanceCents || 0;
+    if (balance < amountCents) {
+      throw new HttpsError("failed-precondition", "Saldo insuficiente.");
+    }
+    const balanceAfter = balance - amountCents;
+    const game = {
+      gameId,
+      status: "active",
+      amountCents,
+      mineCount,
+      mineCells,
+      safeCells: [],
+      rtpBps,
+      startedAtMs,
+      createdAt: FieldValue.serverTimestamp(),
+    };
+    transaction.update(userRef, { balanceCents: balanceAfter, lastGameActionAtMs: startedAtMs });
+    transaction.update(rankRef, { balanceCents: balanceAfter });
+    transaction.set(gameRef, game);
+    transaction.create(historyRef, {
+      description: `Minas · aposta (${mineCount} minas)`,
+      deltaCents: -amountCents,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    response = { ...minesStateResponse(game), resumed: false };
+    transaction.create(requestRef, { response, createdAt: FieldValue.serverTimestamp() });
+  });
+
+  return response;
+});
+
+exports.getActiveMines = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const gameSnapshot = await database.collection("users").doc(uid).collection("games").doc("mines").get();
+  if (!gameSnapshot.exists || gameSnapshot.get("status") !== "active") return { status: "none" };
+  return minesStateResponse(gameSnapshot.data(), true);
+});
+
+exports.revealMinesCell = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const gameId = request.data?.gameId;
+  const cell = request.data?.cell;
+  const requestId = request.data?.requestId;
+  if (typeof gameId !== "string" || !/^[a-f0-9-]{36}$/i.test(gameId)
+      || !Number.isInteger(cell) || cell < 0 || cell >= 25
+      || typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)) {
+    throw new HttpsError("invalid-argument", "Casa ou identificador da partida inválido.");
+  }
+
+  const userRef = database.collection("users").doc(uid);
+  const rankRef = database.collection("leaderboard").doc(uid);
+  const gameRef = userRef.collection("games").doc("mines");
+  const requestRef = userRef.collection("gameRequests").doc(requestId);
+  let response;
+
+  await database.runTransaction(async (transaction) => {
+    const previousRequest = await transaction.get(requestRef);
+    if (previousRequest.exists) {
+      response = previousRequest.data().response;
+      return;
+    }
+    const [gameSnapshot, userSnapshot, rankSnapshot] = await Promise.all([
+      transaction.get(gameRef),
+      transaction.get(userRef),
+      transaction.get(rankRef),
+    ]);
+    if (!gameSnapshot.exists || gameSnapshot.get("gameId") !== gameId
+        || gameSnapshot.get("status") !== "active") {
+      throw new HttpsError("failed-precondition", "Esta partida de Minas não está ativa.");
+    }
+    if (!userSnapshot.exists || !rankSnapshot.exists) {
+      throw new HttpsError("failed-precondition", "Perfil ainda não foi criado.");
+    }
+    const game = gameSnapshot.data();
+    const safeCells = Array.isArray(game.safeCells) ? game.safeCells : [];
+    if (safeCells.includes(cell)) {
+      throw new HttpsError("failed-precondition", "Esta casa já foi revelada.");
+    }
+    const nowMs = Date.now();
+    const profile = userSnapshot.data();
+    if (game.mineCells.includes(cell)) {
+      const gamesPlayed = (profile.gamesPlayed || 0) + 1;
+      const progression = levelProgress(gamesPlayed);
+      const balanceFinal = (profile.balanceCents || 0) + progression.rewardCents;
+      if (!Number.isSafeInteger(balanceFinal)) {
+        throw new HttpsError("failed-precondition", "Saldo resultante inválido.");
+      }
+      const profitCents = -game.amountCents;
+      transaction.update(userRef, {
+        balanceCents: balanceFinal,
+        gamesPlayed,
+        wins: profile.wins || 0,
+        level: progression.level,
+        gamesTowardNextLevel: progression.gamesTowardNextLevel,
+        lastGameActionAtMs: nowMs,
+        ...profitTotals(profitCents),
+      });
+      transaction.update(rankRef, { balanceCents: balanceFinal, level: progression.level });
+      transaction.update(gameRef, {
+        status: "lost",
+        safeCells,
+        hitCell: cell,
+        settledAt: FieldValue.serverTimestamp(),
+        payoutCents: 0,
+        profitCents,
+      });
+      registrarPremioNivel(transaction, userRef, requestId, progression);
+      response = {
+        ...minesStateResponse({ ...game, status: "lost", safeCells, payoutCents: 0, multiplierBps: 10_000 }),
+        hitCell: cell,
+        balanceCents: balanceFinal,
+        profitCents,
+        gamesPlayed,
+        level: progression.level,
+        levelRewardCents: progression.rewardCents,
+      };
+    } else {
+      const nextSafeCells = [...safeCells, cell];
+      const payout = minesCashoutPayout(game.amountCents, game.mineCount, nextSafeCells.length, game.rtpBps);
+      transaction.update(userRef, { lastGameActionAtMs: nowMs });
+      transaction.update(gameRef, { safeCells: nextSafeCells, lastActionAtMs: nowMs });
+      response = {
+        ...minesStateResponse({ ...game, safeCells: nextSafeCells }),
+        lastSafeCell: cell,
+        status: "active",
+      };
+    }
+    transaction.create(requestRef, { response, createdAt: FieldValue.serverTimestamp() });
+  });
+
+  return response;
+});
+
+exports.cashOutMines = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const gameId = request.data?.gameId;
+  const requestId = request.data?.requestId;
+  if (typeof gameId !== "string" || !/^[a-f0-9-]{36}$/i.test(gameId)
+      || typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)) {
+    throw new HttpsError("invalid-argument", "Identificador da partida inválido.");
+  }
+
+  const userRef = database.collection("users").doc(uid);
+  const rankRef = database.collection("leaderboard").doc(uid);
+  const gameRef = userRef.collection("games").doc("mines");
+  const requestRef = userRef.collection("gameRequests").doc(requestId);
+  const historyRef = userRef.collection("transactions").doc(`${requestId}_mines_payout`);
+  let response;
+
+  await database.runTransaction(async (transaction) => {
+    const previousRequest = await transaction.get(requestRef);
+    if (previousRequest.exists) {
+      response = previousRequest.data().response;
+      return;
+    }
+    const [gameSnapshot, userSnapshot, rankSnapshot] = await Promise.all([
+      transaction.get(gameRef),
+      transaction.get(userRef),
+      transaction.get(rankRef),
+    ]);
+    if (!gameSnapshot.exists || gameSnapshot.get("gameId") !== gameId
+        || gameSnapshot.get("status") !== "active") {
+      throw new HttpsError("failed-precondition", "Esta partida de Minas não está ativa.");
+    }
+    const game = gameSnapshot.data();
+    const safeCells = Array.isArray(game.safeCells) ? game.safeCells : [];
+    if (safeCells.length === 0) {
+      throw new HttpsError("failed-precondition", "Revele pelo menos uma casa antes de sacar.");
+    }
+    if (!userSnapshot.exists || !rankSnapshot.exists) {
+      throw new HttpsError("failed-precondition", "Perfil ainda não foi criado.");
+    }
+    const profile = userSnapshot.data();
+    const payout = minesCashoutPayout(game.amountCents, game.mineCount, safeCells.length, game.rtpBps);
+    const profitCents = payout.payoutCents - game.amountCents;
+    const gamesPlayed = (profile.gamesPlayed || 0) + 1;
+    const wins = (profile.wins || 0) + (profitCents > 0 ? 1 : 0);
+    const progression = levelProgress(gamesPlayed);
+    const balanceAfterPayout = (profile.balanceCents || 0) + payout.payoutCents;
+    const balanceFinal = balanceAfterPayout + progression.rewardCents;
+    if (!Number.isSafeInteger(balanceFinal)) {
+      throw new HttpsError("failed-precondition", "Saldo resultante inválido.");
+    }
+    transaction.update(userRef, {
+      balanceCents: balanceFinal,
+      gamesPlayed,
+      wins,
+      level: progression.level,
+      gamesTowardNextLevel: progression.gamesTowardNextLevel,
+      lastGameActionAtMs: Date.now(),
+      ...profitTotals(profitCents),
+    });
+    transaction.update(rankRef, { balanceCents: balanceFinal, level: progression.level });
+    transaction.update(gameRef, {
+      status: "cashed_out",
+      settledAt: FieldValue.serverTimestamp(),
+      payoutCents: payout.payoutCents,
+      profitCents,
+      multiplierBps: payout.multiplierBps,
+    });
+    transaction.create(historyRef, {
+      description: `Minas · saque (${(payout.multiplierBps / 10_000).toFixed(2)}x)`,
+      deltaCents: payout.payoutCents,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    registrarPremioNivel(transaction, userRef, requestId, progression);
+    response = {
+      gameId,
+      status: "cashed_out",
+      safeCells,
+      payoutCents: payout.payoutCents,
+      multiplierBps: payout.multiplierBps,
+      profitCents,
+      balanceCents: balanceFinal,
+      gamesPlayed,
+      wins,
+      level: progression.level,
       levelRewardCents: progression.rewardCents,
     };
     transaction.create(requestRef, { response, createdAt: FieldValue.serverTimestamp() });
@@ -1165,6 +1537,375 @@ exports.getPlayerProfile = onCall(async (request) => {
     pixKeyType: typeof profile.pixKeyType === "string" ? profile.pixKeyType : "",
     equippedFrame: typeof profile.equippedFrame === "string" ? profile.equippedFrame : "",
   };
+});
+
+exports.getGameSettings = onCall(async (request) => {
+  authenticatedUid(request);
+  const snapshot = await database.collection("systemSettings").doc("games").get();
+  const settings = snapshot.data() || {};
+  return {
+    minesRtpBps: Number.isInteger(settings.minesRtpBps) ? settings.minesRtpBps : DEFAULT_MINES_RTP_BPS,
+    minesMinCount: Number.isInteger(settings.minesMinCount) ? settings.minesMinCount : 1,
+    minesMaxCount: Number.isInteger(settings.minesMaxCount) ? settings.minesMaxCount : 24,
+  };
+});
+
+exports.adminUpdateGameSettings = onCall(async (request) => {
+  const adminUid = requireAdmin(request);
+  const minesRtpBps = request.data?.minesRtpBps;
+  const minesMinCount = request.data?.minesMinCount;
+  const minesMaxCount = request.data?.minesMaxCount;
+  const requestId = request.data?.requestId;
+  const reason = typeof request.data?.reason === "string" ? request.data.reason.trim() : "";
+  if (!Number.isInteger(minesRtpBps) || minesRtpBps < 9_000 || minesRtpBps > 10_000
+      || !Number.isInteger(minesMinCount) || minesMinCount < 1 || minesMinCount > 24
+      || !Number.isInteger(minesMaxCount) || minesMaxCount < minesMinCount || minesMaxCount > 24
+      || typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)
+      || reason.length < 8 || reason.length > 200) {
+    throw new HttpsError("invalid-argument", "Configuração, motivo ou identificador inválido.");
+  }
+  const settingsRef = database.collection("systemSettings").doc("games");
+  const auditRef = database.collection("adminAuditLogs").doc(`${adminUid}_${requestId}`);
+  const settings = { minesRtpBps, minesMinCount, minesMaxCount };
+  let response;
+  await database.runTransaction(async (transaction) => {
+    const [auditSnapshot, settingsSnapshot] = await Promise.all([
+      transaction.get(auditRef),
+      transaction.get(settingsRef),
+    ]);
+    if (auditSnapshot.exists) {
+      const previous = auditSnapshot.data();
+      if (previous.action !== "update_game_settings" || previous.reason !== reason
+          || previous.minesRtpBps !== minesRtpBps
+          || previous.minesMinCount !== minesMinCount || previous.minesMaxCount !== minesMaxCount) {
+        throw new HttpsError("already-exists", "Identificador de alteração já utilizado.");
+      }
+      response = previous.response;
+      return;
+    }
+    transaction.set(settingsRef, {
+      ...(settingsSnapshot.data() || {}),
+      ...settings,
+      updatedBy: adminUid,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    response = { ok: true, ...settings };
+    transaction.create(auditRef, {
+      actorUid: adminUid,
+      action: "update_game_settings",
+      reason,
+      ...settings,
+      response,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+  });
+  return response;
+});
+
+exports.adminListUsers = onCall(async (request) => {
+  requireAdmin(request);
+  const cursor = request.data?.cursor;
+  if (cursor != null && (typeof cursor !== "string" || cursor.length > 128)) {
+    throw new HttpsError("invalid-argument", "Cursor inválido.");
+  }
+  let query = database.collection("users").orderBy(FieldPath.documentId()).limit(40);
+  if (cursor) query = query.startAfter(cursor);
+  const snapshot = await query.get();
+  return {
+    users: snapshot.docs.map((document) => {
+      const user = document.data();
+      return {
+        uid: document.id,
+        displayName: user.displayName || "Jogador",
+        username: user.username || "",
+        email: user.email || "",
+        balanceCents: user.balanceCents || 0,
+        isBlocked: user.isBlocked === true,
+      };
+    }),
+    nextCursor: snapshot.size === 40 ? snapshot.docs[snapshot.size - 1].id : "",
+  };
+});
+
+exports.adminGetUserDetails = onCall(async (request) => {
+  requireAdmin(request);
+  const targetUid = request.data?.uid;
+  if (typeof targetUid !== "string" || targetUid.length < 1 || targetUid.length > 128) {
+    throw new HttpsError("invalid-argument", "Conta inválida.");
+  }
+  const userRef = database.collection("users").doc(targetUid);
+  const [userSnapshot, transactionSnapshot] = await Promise.all([
+    userRef.get(),
+    userRef.collection("transactions").orderBy("createdAt", "desc").limit(50).get(),
+  ]);
+  if (!userSnapshot.exists) throw new HttpsError("not-found", "Conta não encontrada.");
+  const user = userSnapshot.data();
+  return {
+    user: {
+      uid: targetUid,
+      displayName: user.displayName || "Jogador",
+      username: user.username || "",
+      email: user.email || "",
+      balanceCents: user.balanceCents || 0,
+      isBlocked: user.isBlocked === true,
+      gamesPlayed: user.gamesPlayed || 0,
+      wins: user.wins || 0,
+    },
+    transactions: transactionSnapshot.docs.map((document) => {
+      const entry = document.data();
+      return {
+        id: document.id,
+        description: entry.description || "Movimentação",
+        deltaCents: entry.deltaCents || 0,
+        type: entry.type || "",
+        createdAtMs: timestampMillis(entry.createdAt) || 0,
+      };
+    }),
+  };
+});
+
+exports.adminAdjustBalance = onCall(async (request) => {
+  const adminUid = requireAdmin(request);
+  const targetUid = request.data?.uid;
+  const deltaCents = request.data?.deltaCents;
+  const requestId = request.data?.requestId;
+  const reason = typeof request.data?.reason === "string" ? request.data.reason.trim() : "";
+  if (typeof targetUid !== "string" || targetUid.length < 1 || targetUid.length > 128
+      || !Number.isSafeInteger(deltaCents) || deltaCents === 0 || Math.abs(deltaCents) > MAX_TRANSFER_CENTS
+      || typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)
+      || reason.length < 8 || reason.length > 200) {
+    throw new HttpsError("invalid-argument", "Ajuste, motivo ou identificador inválido.");
+  }
+  const userRef = database.collection("users").doc(targetUid);
+  const rankRef = database.collection("leaderboard").doc(targetUid);
+  const historyRef = userRef.collection("transactions").doc(`admin_${requestId}`);
+  const auditRef = database.collection("adminAuditLogs").doc(`${adminUid}_${requestId}`);
+  let response;
+  await database.runTransaction(async (transaction) => {
+    const [auditSnapshot, userSnapshot, rankSnapshot] = await Promise.all([
+      transaction.get(auditRef),
+      transaction.get(userRef),
+      transaction.get(rankRef),
+    ]);
+    if (auditSnapshot.exists) {
+      const previous = auditSnapshot.data();
+      if (previous.action !== "adjust_balance" || previous.targetUid !== targetUid
+          || previous.deltaCents !== deltaCents || previous.reason !== reason) {
+        throw new HttpsError("already-exists", "Identificador de ajuste já utilizado.");
+      }
+      response = previous.response;
+      return;
+    }
+    if (!userSnapshot.exists || !rankSnapshot.exists) {
+      throw new HttpsError("not-found", "Conta ou ranking não encontrado.");
+    }
+    const balanceCents = (userSnapshot.get("balanceCents") || 0) + deltaCents;
+    if (!Number.isSafeInteger(balanceCents) || balanceCents < 0) {
+      throw new HttpsError("failed-precondition", "O ajuste deixaria o saldo negativo ou inválido.");
+    }
+    transaction.update(userRef, { balanceCents });
+    transaction.update(rankRef, { balanceCents });
+    transaction.create(historyRef, {
+      description: `Ajuste administrativo · ${reason}`,
+      deltaCents,
+      type: "admin_adjustment",
+      adminUid,
+      reason,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    response = { ok: true, uid: targetUid, balanceCents };
+    transaction.create(auditRef, {
+      actorUid: adminUid,
+      targetUid,
+      action: "adjust_balance",
+      deltaCents,
+      reason,
+      response,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+  });
+  return response;
+});
+
+exports.adminSetUserBlocked = onCall(async (request) => {
+  const adminUid = requireAdmin(request);
+  const targetUid = request.data?.uid;
+  const blocked = request.data?.blocked;
+  const requestId = request.data?.requestId;
+  const reason = typeof request.data?.reason === "string" ? request.data.reason.trim() : "";
+  if (typeof targetUid !== "string" || targetUid.length < 1 || targetUid.length > 128
+      || typeof blocked !== "boolean" || targetUid === adminUid
+      || typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)
+      || reason.length < 8 || reason.length > 200) {
+    throw new HttpsError("invalid-argument", "Ação, motivo ou identificador inválido.");
+  }
+  const userRef = database.collection("users").doc(targetUid);
+  const auditRef = database.collection("adminAuditLogs").doc(`${adminUid}_${requestId}`);
+  const previousAudit = await auditRef.get();
+  if (previousAudit.exists) {
+    const previous = previousAudit.data();
+    const expectedAction = blocked ? "block_user" : "unblock_user";
+    if (previous.action !== expectedAction || previous.targetUid !== targetUid || previous.reason !== reason) {
+      throw new HttpsError("already-exists", "Identificador de bloqueio já utilizado.");
+    }
+    try {
+      await getAuth().updateUser(targetUid, { disabled: previous.blocked });
+    } catch {
+      throw new HttpsError("not-found", "Conta de autenticação não encontrada.");
+    }
+    return previous.response;
+  }
+  if (!blocked) {
+    const profileSnapshot = await userRef.get();
+    if (!profileSnapshot.exists) throw new HttpsError("not-found", "Conta não encontrada.");
+    try {
+      await getAuth().updateUser(targetUid, { disabled: false });
+    } catch {
+      throw new HttpsError("not-found", "Conta de autenticação não encontrada.");
+    }
+  }
+  let response;
+  await database.runTransaction(async (transaction) => {
+    const [auditSnapshot, userSnapshot] = await Promise.all([
+      transaction.get(auditRef),
+      transaction.get(userRef),
+    ]);
+    if (auditSnapshot.exists) {
+      const previous = auditSnapshot.data();
+      const expectedAction = blocked ? "block_user" : "unblock_user";
+      if (previous.action !== expectedAction || previous.targetUid !== targetUid || previous.reason !== reason) {
+        throw new HttpsError("already-exists", "Identificador de bloqueio já utilizado.");
+      }
+      response = previous.response;
+      return;
+    }
+    if (!userSnapshot.exists) throw new HttpsError("not-found", "Conta não encontrada.");
+    transaction.update(userRef, {
+      isBlocked: blocked,
+      blockReason: blocked ? reason : "",
+      blockedAt: blocked ? FieldValue.serverTimestamp() : FieldValue.delete(),
+    });
+    response = { ok: true, uid: targetUid, isBlocked: blocked };
+    transaction.create(auditRef, {
+      actorUid: adminUid,
+      targetUid,
+      action: blocked ? "block_user" : "unblock_user",
+      blocked,
+      reason,
+      response,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+  });
+  if (blocked) {
+    try {
+      await getAuth().updateUser(targetUid, { disabled: true });
+    } catch {
+      throw new HttpsError("failed-precondition", "A conta foi bloqueada no app, mas o Auth não confirmou a desativação.");
+    }
+  }
+  return response;
+});
+
+exports.adminDeleteUser = onCall(async (request) => {
+  const adminUid = requireAdmin(request);
+  const targetUid = request.data?.uid;
+  const confirmUid = request.data?.confirmUid;
+  const requestId = request.data?.requestId;
+  const reason = typeof request.data?.reason === "string" ? request.data.reason.trim() : "";
+  if (typeof targetUid !== "string" || targetUid.length < 1 || targetUid.length > 128
+      || confirmUid !== targetUid || targetUid === adminUid
+      || typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)
+      || reason.length < 8 || reason.length > 200) {
+    throw new HttpsError("invalid-argument", "Confirme o UID e informe o motivo da exclusão.");
+  }
+  const auditRef = database.collection("adminAuditLogs").doc(`${adminUid}_${requestId}`);
+  const previous = await auditRef.get();
+  const targetUidHash = createHash("sha256").update(targetUid).digest("hex");
+  if (previous.exists) {
+    if (previous.get("action") !== "delete_user" || previous.get("targetUidHash") !== targetUidHash) {
+      throw new HttpsError("already-exists", "Identificador de exclusão já utilizado.");
+    }
+    return previous.get("response");
+  }
+
+  try {
+    const targetAuth = await getAuth().getUser(targetUid);
+    if (targetAuth.customClaims?.admin === true) {
+      throw new HttpsError("failed-precondition", "Remova a permissão admin antes de excluir esta conta.");
+    }
+  } catch (error) {
+    if (error instanceof HttpsError) throw error;
+    if (error.code !== "auth/user-not-found") throw error;
+  }
+
+  await deleteCloudinaryAvatarFolder(targetUid);
+
+  const userRef = database.collection("users").doc(targetUid);
+  const profileSnapshot = await userRef.get();
+  const profile = profileSnapshot.data() || {};
+  const chatSnapshot = await database.collection("chats")
+    .where("participantUids", "array-contains", targetUid).get();
+  for (const chatDocument of chatSnapshot.docs) {
+    const chat = chatDocument.data();
+    if (chat.type !== "group") {
+      await database.recursiveDelete(chatDocument.ref);
+      continue;
+    }
+    const participants = (Array.isArray(chat.participantUids) ? chat.participantUids : [])
+      .filter((participantUid) => participantUid !== targetUid);
+    if (participants.length === 0) {
+      await database.recursiveDelete(chatDocument.ref);
+      continue;
+    }
+    const admins = (Array.isArray(chat.adminUids) ? chat.adminUids : [])
+      .filter((participantUid) => participantUid !== targetUid);
+    const update = {
+      participantUids: participants,
+      adminUids: admins,
+    };
+    if (chat.createdBy === targetUid) {
+      update.createdBy = participants[0];
+      if (!admins.includes(participants[0])) update.adminUids.push(participants[0]);
+    }
+    if (chat.lastMessageSenderUid === targetUid) {
+      update.lastMessage = "Mensagem removida";
+      update.lastMessageId = "";
+      update.lastMessageSenderUid = "";
+      update.lastMessageAt = FieldValue.serverTimestamp();
+    }
+    if (Array.isArray(chat.streakParticipantsToday)) {
+      update.streakParticipantsToday = chat.streakParticipantsToday.filter((participantUid) => participantUid !== targetUid);
+    }
+    await chatDocument.ref.update(update);
+  }
+
+  await Promise.all([
+    deleteMatchingDocuments(database.collectionGroup("messages").where("senderUid", "==", targetUid)),
+    deleteMatchingDocuments(database.collectionGroup("transactions").where("counterpartyUid", "==", targetUid)),
+    deleteMatchingDocuments(database.collection("transfers").where("senderUid", "==", targetUid)),
+    deleteMatchingDocuments(database.collection("transfers").where("recipientUid", "==", targetUid)),
+    deleteMatchingDocuments(database.collection("usernames").where("uid", "==", targetUid)),
+    deleteMatchingDocuments(database.collection("pixKeys").where("uid", "==", targetUid)),
+  ]);
+  if (profile.username) await database.collection("usernames").doc(profile.username).delete();
+  if (profile.pixKeyHash) await database.collection("pixKeys").doc(profile.pixKeyHash).delete();
+  await database.collection("leaderboard").doc(targetUid).delete();
+  await database.recursiveDelete(userRef);
+  try {
+    await getAuth().deleteUser(targetUid);
+  } catch (error) {
+    if (error.code !== "auth/user-not-found") throw error;
+  }
+  const response = { ok: true, deleted: true };
+  await auditRef.create({
+    actorUid: adminUid,
+    targetUidHash,
+    action: "delete_user",
+    reason,
+    response,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+  return response;
 });
 
 exports.createChatGroup = onCall(async (request) => {

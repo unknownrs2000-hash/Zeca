@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -65,6 +66,7 @@ import kotlinx.coroutines.delay
 import com.example.zeca.ui.TelaCarteira
 import com.example.zeca.ui.TelaConfigurarPerfil
 import com.example.zeca.ui.TelaAutenticacao
+import com.example.zeca.ui.TelaAdmin
 import com.example.zeca.ui.TelaChat
 import com.example.zeca.ui.TelaInicio
 import com.example.zeca.ui.TelaJogos
@@ -90,6 +92,7 @@ enum class Aba(val titulo: String, val icone: ImageVector) {
     Carteira("Carteira", Icons.Filled.AccountBalanceWallet),
     Chat("Chat", Icons.AutoMirrored.Filled.Chat),
     Perfil("Perfil", Icons.Filled.Person),
+    Admin("Admin", Icons.Filled.Settings),
 }
 
 data class Movimento(
@@ -139,6 +142,7 @@ fun CassinoApp() {
 private fun AppAutenticado(usuario: FirebaseUser) {
     val contexto = LocalContext.current
     var aba by rememberSaveable { mutableStateOf(Aba.Inicio) }
+    var ehAdmin by remember(usuario.uid) { mutableStateOf(false) }
     var mostrarLoja by rememberSaveable { mutableStateOf(false) }
     var perfil by remember(usuario.uid) { mutableStateOf<PerfilJogador?>(null) }
     var erroPerfil by rememberSaveable { mutableStateOf("") }
@@ -147,6 +151,10 @@ private fun AppAutenticado(usuario: FirebaseUser) {
     val itensComprados = remember { mutableStateListOf<String>() }
     val notificacoes = remember { mutableStateListOf<NotificacaoApp>() }
     val stateHolder = rememberSaveableStateHolder()
+
+    LaunchedEffect(usuario.uid) {
+        FirebaseRepository.verificarAdmin { ehAdmin = it }
+    }
 
     fun notificar(notificacao: NotificacaoApp) {
         if (notificacoes.none { it.id == notificacao.id }) {
@@ -318,6 +326,21 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                         Aba.Jogos -> TelaJogos(
                             saldoCentavos = jogador.saldoCentavos,
                             partidas = jogador.partidas,
+                            onCarregarConfiguracaoMinas = { concluir ->
+                                FirebaseRepository.carregarConfiguracaoMinas(concluir)
+                            },
+                            onCarregarMinasAtiva = { concluir ->
+                                FirebaseRepository.carregarMinasAtiva(concluir)
+                            },
+                            onIniciarMinas = { aposta, minas, requestId, concluir ->
+                                FirebaseRepository.iniciarMinas(aposta, minas, requestId, concluir)
+                            },
+                            onRevelarMinas = { gameId, casa, requestId, concluir ->
+                                FirebaseRepository.revelarCasaMinas(gameId, casa, requestId, concluir)
+                            },
+                            onSacarMinas = { gameId, requestId, concluir ->
+                                FirebaseRepository.sacarMinas(gameId, requestId, concluir)
+                            },
                             onJogar = { jogo, aposta, tipo, selecao, requestId, concluir ->
                                 FirebaseRepository.jogar(jogo, aposta, tipo, selecao, requestId) { resultado, error ->
                                     concluir(resultado, error)
@@ -428,6 +451,33 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                                 FirebaseRepository.buscarPerfilPublico(uid, concluir)
                             },
                         )
+                        Aba.Admin -> if (ehAdmin) {
+                            TelaAdmin(
+                                onCarregarUsuarios = { cursor, concluir ->
+                                    FirebaseRepository.listarUsuariosAdmin(cursor, concluir)
+                                },
+                                onCarregarDetalhes = { uid, concluir ->
+                                    FirebaseRepository.carregarDetalhesAdmin(uid, concluir)
+                                },
+                                onCarregarConfiguracao = { concluir ->
+                                    FirebaseRepository.carregarConfiguracaoMinas(concluir)
+                                },
+                                onAtualizarConfiguracao = { configuracao, motivo, requestId, concluir ->
+                                    FirebaseRepository.atualizarConfiguracaoMinasAdmin(configuracao, motivo, requestId, concluir)
+                                },
+                                onAjustarSaldo = { uid, delta, motivo, requestId, concluir ->
+                                    FirebaseRepository.ajustarSaldoAdmin(uid, delta, motivo, requestId, concluir)
+                                },
+                                onDefinirBloqueio = { uid, bloqueado, motivo, requestId, concluir ->
+                                    FirebaseRepository.definirBloqueioAdmin(uid, bloqueado, motivo, requestId, concluir)
+                                },
+                                onExcluirUsuario = { uid, confirmUid, motivo, requestId, concluir ->
+                                    FirebaseRepository.excluirUsuarioAdmin(uid, confirmUid, motivo, requestId, concluir)
+                                },
+                            )
+                        } else {
+                            aba = Aba.Inicio
+                        }
                         Aba.Perfil -> if (mostrarLoja) {
                             TelaLoja(
                                 saldoCentavos = jogador.saldoCentavos,
@@ -519,6 +569,7 @@ private fun AppAutenticado(usuario: FirebaseUser) {
             }
             BarraInferior(
                 atual = aba,
+                mostrarAdmin = ehAdmin,
                 onSelecionar = {
                     aba = it
                     mostrarLoja = false
@@ -530,7 +581,12 @@ private fun AppAutenticado(usuario: FirebaseUser) {
 }
 
 @Composable
-fun BarraInferior(atual: Aba, onSelecionar: (Aba) -> Unit, modifier: Modifier = Modifier) {
+fun BarraInferior(
+    atual: Aba,
+    onSelecionar: (Aba) -> Unit,
+    modifier: Modifier = Modifier,
+    mostrarAdmin: Boolean = false,
+) {
     Row(
         modifier = modifier
             .navigationBarsPadding()
@@ -548,7 +604,7 @@ fun BarraInferior(atual: Aba, onSelecionar: (Aba) -> Unit, modifier: Modifier = 
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Aba.entries.forEach { aba ->
+        Aba.entries.filter { mostrarAdmin || it != Aba.Admin }.forEach { aba ->
             val selecionada = aba == atual
             Row(
                 modifier = Modifier

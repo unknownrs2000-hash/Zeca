@@ -67,6 +67,17 @@ async function seedPlayer(uid, balanceCents = 50_000) {
   });
 }
 
+test("blocked users cannot read their profile or the leaderboard", async () => {
+  const uid = "blocked-player";
+  await seedPlayer(uid);
+  await environment.withSecurityRulesDisabled(async (context) => {
+    await context.firestore().doc(`users/${uid}`).update({ isBlocked: true });
+  });
+  const database = environment.authenticatedContext(uid).firestore();
+  await assertFails(getDoc(doc(database, "users", uid)));
+  await assertFails(getDoc(doc(database, "leaderboard", uid)));
+});
+
 async function purchase(uid, itemId, purchaseId = "purchase-test-0001", amountOverride) {
   const product = PRODUCTS[itemId];
   const price = amountOverride ?? product?.priceCents ?? 0;

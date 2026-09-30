@@ -69,22 +69,40 @@ function parityDiceResult(selection, wagerCents, secureRandomInt = randomInt) {
   };
 }
 
-function minesPickResult(selection, wagerCents, secureRandomInt = randomInt) {
+function minesCashoutPayout(wagerCents, mineCount, safePicks, rtpBps = 9_800) {
+  const boardSize = 25;
   if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER)
-      || !/^[1-5]$/.test(String(selection))) {
-    throw new RangeError("Invalid mines wager.");
+      || !Number.isInteger(mineCount) || mineCount < 1 || mineCount >= boardSize
+      || !Number.isInteger(safePicks) || safePicks < 1 || safePicks > boardSize - mineCount
+      || !Number.isInteger(rtpBps) || rtpBps < 1 || rtpBps > 10_000) {
+    throw new RangeError("Invalid mines cash-out.");
   }
-  const mine = secureRandomInt(5) + 1;
-  const chosenCell = Number(selection);
-  const won = chosenCell !== mine;
+
+  let allOutcomes = 1n;
+  let safeOutcomes = 1n;
+  for (let pick = 0; pick < safePicks; pick += 1) {
+    allOutcomes *= BigInt(boardSize - pick);
+    safeOutcomes *= BigInt(boardSize - mineCount - pick);
+  }
   return {
-    displayText: won ? `Casa ${chosenCell} segura · venceu` : `Mina na casa ${mine} · perdeu`,
-    chosenCell,
-    mine,
-    won,
-    payoutCents: won ? Math.floor(wagerCents * 118 / 100) : 0,
-    multiplier: won ? 118 : 0,
+    payoutCents: Number(BigInt(wagerCents) * BigInt(rtpBps) * allOutcomes / (10_000n * safeOutcomes)),
+    multiplierBps: Number(BigInt(rtpBps) * allOutcomes / safeOutcomes),
   };
+}
+
+function createMinefield(mineCount, secureRandomInt = randomInt) {
+  if (!Number.isInteger(mineCount) || mineCount < 1 || mineCount >= 25) {
+    throw new RangeError("Invalid mine count.");
+  }
+  const cells = Array.from({ length: 25 }, (_value, index) => index);
+  for (let index = cells.length - 1; index > 0; index -= 1) {
+    const swapIndex = secureRandomInt(index + 1);
+    if (!Number.isInteger(swapIndex) || swapIndex < 0 || swapIndex > index) {
+      throw new RangeError("Invalid random value.");
+    }
+    [cells[index], cells[swapIndex]] = [cells[swapIndex], cells[index]];
+  }
+  return cells.slice(0, mineCount).sort((left, right) => left - right);
 }
 
 function scratchCardResult(wagerCents, secureRandomInt = randomInt) {
@@ -217,13 +235,14 @@ module.exports = {
   SLOT_SYMBOLS,
   blackjackHandValue,
   coinFlipResult,
+  createMinefield,
   crashMultiplierBasisPoints,
   crashPointBasisPoints,
   createShuffledDeck,
   diceGuessResult,
   footballShotResult,
   isBlackjack,
-  minesPickResult,
+  minesCashoutPayout,
   parityDiceResult,
   rouletteResult,
   scratchCardResult,
