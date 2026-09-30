@@ -858,7 +858,7 @@ fun TelaPerfil(
                 color = Cores.Verde,
                 trackColor = Color.White.copy(alpha = 0.12f),
             )
-            Text("Próximo nível: bônus de R$ 10,00", color = Cores.Turquesa, fontSize = 12.sp)
+            Text("Próximo nível: bônus de ${formatarReais(nivel.toLong() * 5_000L)}", color = Cores.Turquesa, fontSize = 12.sp)
             Button(
                 onClick = {
                     onSalvarPerfil(usernameEditavel, apelidoEditavel.trim(), avatarUrlEditavel, avatarComoFotoEditavel) { erro ->

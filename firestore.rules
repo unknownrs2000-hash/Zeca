@@ -322,7 +322,8 @@ service cloud.firestore {
           && request.resource.data.keys().hasOnly([
             'senderUid', 'senderName', 'senderUsername', 'senderAvatarUrl', 'senderAvatarItems',
             'senderAvatarAsProfilePhoto', 'text', 'createdAt',
-            'replyToId', 'replyToName', 'replyToText', 'forwarded'
+            'replyToId', 'replyToName', 'replyToText', 'forwarded',
+            'type', 'audioUrl', 'audioPublicId', 'audioDurationMs'
           ])
           && request.resource.data.senderUid == request.auth.uid
           && request.resource.data.senderName
@@ -336,8 +337,21 @@ service cloud.firestore {
           && request.resource.data.senderAvatarAsProfilePhoto
             == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.avatarAsProfilePhoto
           && request.resource.data.text is string
-          && request.resource.data.text.size() >= 1
           && request.resource.data.text.size() <= 500
+          && (request.resource.data.text.size() >= 1
+            || ('audioUrl' in request.resource.data
+              && request.resource.data.audioUrl is string
+              && request.resource.data.audioPublicId is string
+              && request.resource.data.audioDurationMs is int))
+          && (!('audioUrl' in request.resource.data) || (
+            request.resource.data.keys().hasAll(['type', 'audioUrl', 'audioPublicId', 'audioDurationMs'])
+            && request.resource.data.type == 'audio'
+            && request.resource.data.audioUrl.matches('^https://res\\.cloudinary\\.com/vwctfu9u/video/upload/.+')
+            && request.resource.data.audioPublicId == messageId
+            && request.resource.data.audioUrl.matches(
+              '^https://res\\.cloudinary\\.com/vwctfu9u/video/upload/.*' + messageId + '\\.m4a$')
+            && request.resource.data.audioDurationMs >= 500
+            && request.resource.data.audioDurationMs <= 60000))
           && request.resource.data.createdAt == request.time
           && (!('forwarded' in request.resource.data) || request.resource.data.forwarded == true)
           && (!('replyToId' in request.resource.data) || (

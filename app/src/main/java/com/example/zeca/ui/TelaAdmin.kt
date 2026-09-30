@@ -26,6 +26,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -60,6 +61,7 @@ import java.util.UUID
 import kotlin.math.roundToInt
 
 private data class ItemInventarioAdmin(val id: String, val nome: String)
+private const val LIMITE_AJUSTE_ADMIN_CENTAVOS = 1_000_000L
 
 private val itensInventarioAdmin = listOf(
     ItemInventarioAdmin("frame_aurora", "Moldura Aurora"),
@@ -115,6 +117,7 @@ fun TelaAdmin(
     var menuInventarioAberto by remember { mutableStateOf(false) }
     var confirmarExclusao by remember { mutableStateOf(false) }
     var uidConfirmacao by rememberSaveable { mutableStateOf("") }
+    val valorAjusteCentavos = parseSaldoAdmin(valorAjuste)
     val contexto = LocalContext.current
 
     LaunchedEffect(Unit) {
@@ -146,6 +149,26 @@ fun TelaAdmin(
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Text("Administração", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Black)
+        if (carregando) {
+            LinearProgressIndicator(
+                modifier = Modifier.fillMaxWidth(),
+                color = Cores.Verde,
+                trackColor = Color.White.copy(alpha = 0.1f),
+            )
+            Text("Aguardando resposta do servidor...", color = Color.White.copy(alpha = 0.62f), fontSize = 11.sp)
+        }
+        if (mensagem.isNotBlank()) {
+            Text(
+                mensagem,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF34272A))
+                    .padding(12.dp),
+                color = Color(0xFFFFB7A7),
+                fontSize = 12.sp,
+            )
+        }
 
         Text("Minas · regras", color = Cores.Verde, fontSize = 15.sp, fontWeight = FontWeight.Bold)
         OutlinedTextField(
@@ -181,6 +204,9 @@ fun TelaAdmin(
             label = { Text("Motivo da alteração") },
             singleLine = true,
         )
+        if (motivoConfiguracao.trim().length < 8) {
+            Text("Descreva o motivo da mudança (mínimo 8 caracteres).", color = Cores.Laranja, fontSize = 10.sp)
+        }
         Button(
             onClick = {
                 val rtp = rtpTexto.replace(',', '.').toDoubleOrNull()
@@ -289,6 +315,9 @@ fun TelaAdmin(
                     label = { Text("Motivo para inventário, saldo ou bloqueio") },
                     singleLine = true,
                 )
+                if (motivoAcao.trim().length < 8) {
+                    Text("Informe o motivo para habilitar as ações de saldo e inventário.", color = Cores.Laranja, fontSize = 10.sp)
+                }
                 if (info.inventario.isEmpty()) {
                     Text("Nenhum item no inventário.", color = Color.White.copy(alpha = 0.55f), fontSize = 11.sp)
                 } else {
@@ -346,6 +375,11 @@ fun TelaAdmin(
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 )
+                if (valorAjusteCentavos == null) {
+                    Text("Digite um valor maior que R$ 0,00 usando vírgula nos centavos.", color = Cores.Laranja, fontSize = 10.sp)
+                } else if (valorAjusteCentavos > LIMITE_AJUSTE_ADMIN_CENTAVOS) {
+                    Text("O limite por ajuste é R$ 10.000,00.", color = Cores.Laranja, fontSize = 10.sp)
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = { credito = true }, colors = ButtonDefaults.buttonColors(containerColor = if (credito) Cores.Verde else Color.White.copy(alpha = 0.14f))) {
                         Text("Adicionar saldo", color = if (credito) Color(0xFF101417) else Color.White)
@@ -356,9 +390,9 @@ fun TelaAdmin(
                 }
                 Button(
                     onClick = {
-                        val amount = parseSaldoAdmin(valorAjuste)
-                        if (amount == null || motivoAcao.trim().length < 8) {
-                            mensagem = "Informe um valor e um motivo válido."
+                        val amount = valorAjusteCentavos
+                        if (amount == null || amount > LIMITE_AJUSTE_ADMIN_CENTAVOS || motivoAcao.trim().length < 8) {
+                            mensagem = "Informe um valor de até R$ 10.000,00 e um motivo com pelo menos 8 caracteres."
                         } else {
                             carregando = true
                             onAjustarSaldo(user.uid, if (credito) amount else -amount, motivoAcao.trim(), UUID.randomUUID().toString()) { _, error ->
@@ -368,7 +402,9 @@ fun TelaAdmin(
                             }
                         }
                     },
-                    enabled = !carregando,
+                    enabled = !carregando && valorAjusteCentavos != null
+                        && valorAjusteCentavos <= LIMITE_AJUSTE_ADMIN_CENTAVOS
+                        && motivoAcao.trim().length >= 8,
                     colors = ButtonDefaults.buttonColors(containerColor = Cores.Verde),
                 ) { Text("Aplicar ajuste", color = Color(0xFF101417), fontWeight = FontWeight.Bold) }
 
@@ -434,9 +470,6 @@ fun TelaAdmin(
             ) { Text("Carregar mais contas") }
         }
 
-        if (mensagem.isNotBlank()) {
-            Text(mensagem, modifier = Modifier.fillMaxWidth(), color = Color.White.copy(alpha = 0.76f), fontSize = 12.sp)
-        }
     }
 
     if (confirmarExclusao && selecionado != null) {
@@ -449,7 +482,13 @@ fun TelaAdmin(
                     Text("Apaga perfil, autenticação, saldo virtual, conversas diretas, mensagens e históricos de transferência compartilhados. Esta ação não pode ser desfeita.")
                     Text("Digite o UID da conta para confirmar:", fontSize = 12.sp)
                     OutlinedTextField(value = uidConfirmacao, onValueChange = { uidConfirmacao = it }, singleLine = true)
+                    if (uidConfirmacao != user.uid) {
+                        Text("O UID deve ser idêntico ao da conta selecionada.", color = Cores.Laranja, fontSize = 10.sp)
+                    }
                     OutlinedTextField(value = motivoAcao, onValueChange = { motivoAcao = it.take(200) }, label = { Text("Motivo da exclusão") }, singleLine = true)
+                    if (motivoAcao.trim().length < 8) {
+                        Text("Informe o motivo da exclusão (mínimo 8 caracteres).", color = Cores.Laranja, fontSize = 10.sp)
+                    }
                 }
             },
             confirmButton = {

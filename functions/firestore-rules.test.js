@@ -78,6 +78,32 @@ test("blocked users cannot read their profile or the leaderboard", async () => {
   await assertFails(getDoc(doc(database, "leaderboard", uid)));
 });
 
+test("chat accepts an authenticated Cloudinary voice note but rejects arbitrary audio URLs", async () => {
+  const uid = "audio-sender";
+  await seedPlayer(uid);
+  const database = environment.authenticatedContext(uid).firestore();
+  const validMessage = {
+    senderUid: uid,
+    senderName: uid,
+    senderUsername: uid,
+    senderAvatarUrl: "",
+    senderAvatarItems: [],
+    senderAvatarAsProfilePhoto: false,
+    text: "",
+    createdAt: serverTimestamp(),
+    type: "audio",
+    audioUrl: "https://res.cloudinary.com/vwctfu9u/video/upload/voice-request-id.m4a",
+    audioPublicId: "voice-request-id",
+    audioDurationMs: 1_500,
+  };
+  await assertSucceeds(setDoc(doc(database, "chats", "global", "messages", "voice-request-id"), validMessage));
+  await assertFails(setDoc(doc(database, "chats", "global", "messages", "voice-request-external"), {
+    ...validMessage,
+    audioPublicId: "voice-request-external",
+    audioUrl: "https://audio.example.net/voice.m4a",
+  }));
+});
+
 async function purchase(uid, itemId, purchaseId = "purchase-test-0001", amountOverride) {
   const product = PRODUCTS[itemId];
   const price = amountOverride ?? product?.priceCents ?? 0;

@@ -53,6 +53,10 @@ import com.example.zeca.CartaBlackjack
 import com.example.zeca.ConfiguracaoMinas
 import com.example.zeca.EstadoMinas
 import com.example.zeca.EstadoBlackjack
+import com.example.zeca.ApostaEsportiva
+import com.example.zeca.PartidaEsportiva
+import com.example.zeca.SalaCaboGuerra
+import com.example.zeca.JogadorRanking
 import com.example.zeca.ResultadoCrash
 import com.example.zeca.ResultadoJogo
 import com.example.zeca.SessaoCrash
@@ -66,8 +70,20 @@ import kotlin.math.exp
 fun TelaJogos(
     saldoCentavos: Long,
     partidas: Int,
+    uidAtual: String,
+    jogadores: List<JogadorRanking>,
     onCarregarConfiguracaoMinas: ((ConfiguracaoMinas?, Exception?) -> Unit) -> Unit,
     onCarregarMinasAtiva: ((EstadoMinas?, Exception?) -> Unit) -> Unit,
+    onCarregarPartidasEsportivas: ((List<PartidaEsportiva>, Exception?) -> Unit) -> Unit,
+    onCarregarApostasEsportivas: ((List<ApostaEsportiva>, Exception?) -> Unit) -> Unit,
+    onApostarEsportiva: (Int, String, Long, String, (Exception?) -> Unit) -> Unit,
+    onLiquidarApostasEsportivas: ((Int?, Exception?) -> Unit) -> Unit,
+    onCarregarSalasCaboGuerra: ((List<SalaCaboGuerra>, Exception?) -> Unit) -> Unit,
+    onCriarSalaCaboGuerra: (Long, List<String>, String, String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
+    onEntrarSalaCaboGuerra: (String, String, String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
+    onGerenciarSalaCaboGuerra: (String, String, String, String, Long, String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
+    onIniciarSalaCaboGuerra: (String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
+    onPuxarCordaCaboGuerra: (String, String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
     onIniciarMinas: (Long, Int, String, (EstadoMinas?, Exception?) -> Unit) -> Unit,
     onRevelarMinas: (String, Int, String, (EstadoMinas?, Exception?) -> Unit) -> Unit,
     onSacarMinas: (String, String, (EstadoMinas?, Exception?) -> Unit) -> Unit,
@@ -205,7 +221,7 @@ fun TelaJogos(
 
         JogosPainel {
             SeletorJogos(
-                listOf("Slots", "Roleta", "Crash", "Blackjack", "Cara ou coroa", "Dado", "Par ou ímpar", "Minas", "Raspadinha", "Futebol"),
+                listOf("Slots", "Roleta", "Crash", "Blackjack", "Cara ou coroa", "Dado", "Par ou ímpar", "Minas", "Raspadinha", "Futebol", "Apostas esportivas", "Cabo de guerra"),
                 jogo,
             ) {
                 jogo = it
@@ -474,6 +490,24 @@ fun TelaJogos(
                             }
                         }
                     },
+                )
+                "Apostas esportivas" -> TelaApostasEsportivas(
+                    saldoCentavos = saldoCentavos,
+                    onCarregarPartidas = onCarregarPartidasEsportivas,
+                    onCarregarApostas = onCarregarApostasEsportivas,
+                    onApostar = onApostarEsportiva,
+                    onLiquidar = onLiquidarApostasEsportivas,
+                )
+                "Cabo de guerra" -> TelaCaboGuerra(
+                    uidAtual = uidAtual,
+                    saldoCentavos = saldoCentavos,
+                    jogadores = jogadores,
+                    onCarregarSalas = onCarregarSalasCaboGuerra,
+                    onCriarSala = onCriarSalaCaboGuerra,
+                    onEntrarSala = onEntrarSalaCaboGuerra,
+                    onGerenciarSala = onGerenciarSalaCaboGuerra,
+                    onIniciarSala = onIniciarSalaCaboGuerra,
+                    onPuxarCorda = onPuxarCordaCaboGuerra,
                 )
                 else -> {
                     val opcoes = when (jogo) {

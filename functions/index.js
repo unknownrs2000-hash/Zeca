@@ -1,6 +1,6 @@
 "use strict";
 
-const { createHash, randomInt, randomUUID } = require("node:crypto");
+const { createHash, randomInt, randomUUID, scryptSync } = require("node:crypto");
 const { getAuth } = require("firebase-admin/auth");
 const { cert, initializeApp } = require("firebase-admin/app");
 const { v2: cloudinary } = require("cloudinary");
@@ -24,9 +24,17 @@ const {
   spinSlots,
   validateWager,
 } = require("./game-logic");
-const { initializeBalance, levelProgress, normalizeUsername } = require("./profile-logic");
+const {
+  advanceMissionProgress,
+  getMissionProgress,
+  initializeBalance,
+  levelProgress,
+  normalizeUsername,
+} = require("./profile-logic");
 const { applyStreakMessage, dateUtc } = require("./chat-logic");
 const { AVATAR_ITEM_SLOTS, equipAvatarItem, unequipAvatarSlot } = require("./avatar-logic");
+const { fixtureWinner, parseFixtures, parseWinnerOdds, sportsPayoutCents } = require("./sports-logic");
+const { applyTugPull } = require("./tug-logic");
 
 const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
 initializeApp(serviceAccount ? { credential: cert(JSON.parse(serviceAccount)) } : {});
@@ -89,6 +97,10 @@ async function deleteMatchingDocuments(query) {
 
 function timestampMillis(value) {
   return value && typeof value.toMillis === "function" ? value.toMillis() : null;
+}
+
+function hashTugPassword(password, roomId) {
+  return password ? scryptSync(password, roomId, 32).toString("hex") : "";
 }
 
 async function deleteCloudinaryAvatarFolder(uid) {
@@ -175,6 +187,32 @@ function enforceGameCooldown(profile, nowMs) {
   }
 }
 
+async function apiFootballGet(endpoint, params = {}) {
+  const apiKey = process.env.API_FOOTBALL_KEY;
+  if (!apiKey) {
+    throw new HttpsError("failed-precondition", "Apostas esportivas não estão configuradas: falta API_FOOTBALL_KEY no servidor.");
+  }
+  const url = new URL(`https://v3.football.api-sports.io/${endpoint}`);
+  Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, String(value)));
+  let response;
+  try {
+    response = await fetch(url, {
+      headers: { "x-apisports-key": apiKey },
+      signal: AbortSignal.timeout(12_000),
+    });
+  } catch {
+    throw new HttpsError("resource-exhausted", "A API de futebol não respondeu. Tente novamente.");
+  }
+  if (!response.ok) {
+    throw new HttpsError("failed-precondition", `A API de futebol respondeu com erro ${response.status}.`);
+  }
+  const payload = await response.json();
+  if (payload.errors && Object.keys(payload.errors).length > 0) {
+    throw new HttpsError("failed-precondition", "A API de futebol recusou a consulta. Verifique a chave e a cota no provedor.");
+  }
+  return payload;
+}
+
 function profitTotals(profitCents) {
   return {
     totalWonCents: FieldValue.increment(profitCents > 0 ? profitCents : 0),
@@ -190,6 +228,17 @@ function registrarPremioNivel(transaction, userRef, requestId, progression) {
     type: "level_reward",
     createdAt: FieldValue.serverTimestamp(),
   });
+}
+
+function registrarPremiosMissao(transaction, userRef, missions) {
+  for (const reward of missions.rewards) {
+    transaction.create(userRef.collection("transactions").doc(reward.id), {
+      description: reward.description,
+      deltaCents: reward.deltaCents,
+      type: "mission_reward",
+      createdAt: FieldValue.serverTimestamp(),
+    });
+  }
 }
 
 exports.ensurePlayerProfile = onCall(async (request) => {
@@ -569,7 +618,8 @@ exports.playGame = onCall(async (request) => {
     const gamesPlayed = (profile.gamesPlayed || 0) + 1;
     const wins = (profile.wins || 0) + (returnedCents > amountCents ? 1 : 0);
     const progression = levelProgress(gamesPlayed);
-    const balanceFinal = balanceAfter + progression.rewardCents;
+    const missions = advanceMissionProgress(profile, actionAtMs);
+    const balanceFinal = balanceAfter + progression.rewardCents + missions.totalRewardCents;
     if (!Number.isSafeInteger(balanceFinal)) {
       throw new HttpsError("failed-precondition", "Saldo resultante inválido.");
     }
@@ -592,6 +642,7 @@ exports.playGame = onCall(async (request) => {
       level: progression.level,
       gamesTowardNextLevel: progression.gamesTowardNextLevel,
       lastGameActionAtMs: actionAtMs,
+      ...missions.profileFields,
       ...profitTotals(deltaCents),
     });
     transaction.update(rankRef, { balanceCents: balanceFinal, level: progression.level });
@@ -601,6 +652,7 @@ exports.playGame = onCall(async (request) => {
       createdAt: FieldValue.serverTimestamp(),
     });
     registrarPremioNivel(transaction, userRef, requestId, progression);
+    registrarPremiosMissao(transaction, userRef, missions);
     response = {
       result: game === "slots"
         ? result.reels
@@ -615,11 +667,207 @@ exports.playGame = onCall(async (request) => {
       level: progression.level,
       gamesTowardNextLevel: progression.gamesTowardNextLevel,
       levelRewardCents: progression.rewardCents,
+      missionRewardCents: missions.totalRewardCents,
     };
     transaction.create(requestRef, { response, createdAt: FieldValue.serverTimestamp() });
   });
 
   return response;
+});
+
+exports.listFootballMatches = onCall(async (request) => {
+  authenticatedUid(request);
+  const date = request.data?.date || new Date().toISOString().slice(0, 10);
+  if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new HttpsError("invalid-argument", "Data de partidas inválida.");
+  }
+  const dayOffset = Math.floor((Date.parse(`${date}T00:00:00Z`) - Date.now()) / 86_400_000);
+  if (!Number.isFinite(dayOffset) || dayOffset < -1 || dayOffset > 7) {
+    throw new HttpsError("invalid-argument", "Consulte partidas de hoje ou dos próximos 7 dias.");
+  }
+  const [fixturesPayload, oddsPayload] = await Promise.all([
+    apiFootballGet("fixtures", { date }),
+    apiFootballGet("odds", { date }),
+  ]);
+  const fixtures = parseFixtures(fixturesPayload)
+    .filter((fixture) => fixture.status === "NS" && fixture.kickoffMs > Date.now());
+  const matches = fixtures.map((fixture) => {
+    const odds = parseWinnerOdds(oddsPayload, fixture.fixtureId, fixture.homeTeam, fixture.awayTeam);
+    return { ...fixture, homeOddsBps: odds?.homeOddsBps || 0, awayOddsBps: odds?.awayOddsBps || 0 };
+  });
+  return { date, matches: matches.slice(0, 50) };
+});
+
+exports.listMySportsBets = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const snapshot = await database.collection("sportsBets")
+    .where("uid", "==", uid)
+    .orderBy("createdAt", "desc")
+    .limit(30)
+    .get();
+  return {
+    bets: snapshot.docs.map((document) => ({ id: document.id, ...document.data() })),
+  };
+});
+
+exports.placeSportsBet = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const fixtureId = request.data?.fixtureId;
+  const selection = request.data?.selection;
+  const amountCents = request.data?.amountCents;
+  const requestId = request.data?.requestId;
+  if (!Number.isSafeInteger(fixtureId) || fixtureId <= 0
+      || !["home", "away"].includes(selection)
+      || !validateWager(amountCents, MAX_TRANSFER_CENTS)
+      || typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)) {
+    throw new HttpsError("invalid-argument", "Partida, seleção de vencedor, aposta ou identificador inválido.");
+  }
+
+  const betRef = database.collection("sportsBets").doc(requestId);
+  const previous = await betRef.get();
+  if (previous.exists) {
+    const bet = previous.data();
+    if (bet.uid !== uid || bet.fixtureId !== fixtureId || bet.selection !== selection || bet.stakeCents !== amountCents) {
+      throw new HttpsError("already-exists", "Identificador de aposta já utilizado.");
+    }
+    return { betId: requestId, status: bet.status, oddsBps: bet.oddsBps, payoutPotentialCents: bet.payoutPotentialCents };
+  }
+
+  const [fixturePayload, oddsPayload] = await Promise.all([
+    apiFootballGet("fixtures", { id: fixtureId }),
+    apiFootballGet("odds", { fixture: fixtureId }),
+  ]);
+  const fixture = parseFixtures(fixturePayload).find((item) => item.fixtureId === fixtureId);
+  if (!fixture || fixture.status !== "NS" || fixture.kickoffMs <= Date.now()) {
+    throw new HttpsError("failed-precondition", "Só é possível apostar antes do início da partida.");
+  }
+  const odds = parseWinnerOdds(oddsPayload, fixtureId, fixture.homeTeam, fixture.awayTeam);
+  const oddsBps = selection === "home" ? odds?.homeOddsBps : odds?.awayOddsBps;
+  if (!Number.isSafeInteger(oddsBps) || oddsBps <= 10_000) {
+    throw new HttpsError("failed-precondition", "Não há cotação de vitória disponível para esta seleção.");
+  }
+  const payoutPotentialCents = sportsPayoutCents(amountCents, oddsBps);
+  const userRef = database.collection("users").doc(uid);
+  const rankRef = database.collection("leaderboard").doc(uid);
+  const historyRef = userRef.collection("transactions").doc(`sports_bet_${requestId}`);
+  let response;
+  await database.runTransaction(async (transaction) => {
+    const [userSnapshot, rankSnapshot, betSnapshot] = await Promise.all([
+      transaction.get(userRef),
+      transaction.get(rankRef),
+      transaction.get(betRef),
+    ]);
+    if (betSnapshot.exists) {
+      const bet = betSnapshot.data();
+      if (bet.uid !== uid || bet.fixtureId !== fixtureId || bet.selection !== selection || bet.stakeCents !== amountCents) {
+        throw new HttpsError("already-exists", "Identificador de aposta já utilizado.");
+      }
+      response = { betId: requestId, status: bet.status, oddsBps: bet.oddsBps, payoutPotentialCents: bet.payoutPotentialCents };
+      return;
+    }
+    if (!userSnapshot.exists || !rankSnapshot.exists) throw new HttpsError("failed-precondition", "Perfil ainda não foi criado.");
+    const balanceCents = userSnapshot.get("balanceCents") || 0;
+    if (balanceCents < amountCents) throw new HttpsError("failed-precondition", "Saldo insuficiente.");
+    const balanceAfter = balanceCents - amountCents;
+    const selectionName = selection === "home" ? fixture.homeTeam : fixture.awayTeam;
+    const bet = {
+      uid,
+      fixtureId,
+      league: fixture.league,
+      homeTeam: fixture.homeTeam,
+      awayTeam: fixture.awayTeam,
+      kickoffMs: fixture.kickoffMs,
+      selection,
+      selectionName,
+      oddsBps,
+      stakeCents: amountCents,
+      payoutPotentialCents,
+      status: "open",
+      createdAt: FieldValue.serverTimestamp(),
+    };
+    transaction.update(userRef, { balanceCents: balanceAfter });
+    transaction.update(rankRef, { balanceCents: balanceAfter });
+    transaction.create(betRef, bet);
+    transaction.create(historyRef, {
+      description: `Aposta esportiva · ${selectionName} vence (${(oddsBps / 10_000).toFixed(2)}x)`,
+      deltaCents: -amountCents,
+      type: "sports_bet",
+      betId: requestId,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    response = { betId: requestId, status: "open", oddsBps, payoutPotentialCents, balanceCents: balanceAfter };
+  });
+  return response;
+});
+
+exports.settleMySportsBets = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const openBets = await database.collection("sportsBets")
+    .where("uid", "==", uid)
+    .where("status", "==", "open")
+    .limit(10)
+    .get();
+  let settledCount = 0;
+  for (const betDocument of openBets.docs) {
+    const bet = betDocument.data();
+    const fixturePayload = await apiFootballGet("fixtures", { id: bet.fixtureId });
+    const fixture = parseFixtures(fixturePayload).find((item) => item.fixtureId === bet.fixtureId);
+    const result = fixtureWinner(fixture);
+    if (!result) continue;
+    const betRef = betDocument.ref;
+    const userRef = database.collection("users").doc(uid);
+    const rankRef = database.collection("leaderboard").doc(uid);
+    const historyRef = userRef.collection("transactions").doc(`sports_settlement_${betDocument.id}`);
+    await database.runTransaction(async (transaction) => {
+      const [betSnapshot, userSnapshot, rankSnapshot] = await Promise.all([
+        transaction.get(betRef),
+        transaction.get(userRef),
+        transaction.get(rankRef),
+      ]);
+      if (!betSnapshot.exists || betSnapshot.get("status") !== "open") return;
+      if (!userSnapshot.exists || !rankSnapshot.exists) throw new HttpsError("failed-precondition", "Perfil ainda não foi criado.");
+      const currentBet = betSnapshot.data();
+      const won = result === currentBet.selection;
+      const payoutCents = won ? sportsPayoutCents(currentBet.stakeCents, currentBet.oddsBps) : 0;
+      const profitCents = payoutCents - currentBet.stakeCents;
+      const profile = userSnapshot.data();
+      const gamesPlayed = (profile.gamesPlayed || 0) + 1;
+      const wins = (profile.wins || 0) + (profitCents > 0 ? 1 : 0);
+      const progression = levelProgress(gamesPlayed);
+      const missions = advanceMissionProgress(profile, Date.now());
+      const balanceCents = (profile.balanceCents || 0) + payoutCents
+        + progression.rewardCents + missions.totalRewardCents;
+      if (!Number.isSafeInteger(balanceCents)) throw new HttpsError("failed-precondition", "Saldo resultante inválido.");
+      transaction.update(userRef, {
+        balanceCents,
+        gamesPlayed,
+        wins,
+        level: progression.level,
+        gamesTowardNextLevel: progression.gamesTowardNextLevel,
+        ...missions.profileFields,
+        ...profitTotals(profitCents),
+      });
+      transaction.update(rankRef, { balanceCents, level: progression.level });
+      transaction.update(betRef, {
+        status: "settled",
+        result,
+        payoutCents,
+        profitCents,
+        settledAt: FieldValue.serverTimestamp(),
+      });
+      transaction.create(historyRef, {
+        description: `Aposta esportiva · ${result === "draw" ? "empate" : won ? "vitória" : "derrota"}`,
+        deltaCents: payoutCents,
+        type: "sports_settlement",
+        betId: betDocument.id,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+      registrarPremioNivel(transaction, userRef, betDocument.id, progression);
+      registrarPremiosMissao(transaction, userRef, missions);
+    });
+    settledCount += 1;
+  }
+  return { settledCount };
 });
 
 function minesStateResponse(game, resumed = false) {
@@ -777,7 +1025,8 @@ exports.revealMinesCell = onCall(async (request) => {
     if (game.mineCells.includes(cell)) {
       const gamesPlayed = (profile.gamesPlayed || 0) + 1;
       const progression = levelProgress(gamesPlayed);
-      const balanceFinal = (profile.balanceCents || 0) + progression.rewardCents;
+      const missions = advanceMissionProgress(profile, nowMs);
+      const balanceFinal = (profile.balanceCents || 0) + progression.rewardCents + missions.totalRewardCents;
       if (!Number.isSafeInteger(balanceFinal)) {
         throw new HttpsError("failed-precondition", "Saldo resultante inválido.");
       }
@@ -789,6 +1038,7 @@ exports.revealMinesCell = onCall(async (request) => {
         level: progression.level,
         gamesTowardNextLevel: progression.gamesTowardNextLevel,
         lastGameActionAtMs: nowMs,
+        ...missions.profileFields,
         ...profitTotals(profitCents),
       });
       transaction.update(rankRef, { balanceCents: balanceFinal, level: progression.level });
@@ -801,6 +1051,7 @@ exports.revealMinesCell = onCall(async (request) => {
         profitCents,
       });
       registrarPremioNivel(transaction, userRef, requestId, progression);
+      registrarPremiosMissao(transaction, userRef, missions);
       response = {
         ...minesStateResponse({ ...game, status: "lost", safeCells, payoutCents: 0, multiplierBps: 10_000 }),
         hitCell: cell,
@@ -809,6 +1060,7 @@ exports.revealMinesCell = onCall(async (request) => {
         gamesPlayed,
         level: progression.level,
         levelRewardCents: progression.rewardCents,
+        missionRewardCents: missions.totalRewardCents,
       };
     } else {
       const nextSafeCells = [...safeCells, cell];
@@ -872,8 +1124,10 @@ exports.cashOutMines = onCall(async (request) => {
     const gamesPlayed = (profile.gamesPlayed || 0) + 1;
     const wins = (profile.wins || 0) + (profitCents > 0 ? 1 : 0);
     const progression = levelProgress(gamesPlayed);
+    const actionAtMs = Date.now();
+    const missions = advanceMissionProgress(profile, actionAtMs);
     const balanceAfterPayout = (profile.balanceCents || 0) + payout.payoutCents;
-    const balanceFinal = balanceAfterPayout + progression.rewardCents;
+    const balanceFinal = balanceAfterPayout + progression.rewardCents + missions.totalRewardCents;
     if (!Number.isSafeInteger(balanceFinal)) {
       throw new HttpsError("failed-precondition", "Saldo resultante inválido.");
     }
@@ -883,7 +1137,8 @@ exports.cashOutMines = onCall(async (request) => {
       wins,
       level: progression.level,
       gamesTowardNextLevel: progression.gamesTowardNextLevel,
-      lastGameActionAtMs: Date.now(),
+      lastGameActionAtMs: actionAtMs,
+      ...missions.profileFields,
       ...profitTotals(profitCents),
     });
     transaction.update(rankRef, { balanceCents: balanceFinal, level: progression.level });
@@ -900,6 +1155,7 @@ exports.cashOutMines = onCall(async (request) => {
       createdAt: FieldValue.serverTimestamp(),
     });
     registrarPremioNivel(transaction, userRef, requestId, progression);
+    registrarPremiosMissao(transaction, userRef, missions);
     response = {
       gameId,
       status: "cashed_out",
@@ -912,10 +1168,407 @@ exports.cashOutMines = onCall(async (request) => {
       wins,
       level: progression.level,
       levelRewardCents: progression.rewardCents,
+      missionRewardCents: missions.totalRewardCents,
     };
     transaction.create(requestRef, { response, createdAt: FieldValue.serverTimestamp() });
   });
 
+  return response;
+});
+
+function publicTugRoom(room, includeInvites = false) {
+  return {
+    roomId: room.roomId,
+    creatorUid: room.creatorUid,
+    creatorName: room.creatorName || "Jogador",
+    opponentUid: room.opponentUid || "",
+    opponentName: room.opponentName || "",
+    invitedUids: includeInvites && Array.isArray(room.invitedUids) ? room.invitedUids : [],
+    stakeCents: room.stakeCents,
+    passwordProtected: Boolean(room.passwordHash),
+    status: room.status,
+    creatorPulls: room.creatorPulls || 0,
+    opponentPulls: room.opponentPulls || 0,
+    winnerUid: room.winnerUid || "",
+    lastUpdatedAtMs: room.lastUpdatedAtMs || 0,
+  };
+}
+
+exports.listTugRooms = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const [waitingSnapshot, participantSnapshot] = await Promise.all([
+    database.collection("tugRooms").where("status", "==", "waiting").limit(100).get(),
+    database.collection("tugRooms").where("participantUids", "array-contains", uid).limit(20).get(),
+  ]);
+  const visible = new Map();
+  for (const document of waitingSnapshot.docs) {
+    const room = document.data();
+    if (room.creatorUid === uid || !room.invitedUids?.length || room.invitedUids.includes(uid)) {
+      visible.set(document.id, room);
+    }
+  }
+  for (const document of participantSnapshot.docs) visible.set(document.id, document.data());
+  return {
+    rooms: [...visible.values()]
+      .map((room) => ({
+        ...publicTugRoom(room, room.creatorUid === uid),
+        isInvited: Array.isArray(room.invitedUids) && room.invitedUids.includes(uid),
+      }))
+      .sort((left, right) => right.lastUpdatedAtMs - left.lastUpdatedAtMs),
+  };
+});
+
+exports.createTugRoom = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const stakeCents = request.data?.stakeCents;
+  const requestId = request.data?.requestId;
+  const invitedUids = request.data?.invitedUids;
+  const password = typeof request.data?.password === "string" ? request.data.password : "";
+  if (!validateWager(stakeCents, MAX_TRANSFER_CENTS)
+      || typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)
+      || !Array.isArray(invitedUids) || invitedUids.some((targetUid) => typeof targetUid !== "string" || !targetUid || targetUid === uid)
+      || invitedUids.length > 20 || new Set(invitedUids).size !== invitedUids.length
+      || password.length > 24) {
+    throw new HttpsError("invalid-argument", "Aposta, convites, senha ou identificador inválido.");
+  }
+  const roomRef = database.collection("tugRooms").doc(requestId);
+  const userRef = database.collection("users").doc(uid);
+  const rankRef = database.collection("leaderboard").doc(uid);
+  const historyRef = userRef.collection("transactions").doc(`tug_host_${requestId}`);
+  const invitedRefs = invitedUids.map((targetUid) => database.collection("users").doc(targetUid));
+  let response;
+  await database.runTransaction(async (transaction) => {
+    const [roomSnapshot, userSnapshot, rankSnapshot, ...inviteSnapshots] = await Promise.all([
+      transaction.get(roomRef),
+      transaction.get(userRef),
+      transaction.get(rankRef),
+      ...invitedRefs.map((ref) => transaction.get(ref)),
+    ]);
+    if (roomSnapshot.exists) {
+      if (roomSnapshot.get("creatorUid") !== uid) throw new HttpsError("already-exists", "Identificador de sala já utilizado.");
+      response = { roomId: requestId, status: roomSnapshot.get("status") };
+      return;
+    }
+    if (!userSnapshot.exists || !rankSnapshot.exists) throw new HttpsError("failed-precondition", "Perfil ainda não foi criado.");
+    if (inviteSnapshots.some((snapshot) => !snapshot.exists)) throw new HttpsError("not-found", "Um dos convidados não foi encontrado.");
+    const profile = userSnapshot.data();
+    const balance = profile.balanceCents || 0;
+    if (balance < stakeCents) throw new HttpsError("failed-precondition", "Saldo insuficiente para criar a sala.");
+    transaction.update(userRef, { balanceCents: balance - stakeCents });
+    transaction.update(rankRef, { balanceCents: balance - stakeCents });
+    transaction.create(historyRef, {
+      description: `Cabo de guerra · aposta na sala ${requestId.slice(0, 8)}`,
+      deltaCents: -stakeCents,
+      type: "tug_wager",
+      roomId: requestId,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    const room = {
+      roomId: requestId,
+      creatorUid: uid,
+      creatorName: profile.displayName || "Jogador",
+      opponentUid: "",
+      opponentName: "",
+      participantUids: [uid],
+      invitedUids,
+      stakeCents,
+      passwordHash: password ? hashTugPassword(password, requestId) : "",
+      status: "waiting",
+      creatorPulls: 0,
+      opponentPulls: 0,
+      lastPullAtMs: {},
+      lastUpdatedAtMs: Date.now(),
+      createdAt: FieldValue.serverTimestamp(),
+    };
+    transaction.create(roomRef, room);
+    response = publicTugRoom(room, true);
+  });
+  return response;
+});
+
+exports.joinTugRoom = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const roomId = request.data?.roomId;
+  const password = typeof request.data?.password === "string" ? request.data.password : "";
+  const requestId = request.data?.requestId;
+  if (typeof roomId !== "string" || !/^[a-f0-9-]{36}$/i.test(roomId)
+      || typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)
+      || password.length > 24) {
+    throw new HttpsError("invalid-argument", "Sala, senha ou identificador inválido.");
+  }
+  const roomRef = database.collection("tugRooms").doc(roomId);
+  const userRef = database.collection("users").doc(uid);
+  const rankRef = database.collection("leaderboard").doc(uid);
+  const requestRef = userRef.collection("gameRequests").doc(requestId);
+  const historyRef = userRef.collection("transactions").doc(`tug_guest_${roomId}`);
+  let response;
+  await database.runTransaction(async (transaction) => {
+    const [requestSnapshot, roomSnapshot, userSnapshot, rankSnapshot] = await Promise.all([
+      transaction.get(requestRef),
+      transaction.get(roomRef),
+      transaction.get(userRef),
+      transaction.get(rankRef),
+    ]);
+    if (requestSnapshot.exists) {
+      response = requestSnapshot.get("response");
+      return;
+    }
+    if (!roomSnapshot.exists) throw new HttpsError("not-found", "Sala não encontrada.");
+    const room = roomSnapshot.data();
+    if (room.opponentUid === uid && ["ready", "active"].includes(room.status)) {
+      response = publicTugRoom(room);
+      transaction.create(requestRef, { response, createdAt: FieldValue.serverTimestamp() });
+      return;
+    }
+    if (room.status !== "waiting" || room.creatorUid === uid) throw new HttpsError("failed-precondition", "Esta sala não está disponível.");
+    const invitedUids = Array.isArray(room.invitedUids) ? room.invitedUids : [];
+    if (invitedUids.length > 0 && !invitedUids.includes(uid)) throw new HttpsError("permission-denied", "Você não foi convidado para esta sala.");
+    if (room.passwordHash && hashTugPassword(password, roomId) !== room.passwordHash) throw new HttpsError("permission-denied", "Senha da sala incorreta.");
+    if (!userSnapshot.exists || !rankSnapshot.exists) throw new HttpsError("failed-precondition", "Perfil ainda não foi criado.");
+    const balance = userSnapshot.get("balanceCents") || 0;
+    if (balance < room.stakeCents) throw new HttpsError("failed-precondition", "Saldo insuficiente para entrar nesta sala.");
+    const user = userSnapshot.data();
+    const updatedRoom = {
+      status: "ready",
+      opponentUid: uid,
+      opponentName: user.displayName || "Jogador",
+      participantUids: [room.creatorUid, uid],
+      lastUpdatedAtMs: Date.now(),
+    };
+    transaction.update(userRef, { balanceCents: balance - room.stakeCents });
+    transaction.update(rankRef, { balanceCents: balance - room.stakeCents });
+    transaction.update(roomRef, updatedRoom);
+    transaction.create(historyRef, {
+      description: `Cabo de guerra · entrada na sala ${roomId.slice(0, 8)}`,
+      deltaCents: -room.stakeCents,
+      type: "tug_wager",
+      roomId,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    response = publicTugRoom({ ...room, ...updatedRoom });
+    transaction.create(requestRef, { response, createdAt: FieldValue.serverTimestamp() });
+  });
+  return response;
+});
+
+exports.manageTugRoom = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const roomId = request.data?.roomId;
+  const action = request.data?.action;
+  const requestId = request.data?.requestId;
+  const targetUid = request.data?.targetUid || "";
+  const newStakeCents = request.data?.stakeCents;
+  const newPassword = typeof request.data?.password === "string" ? request.data.password : "";
+  if (typeof roomId !== "string" || !/^[a-f0-9-]{36}$/i.test(roomId)
+      || !["setStake", "setPassword", "addInvite", "removeInvite", "kick"].includes(action)
+      || typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)
+      || (["addInvite", "removeInvite", "kick"].includes(action) && !targetUid)
+      || (action === "setStake" && !validateWager(newStakeCents, MAX_TRANSFER_CENTS))
+      || (action === "setPassword" && newPassword.length > 24)) {
+    throw new HttpsError("invalid-argument", "Ação de sala ou parâmetros inválidos.");
+  }
+  const actorRef = database.collection("users").doc(uid);
+  const actorRankRef = database.collection("leaderboard").doc(uid);
+  const roomRef = database.collection("tugRooms").doc(roomId);
+  const requestRef = actorRef.collection("gameRequests").doc(requestId);
+  let response;
+  await database.runTransaction(async (transaction) => {
+    const [requestSnapshot, roomSnapshot, actorSnapshot, actorRankSnapshot] = await Promise.all([
+      transaction.get(requestRef),
+      transaction.get(roomRef),
+      transaction.get(actorRef),
+      transaction.get(actorRankRef),
+    ]);
+    if (requestSnapshot.exists) {
+      response = requestSnapshot.get("response");
+      return;
+    }
+    if (!roomSnapshot.exists) throw new HttpsError("not-found", "Sala não encontrada.");
+    const room = roomSnapshot.data();
+    if (room.creatorUid !== uid) throw new HttpsError("permission-denied", "Somente o criador pode alterar esta sala.");
+    if (!actorSnapshot.exists || !actorRankSnapshot.exists) throw new HttpsError("failed-precondition", "Perfil ainda não foi criado.");
+    let refundSnapshot;
+    let refundRankSnapshot;
+    if (action === "kick" && room.opponentUid === targetUid && room.status === "ready") {
+      [refundSnapshot, refundRankSnapshot] = await Promise.all([
+        transaction.get(database.collection("users").doc(targetUid)),
+        transaction.get(database.collection("leaderboard").doc(targetUid)),
+      ]);
+    }
+    if (action === "setStake" || action === "setPassword" || action === "addInvite") {
+      if (room.status !== "waiting") throw new HttpsError("failed-precondition", "A sala só pode ser configurada enquanto aguarda jogadores.");
+    }
+    const update = { lastUpdatedAtMs: Date.now() };
+    if (action === "setStake") {
+      const difference = newStakeCents - room.stakeCents;
+      const balance = actorSnapshot.get("balanceCents") || 0;
+      if (difference > 0 && balance < difference) throw new HttpsError("failed-precondition", "Saldo insuficiente para aumentar a aposta.");
+      transaction.update(actorRef, { balanceCents: balance - difference });
+      transaction.update(actorRankRef, { balanceCents: balance - difference });
+      transaction.create(actorRef.collection("transactions").doc(`tug_adjust_${requestId}`), {
+        description: `Cabo de guerra · ajuste da aposta da sala`,
+        deltaCents: -difference,
+        type: "tug_wager_adjustment",
+        roomId,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+      update.stakeCents = newStakeCents;
+    } else if (action === "setPassword") {
+      update.passwordHash = hashTugPassword(newPassword, roomId);
+    } else if (action === "addInvite") {
+      if (targetUid === uid) throw new HttpsError("invalid-argument", "Você não pode convidar a si mesmo.");
+      const target = await transaction.get(database.collection("users").doc(targetUid));
+      if (!target.exists) throw new HttpsError("not-found", "Convidado não encontrado.");
+      const invites = Array.isArray(room.invitedUids) ? [...room.invitedUids] : [];
+      if (!invites.includes(targetUid)) invites.push(targetUid);
+      if (invites.length > 20) throw new HttpsError("resource-exhausted", "A sala pode ter até 20 convites.");
+      update.invitedUids = invites;
+    } else if (action === "removeInvite") {
+      if (room.status !== "waiting") throw new HttpsError("failed-precondition", "Não é possível alterar convites depois que a partida começa.");
+      update.invitedUids = (room.invitedUids || []).filter((inviteUid) => inviteUid !== targetUid);
+    } else if (action === "kick") {
+      if (room.status !== "ready" || room.opponentUid !== targetUid) throw new HttpsError("failed-precondition", "Esse jogador não está aguardando nesta sala.");
+      if (!refundSnapshot?.exists || !refundRankSnapshot?.exists) throw new HttpsError("not-found", "Conta do jogador não encontrada.");
+      const refundedBalance = (refundSnapshot.get("balanceCents") || 0) + room.stakeCents;
+      transaction.update(refundSnapshot.ref, { balanceCents: refundedBalance });
+      transaction.update(refundRankSnapshot.ref, { balanceCents: refundedBalance });
+      transaction.create(refundSnapshot.ref.collection("transactions").doc(`tug_refund_${roomId}`), {
+        description: "Cabo de guerra · reembolso ao sair da sala",
+        deltaCents: room.stakeCents,
+        type: "tug_refund",
+        roomId,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+      update.status = "waiting";
+      update.opponentUid = "";
+      update.opponentName = "";
+      update.participantUids = [uid];
+    }
+    transaction.update(roomRef, update);
+    response = { ok: true, room: publicTugRoom({ ...room, ...update }, true) };
+    transaction.create(requestRef, { response, createdAt: FieldValue.serverTimestamp() });
+  });
+  return response;
+});
+
+exports.startTugRoom = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const roomId = request.data?.roomId;
+  if (typeof roomId !== "string" || !/^[a-f0-9-]{36}$/i.test(roomId)) {
+    throw new HttpsError("invalid-argument", "Identificador da sala inválido.");
+  }
+  const roomRef = database.collection("tugRooms").doc(roomId);
+  let response;
+  await database.runTransaction(async (transaction) => {
+    const roomSnapshot = await transaction.get(roomRef);
+    if (!roomSnapshot.exists) throw new HttpsError("not-found", "Sala não encontrada.");
+    const room = roomSnapshot.data();
+    if (room.creatorUid !== uid) throw new HttpsError("permission-denied", "Somente o criador inicia a partida.");
+    if (room.status === "active") {
+      response = publicTugRoom(room);
+      return;
+    }
+    if (room.status !== "ready" || !room.opponentUid) throw new HttpsError("failed-precondition", "A sala ainda não tem dois jogadores.");
+    const update = { status: "active", startedAt: FieldValue.serverTimestamp(), lastUpdatedAtMs: Date.now() };
+    transaction.update(roomRef, update);
+    response = publicTugRoom({ ...room, ...update });
+  });
+  return response;
+});
+
+exports.pullTugRope = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const roomId = request.data?.roomId;
+  const requestId = request.data?.requestId;
+  if (typeof roomId !== "string" || !/^[a-f0-9-]{36}$/i.test(roomId)
+      || typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)) {
+    throw new HttpsError("invalid-argument", "Partida ou identificador inválido.");
+  }
+  const roomRef = database.collection("tugRooms").doc(roomId);
+  const roomSnapshot = await roomRef.get();
+  if (!roomSnapshot.exists) throw new HttpsError("not-found", "Sala não encontrada.");
+  const roomBefore = roomSnapshot.data();
+  const playerUids = [roomBefore.creatorUid, roomBefore.opponentUid];
+  if (!playerUids.includes(uid) || !roomBefore.opponentUid) throw new HttpsError("permission-denied", "Você não está nesta partida.");
+  const userRefs = playerUids.map((playerUid) => database.collection("users").doc(playerUid));
+  const rankRefs = playerUids.map((playerUid) => database.collection("leaderboard").doc(playerUid));
+  const requestRef = database.collection("users").doc(uid).collection("gameRequests").doc(requestId);
+  let response;
+  await database.runTransaction(async (transaction) => {
+    const [previousRequest, currentRoom, ...accountSnapshots] = await Promise.all([
+      transaction.get(requestRef),
+      transaction.get(roomRef),
+      ...userRefs.map((ref) => transaction.get(ref)),
+      ...rankRefs.map((ref) => transaction.get(ref)),
+    ]);
+    if (previousRequest.exists) {
+      response = previousRequest.get("response");
+      return;
+    }
+    if (!currentRoom.exists) throw new HttpsError("not-found", "Sala não encontrada.");
+    let pull;
+    try {
+      pull = applyTugPull(currentRoom.data(), uid, Date.now());
+    } catch (error) {
+      if (error.message === "pull-too-fast") throw new HttpsError("resource-exhausted", "Puxe novamente em um instante.");
+      if (error.message === "not-a-player") throw new HttpsError("permission-denied", "Você não está nesta partida.");
+      throw new HttpsError("failed-precondition", "A partida não está ativa.");
+    }
+    const room = currentRoom.data();
+    if (!pull.winnerUid) {
+      transaction.update(roomRef, { ...pull, lastUpdatedAtMs: Date.now() });
+      response = publicTugRoom({ ...room, ...pull });
+      transaction.create(requestRef, { response, createdAt: FieldValue.serverTimestamp() });
+      return;
+    }
+    const profiles = accountSnapshots.slice(0, 2);
+    const ranks = accountSnapshots.slice(2, 4);
+    if (profiles.some((snapshot) => !snapshot.exists) || ranks.some((snapshot) => !snapshot.exists)) {
+      throw new HttpsError("failed-precondition", "Uma conta da partida não está disponível.");
+    }
+    const nowMs = Date.now();
+    const payoutCents = room.stakeCents * 2;
+    const winnerIndex = playerUids.indexOf(pull.winnerUid);
+    const settledProfiles = profiles.map((snapshot, index) => {
+      const profile = snapshot.data();
+      const won = index === winnerIndex;
+      const gamesPlayed = (profile.gamesPlayed || 0) + 1;
+      const progression = levelProgress(gamesPlayed);
+      const missions = advanceMissionProgress(profile, nowMs);
+      const profitCents = won ? room.stakeCents : -room.stakeCents;
+      const balanceCents = (profile.balanceCents || 0)
+        + (won ? payoutCents : 0)
+        + progression.rewardCents
+        + missions.totalRewardCents;
+      if (!Number.isSafeInteger(balanceCents)) throw new HttpsError("failed-precondition", "Saldo resultante inválido.");
+      return { won, gamesPlayed, progression, missions, profitCents, balanceCents, wins: (profile.wins || 0) + (won ? 1 : 0) };
+    });
+    settledProfiles.forEach((settlement, index) => {
+      transaction.update(userRefs[index], {
+        balanceCents: settlement.balanceCents,
+        gamesPlayed: settlement.gamesPlayed,
+        wins: settlement.wins,
+        level: settlement.progression.level,
+        gamesTowardNextLevel: settlement.progression.gamesTowardNextLevel,
+        ...settlement.missions.profileFields,
+        ...profitTotals(settlement.profitCents),
+      });
+      transaction.update(rankRefs[index], { balanceCents: settlement.balanceCents, level: settlement.progression.level });
+      transaction.create(userRefs[index].collection("transactions").doc(`tug_settlement_${roomId}`), {
+        description: settlement.won ? "Cabo de guerra · vitória" : "Cabo de guerra · derrota",
+        deltaCents: settlement.won ? payoutCents : 0,
+        type: "tug_settlement",
+        roomId,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+      registrarPremioNivel(transaction, userRefs[index], `${roomId}_${playerUids[index]}`, settlement.progression);
+      registrarPremiosMissao(transaction, userRefs[index], settlement.missions);
+    });
+    const finalRoom = { ...room, ...pull, status: "settled", winnerUid: pull.winnerUid, payoutCents, settledAt: FieldValue.serverTimestamp(), lastUpdatedAtMs: nowMs };
+    transaction.update(roomRef, finalRoom);
+    response = publicTugRoom(finalRoom);
+    transaction.create(requestRef, { response, createdAt: FieldValue.serverTimestamp() });
+  });
   return response;
 });
 
@@ -1048,7 +1701,8 @@ exports.cashOutCrash = onCall(async (request) => {
     const gamesPlayed = (profile.gamesPlayed || 0) + 1;
     const wins = (profile.wins || 0) + (profitCents > 0 ? 1 : 0);
     const progression = levelProgress(gamesPlayed);
-    const balanceFinal = balanceAfter + progression.rewardCents;
+    const missions = advanceMissionProgress(profile, nowMs);
+    const balanceFinal = balanceAfter + progression.rewardCents + missions.totalRewardCents;
     if (!Number.isSafeInteger(balanceFinal)) {
       throw new HttpsError("failed-precondition", "Saldo resultante inválido.");
     }
@@ -1059,6 +1713,7 @@ exports.cashOutCrash = onCall(async (request) => {
       level: progression.level,
       gamesTowardNextLevel: progression.gamesTowardNextLevel,
       lastGameActionAtMs: nowMs,
+      ...missions.profileFields,
       ...profitTotals(profitCents),
     });
     transaction.update(rankRef, { balanceCents: balanceFinal, level: progression.level });
@@ -1077,6 +1732,7 @@ exports.cashOutCrash = onCall(async (request) => {
       });
     }
     registrarPremioNivel(transaction, userRef, requestId, progression);
+    registrarPremiosMissao(transaction, userRef, missions);
     response = {
       crashed,
       multiplierBps,
@@ -1088,6 +1744,7 @@ exports.cashOutCrash = onCall(async (request) => {
       level: progression.level,
       gamesTowardNextLevel: progression.gamesTowardNextLevel,
       levelRewardCents: progression.rewardCents,
+      missionRewardCents: missions.totalRewardCents,
     };
     transaction.create(requestRef, { response, createdAt: FieldValue.serverTimestamp() });
   });
@@ -1340,7 +1997,8 @@ exports.blackjackAction = onCall(async (request) => {
     const gamesPlayed = (profile.gamesPlayed || 0) + 1;
     const wins = (profile.wins || 0) + (settlement.payoutCents > wagerCents ? 1 : 0);
     const progression = levelProgress(gamesPlayed);
-    const balanceFinal = balanceAfter + progression.rewardCents;
+    const missions = advanceMissionProgress(profile, actionAtMs);
+    const balanceFinal = balanceAfter + progression.rewardCents + missions.totalRewardCents;
     if (!Number.isSafeInteger(balanceFinal)) {
       throw new HttpsError("failed-precondition", "Saldo resultante inválido.");
     }
@@ -1367,6 +2025,7 @@ exports.blackjackAction = onCall(async (request) => {
       level: progression.level,
       gamesTowardNextLevel: progression.gamesTowardNextLevel,
       lastGameActionAtMs: actionAtMs,
+      ...missions.profileFields,
       ...profitTotals(finalGame.profitCents),
     });
     transaction.update(rankRef, { balanceCents: balanceFinal, level: progression.level });
@@ -1386,6 +2045,7 @@ exports.blackjackAction = onCall(async (request) => {
       });
     }
     registrarPremioNivel(transaction, userRef, requestId, progression);
+    registrarPremiosMissao(transaction, userRef, missions);
     response = publicBlackjackState(finalGame);
     transaction.create(requestRef, { response, createdAt: FieldValue.serverTimestamp() });
   });
@@ -1548,6 +2208,13 @@ exports.getGameSettings = onCall(async (request) => {
     minesMinCount: Number.isInteger(settings.minesMinCount) ? settings.minesMinCount : 1,
     minesMaxCount: Number.isInteger(settings.minesMaxCount) ? settings.minesMaxCount : 24,
   };
+});
+
+exports.getMissions = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const profile = await database.collection("users").doc(uid).get();
+  if (!profile.exists) throw new HttpsError("failed-precondition", "Perfil ainda não foi criado.");
+  return getMissionProgress(profile.data(), Date.now());
 });
 
 exports.adminUpdateGameSettings = onCall(async (request) => {
@@ -2243,14 +2910,78 @@ exports.editChatMessage = onCall(async (request) => {
   return { ok: true };
 });
 
+exports.signChatAudioUpload = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const chatId = request.data?.chatId;
+  const recipientUid = request.data?.recipientUid || null;
+  const requestId = request.data?.requestId;
+  if (typeof chatId !== "string" || !/^[a-z0-9_-]{3,160}$/i.test(chatId)
+      || typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)) {
+    throw new HttpsError("invalid-argument", "Conversa ou identificador de áudio inválido.");
+  }
+
+  if (chatId !== "global") {
+    const chatSnapshot = await database.collection("chats").doc(chatId).get();
+    if (chatSnapshot.exists) {
+      const chat = chatSnapshot.data();
+      if (!Array.isArray(chat.participantUids) || !chat.participantUids.includes(uid)) {
+        throw new HttpsError("permission-denied", "Você não participa desta conversa.");
+      }
+      if (chat.type === "group") {
+        const admins = Array.isArray(chat.adminUids) ? chat.adminUids : [chat.createdBy];
+        if (chat.sendPolicy === "creator" && chat.createdBy !== uid
+            || chat.sendPolicy === "admins" && !admins.includes(uid)) {
+          throw new HttpsError("permission-denied", "Você não pode enviar áudio neste grupo.");
+        }
+      }
+    } else {
+      if (typeof recipientUid !== "string" || recipientUid === uid
+          || [uid, recipientUid].sort().join("_") !== chatId) {
+        throw new HttpsError("permission-denied", "Conversa privada inválida.");
+      }
+    }
+  }
+
+  const apiKey = process.env.CLOUDINARY_API_KEY;
+  const apiSecret = process.env.CLOUDINARY_API_SECRET;
+  if (!apiKey || !apiSecret) {
+    throw new HttpsError("failed-precondition", "O envio de áudio ainda não está configurado no servidor.");
+  }
+  cloudinary.config({ cloud_name: CLOUDINARY_CLOUD_NAME, api_key: apiKey, api_secret: apiSecret, secure: true });
+  const folder = `zeca/chat-audio/${chatId}/${uid}`;
+  const publicId = requestId;
+  const timestamp = Math.floor(Date.now() / 1_000);
+  const signature = cloudinary.utils.api_sign_request({ folder, public_id: publicId, timestamp }, apiSecret);
+  return {
+    cloudName: CLOUDINARY_CLOUD_NAME,
+    apiKey,
+    folder,
+    publicId,
+    timestamp,
+    signature,
+    resourceType: "video",
+  };
+});
+
 exports.sendChatMessage = onCall(async (request) => {
   const uid = authenticatedUid(request);
   const text = typeof request.data?.text === "string" ? request.data.text.trim() : "";
+  const audioUrl = typeof request.data?.audioUrl === "string" ? request.data.audioUrl.trim() : "";
+  const audioPublicId = typeof request.data?.audioPublicId === "string" ? request.data.audioPublicId : "";
+  const audioDurationMs = request.data?.audioDurationMs;
+  const hasAudio = audioUrl.length > 0;
   const recipientUid = request.data?.recipientUid || null;
   const requestedChatId = request.data?.chatId || null;
   const requestId = request.data?.requestId;
-  if (text.length < 1 || text.length > 500) {
+  if (text.length > 500 || (text.length < 1 && !hasAudio)) {
     throw new HttpsError("invalid-argument", "A mensagem deve ter entre 1 e 500 caracteres.");
+  }
+  if (hasAudio && (audioPublicId !== requestId
+      || !Number.isInteger(audioDurationMs) || audioDurationMs < 500 || audioDurationMs > 60_000
+      || !audioUrl.startsWith(`https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/video/upload/`)
+      || !audioUrl.endsWith(`/${requestId}.m4a`))
+      || (!hasAudio && (audioPublicId || audioDurationMs != null))) {
+    throw new HttpsError("invalid-argument", "Áudio ou duração inválidos.");
   }
   if (typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)) {
     throw new HttpsError("invalid-argument", "Identificador da mensagem inválido.");
@@ -2273,6 +3004,32 @@ exports.sendChatMessage = onCall(async (request) => {
   const chatRef = database.collection("chats").doc(chatId);
   const messageRef = chatRef.collection("messages").doc(requestId);
   const sentAtMs = Date.now();
+  let verifiedAudioDurationMs = audioDurationMs;
+  if (hasAudio) {
+    const apiKey = process.env.CLOUDINARY_API_KEY;
+    const apiSecret = process.env.CLOUDINARY_API_SECRET;
+    if (!apiKey || !apiSecret) {
+      throw new HttpsError("failed-precondition", "O envio de áudio ainda não está configurado no servidor.");
+    }
+    cloudinary.config({ cloud_name: CLOUDINARY_CLOUD_NAME, api_key: apiKey, api_secret: apiSecret, secure: true });
+    try {
+      const asset = await cloudinary.api.resource(audioPublicId, { resource_type: "video", type: "upload" });
+      const expectedFolder = `zeca/chat-audio/${chatId}/${uid}`;
+      const expectedFixedFolderPublicId = `${expectedFolder}/${audioPublicId}`;
+      const storedInExpectedFolder = asset.asset_folder === expectedFolder
+        || asset.folder === expectedFolder
+        || asset.public_id === expectedFixedFolderPublicId;
+      const actualDurationMs = Math.round((asset.duration || 0) * 1_000);
+      if (asset.secure_url !== audioUrl || !storedInExpectedFolder
+          || asset.format !== "m4a" || actualDurationMs < 500 || actualDurationMs > 60_000) {
+        throw new HttpsError("invalid-argument", "O áudio não corresponde ao upload assinado para esta conversa.");
+      }
+      verifiedAudioDurationMs = actualDurationMs;
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      throw new HttpsError("invalid-argument", "Não foi possível validar o áudio enviado.");
+    }
+  }
   let response;
 
   await database.runTransaction(async (transaction) => {
@@ -2283,7 +3040,7 @@ exports.sendChatMessage = onCall(async (request) => {
     const [existingMessage, senderSnapshot] = snapshots;
     if (existingMessage.exists) {
       const previous = existingMessage.data();
-      if (previous.senderUid !== uid || previous.text !== text) {
+      if (previous.senderUid !== uid || previous.text !== text || (previous.audioPublicId || "") !== audioPublicId) {
         throw new HttpsError("already-exists", "Identificador da mensagem já utilizado.");
       }
       response = { chatId, messageId: requestId };
@@ -2342,7 +3099,7 @@ exports.sendChatMessage = onCall(async (request) => {
       };
       progression = applyStreakMessage(currentChat, uid, dateUtc(sentAtMs));
       const chatData = {
-        lastMessage: text,
+        lastMessage: text || "Áudio",
         lastMessageAt: now,
         lastMessageId: requestId,
         lastMessageSenderUid: uid,
@@ -2367,6 +3124,12 @@ exports.sendChatMessage = onCall(async (request) => {
       text,
       createdAt: now,
     };
+    if (hasAudio) {
+      messageData.type = "audio";
+      messageData.audioUrl = audioUrl;
+      messageData.audioPublicId = audioPublicId;
+      messageData.audioDurationMs = verifiedAudioDurationMs;
+    }
     const reply = request.data?.reply;
     if (reply && typeof reply.id === "string" && typeof reply.name === "string" && typeof reply.text === "string") {
       messageData.replyToId = reply.id.slice(0, 128);

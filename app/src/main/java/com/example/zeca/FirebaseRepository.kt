@@ -61,6 +61,17 @@ data class MensagemChat(
     val avatarUrlAutor: String = "",
     val avatarItensAutor: List<String> = emptyList(),
     val avatarComoFotoAutor: Boolean = false,
+    val audioUrl: String = "",
+    val audioDurationMs: Int = 0,
+)
+
+data class AssinaturaAudioChat(
+    val cloudName: String,
+    val apiKey: String,
+    val folder: String,
+    val publicId: String,
+    val timestamp: Long,
+    val signature: String,
 )
 
 data class RespostaChat(
@@ -218,6 +229,82 @@ data class ConfiguracaoMinas(
     val maximoMinas: Int,
 )
 
+data class ProgressoMissao(
+    val periodo: String,
+    val progresso: Int,
+    val meta: Int,
+    val recompensaCentavos: Long,
+    val concluida: Boolean,
+)
+
+data class EstadoMissoes(
+    val diaria: ProgressoMissao,
+    val semanal: ProgressoMissao,
+)
+
+data class PartidaEsportiva(
+    val fixtureId: Int,
+    val kickoffMs: Long,
+    val campeonato: String,
+    val mandante: String,
+    val visitante: String,
+    val oddMandanteBps: Int,
+    val oddVisitanteBps: Int,
+)
+
+data class ApostaEsportiva(
+    val id: String,
+    val fixtureId: Int,
+    val campeonato: String,
+    val mandante: String,
+    val visitante: String,
+    val kickoffMs: Long,
+    val selecao: String,
+    val nomeSelecao: String,
+    val oddBps: Int,
+    val valorCentavos: Long,
+    val status: String,
+    val resultado: String,
+    val premioCentavos: Long,
+)
+
+data class SalaCaboGuerra(
+    val id: String,
+    val criadorUid: String,
+    val criadorNome: String,
+    val oponenteUid: String,
+    val oponenteNome: String,
+    val convitesUids: List<String>,
+    val apostaCentavos: Long,
+    val protegidaPorSenha: Boolean,
+    val status: String,
+    val puxoesCriador: Int,
+    val puxoesOponente: Int,
+    val vencedorUid: String,
+    val atualizadaEmMs: Long,
+    val conviteParaMim: Boolean,
+)
+
+private fun Map<*, *>.toSalaCaboGuerra(): SalaCaboGuerra? {
+    val roomId = this["roomId"] as? String ?: return null
+    return SalaCaboGuerra(
+        id = roomId,
+        criadorUid = this["creatorUid"] as? String ?: "",
+        criadorNome = this["creatorName"] as? String ?: "Jogador",
+        oponenteUid = this["opponentUid"] as? String ?: "",
+        oponenteNome = this["opponentName"] as? String ?: "",
+        convitesUids = (this["invitedUids"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
+        apostaCentavos = (this["stakeCents"] as? Number)?.toLong() ?: 0L,
+        protegidaPorSenha = this["passwordProtected"] as? Boolean ?: false,
+        status = this["status"] as? String ?: "waiting",
+        puxoesCriador = (this["creatorPulls"] as? Number)?.toInt() ?: 0,
+        puxoesOponente = (this["opponentPulls"] as? Number)?.toInt() ?: 0,
+        vencedorUid = this["winnerUid"] as? String ?: "",
+        atualizadaEmMs = (this["lastUpdatedAtMs"] as? Number)?.toLong() ?: 0L,
+        conviteParaMim = this["isInvited"] as? Boolean ?: false,
+    )
+}
+
 data class CartaBlackjack(val rank: String, val suit: String)
 
 data class EstadoBlackjack(
@@ -239,7 +326,7 @@ object FirebaseRepository {
     private const val SERVER_URL = "https://zeca-jvic.onrender.com"
     private const val CLOUDINARY_CLOUD_NAME = "vwctfu9u"
     private const val CLOUDINARY_UPLOAD_PRESET = "zeca_unsigned"
-    private const val REQUEST_TIMEOUT_MS = 30_000L
+    private const val REQUEST_TIMEOUT_MS = 90_000L
     private val principal = android.os.Handler(android.os.Looper.getMainLooper())
 
     fun garantirPerfil(user: FirebaseUser, callback: (Exception?) -> Unit) {
@@ -389,6 +476,8 @@ object FirebaseRepository {
                     avatarUrlAutor = data["senderAvatarUrl"] as? String ?: "",
                     avatarItensAutor = (data["senderAvatarItems"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
                     avatarComoFotoAutor = data["senderAvatarAsProfilePhoto"] as? Boolean ?: false,
+                    audioUrl = data["audioUrl"] as? String ?: "",
+                    audioDurationMs = (data["audioDurationMs"] as? Number)?.toInt() ?: 0,
                 )
             }.sortedBy { it.enviadaEmMs }
             callback(mensagens, error, snapshot?.metadata?.isFromCache ?: true)
@@ -443,14 +532,24 @@ object FirebaseRepository {
         resposta: RespostaChat?,
         encaminhada: Boolean = false,
         chatId: String? = null,
+        audioUrl: String = "",
+        audioPublicId: String = "",
+        audioDurationMs: Int = 0,
         callback: (String?, Exception?) -> Unit,
     ) {
         val message = texto.trim()
-        if (message.isEmpty() || message.length > 500) {
+        val hasAudio = audioUrl.isNotBlank()
+        if ((!hasAudio && message.isEmpty()) || message.length > 500
+            || (hasAudio && (audioPublicId.isBlank() || audioDurationMs !in 500..60_000))) {
             callback(null, IllegalArgumentException("A mensagem deve ter entre 1 e 500 caracteres."))
             return
         }
         val dados = mutableMapOf<String, Any>("text" to message, "requestId" to requestId)
+        if (hasAudio) {
+            dados["audioUrl"] = audioUrl
+            dados["audioPublicId"] = audioPublicId
+            dados["audioDurationMs"] = audioDurationMs
+        }
         destinatarioUid?.let { dados["recipientUid"] = it }
         chatId?.let { dados["chatId"] = it }
         resposta?.let { dados["reply"] = mapOf("id" to it.id, "name" to it.autor, "text" to it.texto.take(200)) }
@@ -459,6 +558,108 @@ object FirebaseRepository {
             callback(result?.get("chatId") as? String, error)
         }
         }
+
+    fun enviarAudioChat(
+        arquivo: java.io.File,
+        duracaoMs: Int,
+        destinatarioUid: String?,
+        chatId: String?,
+        requestId: String,
+        callback: (Exception?) -> Unit,
+    ) {
+        if (!arquivo.isFile || duracaoMs !in 500..60_000) {
+            callback(IllegalArgumentException("Áudio inválido ou maior que 1 minuto."))
+            return
+        }
+        val uid = auth.currentUser?.uid
+        if (uid == null) {
+            callback(IllegalStateException("Entre na sua conta novamente."))
+            return
+        }
+        val conversationId = chatId ?: destinatarioUid?.let { idConversaPrivada(uid, it) } ?: "global"
+        val requestData = mutableMapOf<String, Any>("chatId" to conversationId, "requestId" to requestId)
+        destinatarioUid?.let { requestData["recipientUid"] = it }
+        chamarFunction("signChatAudioUpload", requestData) { data, signError ->
+            if (signError != null || data == null) {
+                callback(signError ?: IllegalStateException("Não foi possível preparar o áudio."))
+                return@chamarFunction
+            }
+            Thread {
+                var secureUrl: String? = null
+                var uploadError: Exception? = null
+                try {
+                    secureUrl = enviarArquivoAudioCloudinary(arquivo, data)
+                } catch (error: Exception) {
+                    uploadError = error
+                }
+                principal.post {
+                    if (uploadError != null || secureUrl == null) {
+                        callback(uploadError ?: IllegalStateException("O upload não retornou uma URL de áudio."))
+                    } else {
+                        enviarMensagemChat(
+                            destinatarioUid = destinatarioUid,
+                            texto = "",
+                            requestId = requestId,
+                            resposta = null,
+                            chatId = chatId,
+                            audioUrl = secureUrl,
+                            audioPublicId = requestId,
+                            audioDurationMs = duracaoMs,
+                        ) { _, sendError -> callback(sendError) }
+                    }
+                }
+            }.start()
+        }
+    }
+
+    private fun enviarArquivoAudioCloudinary(arquivo: java.io.File, assinatura: Map<String, Any>): String {
+        val cloudName = assinatura["cloudName"] as? String ?: error("Cloudinary não configurado.")
+        val conexao = java.net.URL("https://api.cloudinary.com/v1_1/$cloudName/video/upload")
+            .openConnection() as java.net.HttpURLConnection
+        val boundary = "----ZecaAudio${java.util.UUID.randomUUID()}"
+        try {
+            conexao.requestMethod = "POST"
+            conexao.connectTimeout = 15_000
+            conexao.readTimeout = 60_000
+            conexao.doOutput = true
+            conexao.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+            conexao.outputStream.use { output ->
+                val writer = output.bufferedWriter(Charsets.UTF_8)
+                val fields = mapOf(
+                    "api_key" to assinatura["apiKey"],
+                    "timestamp" to assinatura["timestamp"],
+                    "signature" to assinatura["signature"],
+                    "folder" to assinatura["folder"],
+                    "public_id" to assinatura["publicId"],
+                )
+                fields.forEach { (name, value) ->
+                    writer.append("--$boundary\r\n")
+                    writer.append("Content-Disposition: form-data; name=\"$name\"\r\n\r\n")
+                    writer.append("$value\r\n")
+                }
+                writer.append("--$boundary\r\n")
+                writer.append("Content-Disposition: form-data; name=\"file\"; filename=\"${arquivo.name}\"\r\n")
+                writer.append("Content-Type: audio/mp4\r\n\r\n")
+                writer.flush()
+                arquivo.inputStream().use { it.copyTo(output) }
+                output.write("\r\n--$boundary--\r\n".toByteArray(Charsets.UTF_8))
+                output.flush()
+            }
+            val status = conexao.responseCode
+            val stream = if (status in 200..299) conexao.inputStream else conexao.errorStream
+            val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+            val json = runCatching { org.json.JSONObject(body) }.getOrNull()
+            if (status !in 200..299) {
+                val detail = json?.optJSONObject("error")?.optString("message").orEmpty()
+                throw IllegalStateException(detail.ifBlank { "O Cloudinary recusou o áudio ($status)." })
+            }
+            return json?.optString("secure_url")
+                ?.takeIf { it.startsWith("https://res.cloudinary.com/$cloudName/video/upload/") }
+                ?: throw IllegalStateException("O Cloudinary não retornou uma URL de áudio segura.")
+        } finally {
+            conexao.disconnect()
+        }
+    }
 
     fun criarGrupo(
         nome: String,
@@ -968,6 +1169,151 @@ object FirebaseRepository {
         }
     }
 
+    fun carregarMissoes(callback: (EstadoMissoes?, Exception?) -> Unit) {
+        chamarFunction("getMissions", emptyMap()) { data, error ->
+            fun missao(nome: String): ProgressoMissao? {
+                val raw = data?.get(nome) as? Map<*, *> ?: return null
+                return ProgressoMissao(
+                    periodo = raw["period"] as? String ?: "",
+                    progresso = (raw["progress"] as? Number)?.toInt() ?: 0,
+                    meta = (raw["target"] as? Number)?.toInt() ?: 0,
+                    recompensaCentavos = (raw["rewardCents"] as? Number)?.toLong() ?: 0L,
+                    concluida = raw["completed"] as? Boolean ?: false,
+                )
+            }
+            val state = missao("daily")?.let { daily ->
+                missao("weekly")?.let { weekly -> EstadoMissoes(daily, weekly) }
+            }
+            callback(state, error)
+        }
+    }
+
+    fun carregarPartidasEsportivas(callback: (List<PartidaEsportiva>, Exception?) -> Unit) {
+        chamarFunction("listFootballMatches", emptyMap()) { data, error ->
+            val matches = (data?.get("matches") as? List<*>)?.mapNotNull { raw ->
+                val match = raw as? Map<*, *> ?: return@mapNotNull null
+                val fixtureId = (match["fixtureId"] as? Number)?.toInt() ?: return@mapNotNull null
+                PartidaEsportiva(
+                    fixtureId = fixtureId,
+                    kickoffMs = (match["kickoffMs"] as? Number)?.toLong() ?: 0L,
+                    campeonato = match["league"] as? String ?: "Futebol",
+                    mandante = match["homeTeam"] as? String ?: "Mandante",
+                    visitante = match["awayTeam"] as? String ?: "Visitante",
+                    oddMandanteBps = (match["homeOddsBps"] as? Number)?.toInt() ?: 0,
+                    oddVisitanteBps = (match["awayOddsBps"] as? Number)?.toInt() ?: 0,
+                )
+            }.orEmpty()
+            callback(matches, error)
+        }
+    }
+
+    fun listarApostasEsportivas(callback: (List<ApostaEsportiva>, Exception?) -> Unit) {
+        chamarFunction("listMySportsBets", emptyMap()) { data, error ->
+            val bets = (data?.get("bets") as? List<*>)?.mapNotNull { raw ->
+                val bet = raw as? Map<*, *> ?: return@mapNotNull null
+                val id = bet["id"] as? String ?: return@mapNotNull null
+                ApostaEsportiva(
+                    id = id,
+                    fixtureId = (bet["fixtureId"] as? Number)?.toInt() ?: 0,
+                    campeonato = bet["league"] as? String ?: "Futebol",
+                    mandante = bet["homeTeam"] as? String ?: "Mandante",
+                    visitante = bet["awayTeam"] as? String ?: "Visitante",
+                    kickoffMs = (bet["kickoffMs"] as? Number)?.toLong() ?: 0L,
+                    selecao = bet["selection"] as? String ?: "",
+                    nomeSelecao = bet["selectionName"] as? String ?: "",
+                    oddBps = (bet["oddsBps"] as? Number)?.toInt() ?: 0,
+                    valorCentavos = (bet["stakeCents"] as? Number)?.toLong() ?: 0L,
+                    status = bet["status"] as? String ?: "open",
+                    resultado = bet["result"] as? String ?: "",
+                    premioCentavos = (bet["payoutCents"] as? Number)?.toLong() ?: 0L,
+                )
+            }.orEmpty()
+            callback(bets, error)
+        }
+    }
+
+    fun apostarPartidaEsportiva(
+        fixtureId: Int,
+        selecao: String,
+        valorCentavos: Long,
+        requestId: String,
+        callback: (Exception?) -> Unit,
+    ) {
+        chamarFunction(
+            "placeSportsBet",
+            mapOf("fixtureId" to fixtureId, "selection" to selecao, "amountCents" to valorCentavos, "requestId" to requestId),
+        ) { _, error -> callback(error) }
+    }
+
+    fun liquidarApostasEsportivas(callback: (Int?, Exception?) -> Unit) {
+        chamarFunction("settleMySportsBets", emptyMap()) { data, error ->
+            callback((data?.get("settledCount") as? Number)?.toInt(), error)
+        }
+    }
+
+    fun listarSalasCaboGuerra(callback: (List<SalaCaboGuerra>, Exception?) -> Unit) {
+        chamarFunction("listTugRooms", emptyMap()) { data, error ->
+            val rooms = (data?.get("rooms") as? List<*>)
+                ?.mapNotNull { (it as? Map<*, *>)?.toSalaCaboGuerra() }
+                .orEmpty()
+            callback(rooms, error)
+        }
+    }
+
+    fun criarSalaCaboGuerra(
+        apostaCentavos: Long,
+        convitesUids: List<String>,
+        senha: String,
+        requestId: String,
+        callback: (SalaCaboGuerra?, Exception?) -> Unit,
+    ) {
+        chamarFunction(
+            "createTugRoom",
+            mapOf("stakeCents" to apostaCentavos, "invitedUids" to convitesUids, "password" to senha, "requestId" to requestId),
+        ) { data, error -> callback(data?.toSalaCaboGuerra(), error) }
+    }
+
+    fun entrarSalaCaboGuerra(
+        roomId: String,
+        senha: String,
+        requestId: String,
+        callback: (SalaCaboGuerra?, Exception?) -> Unit,
+    ) {
+        chamarFunction("joinTugRoom", mapOf("roomId" to roomId, "password" to senha, "requestId" to requestId)) { data, error ->
+            callback(data?.toSalaCaboGuerra(), error)
+        }
+    }
+
+    fun gerenciarSalaCaboGuerra(
+        roomId: String,
+        acao: String,
+        requestId: String,
+        targetUid: String = "",
+        apostaCentavos: Long = 0L,
+        senha: String = "",
+        callback: (SalaCaboGuerra?, Exception?) -> Unit,
+    ) {
+        val values = mutableMapOf<String, Any>("roomId" to roomId, "action" to acao, "requestId" to requestId)
+        if (targetUid.isNotBlank()) values["targetUid"] = targetUid
+        if (apostaCentavos > 0L) values["stakeCents"] = apostaCentavos
+        if (acao == "setPassword") values["password"] = senha
+        chamarFunction("manageTugRoom", values) { data, error ->
+            callback((data?.get("room") as? Map<*, *>)?.toSalaCaboGuerra(), error)
+        }
+    }
+
+    fun iniciarSalaCaboGuerra(roomId: String, callback: (SalaCaboGuerra?, Exception?) -> Unit) {
+        chamarFunction("startTugRoom", mapOf("roomId" to roomId)) { data, error ->
+            callback(data?.toSalaCaboGuerra(), error)
+        }
+    }
+
+    fun puxarCordaCaboGuerra(roomId: String, requestId: String, callback: (SalaCaboGuerra?, Exception?) -> Unit) {
+        chamarFunction("pullTugRope", mapOf("roomId" to roomId, "requestId" to requestId)) { data, error ->
+            callback(data?.toSalaCaboGuerra(), error)
+        }
+    }
+
     fun atualizarConfiguracaoMinasAdmin(
         configuracao: ConfiguracaoMinas,
         motivo: String,
@@ -1137,8 +1483,8 @@ object FirebaseRepository {
         val conexao = java.net.URL("$SERVER_URL/call/$nome").openConnection() as java.net.HttpURLConnection
         try {
             conexao.requestMethod = "POST"
-            conexao.connectTimeout = 10_000
-            conexao.readTimeout = 15_000
+            conexao.connectTimeout = 15_000
+            conexao.readTimeout = 85_000
             conexao.doOutput = true
             conexao.setRequestProperty("Content-Type", "application/json")
             conexao.setRequestProperty("Authorization", "Bearer $token")

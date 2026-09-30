@@ -1,11 +1,20 @@
 package com.example.zeca.ui
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.compose.material.icons.filled.FileDownload
 
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.media.MediaPlayer
+import android.media.MediaRecorder
 import android.net.Uri
+import android.app.DownloadManager
+import android.os.Build
+import android.os.Environment
+import java.io.File
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -59,13 +68,17 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.LocalFireDepartment
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.PersonRemove
 import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -143,6 +156,7 @@ fun TelaChat(
     chavePixAtual: String,
     jogadores: List<JogadorRanking>,
     onEnviar: (String?, String?, String, String, RespostaChat?, (Exception?) -> Unit) -> Unit,
+    onEnviarAudio: (String?, String?, File, Int, String, (Exception?) -> Unit) -> Unit,
     onEncaminhar: (String?, String?, String, String, (Exception?) -> Unit) -> Unit,
     onCriarGrupo: (String, String, List<String>, String, String, String, (String?, Exception?) -> Unit) -> Unit,
     onAtualizarGrupo: (String, String, String, String, String, (Exception?) -> Unit) -> Unit,
@@ -451,6 +465,16 @@ fun TelaChat(
                 chavePixAtual = chavePixAtual,
                 podeCriarCobranca = modo == "Privado" && destinatarioUid.isNotBlank() && !emGrupo,
                 onEnviarCobranca = { texto, aoSucesso -> enviarTextoChat(texto, null, aoSucesso) },
+                onEnviarAudio = { arquivo, duracaoMs, requestId, callback ->
+                    onEnviarAudio(
+                        if (emGrupo || modo == "Global") null else destinatarioUid,
+                        grupoUid.takeIf { emGrupo },
+                        arquivo,
+                        duracaoMs,
+                        requestId,
+                        callback,
+                    )
+                },
                 onEncaminhar = onEncaminhar,
                 ehGlobal = modo == "Global",
                 rascunho = rascunho,
@@ -1282,6 +1306,7 @@ private fun TelaConversa(
     chavePixAtual: String,
     podeCriarCobranca: Boolean,
     onEnviarCobranca: (String, () -> Unit) -> Unit,
+    onEnviarAudio: (File, Int, String, (Exception?) -> Unit) -> Unit,
     onEncaminhar: (String?, String?, String, String, (Exception?) -> Unit) -> Unit,
     ehGlobal: Boolean,
     rascunho: String,
@@ -1312,6 +1337,13 @@ private fun TelaConversa(
     var encaminhando by remember { mutableStateOf<MensagemChat?>(null) }
     var cobrancaAberta by rememberSaveable { mutableStateOf(false) }
     var valorCobranca by rememberSaveable { mutableStateOf("") }
+    var gravandoAudio by remember { mutableStateOf(false) }
+    var enviandoAudioLocal by remember { mutableStateOf(false) }
+    var erroAudio by rememberSaveable { mutableStateOf("") }
+    var gravadorAudio by remember { mutableStateOf<MediaRecorder?>(null) }
+    var arquivoAudioTemporario by remember { mutableStateOf<File?>(null) }
+    var inicioGravacaoMs by remember { mutableStateOf(0L) }
+    var tempoGravacaoMs by remember { mutableStateOf(0L) }
     val valorCobrancaCentavos = remember(valorCobranca) { parseValorCobranca(valorCobranca) }
     val conteudoCobranca = remember(chavePixAtual, valorCobrancaCentavos) {
         valorCobrancaCentavos?.let { valor ->
@@ -1327,6 +1359,80 @@ private fun TelaConversa(
     val imagemCobranca = remember(conteudoCobranca) {
         conteudoCobranca?.let(::criarQrCodeChat)
     }
+
+    fun iniciarGravacaoAudio() {
+        val arquivo = File(contexto.cacheDir, "zeca_audio_${UUID.randomUUID()}.m4a")
+        val recorder = try {
+            novoGravadorAudio(contexto).apply {
+                setAudioSource(MediaRecorder.AudioSource.MIC)
+                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                setAudioEncodingBitRate(96_000)
+                setAudioSamplingRate(44_100)
+                setMaxDuration(60_000)
+                setOutputFile(arquivo.absolutePath)
+                prepare()
+                start()
+            }
+        } catch (exception: Exception) {
+            arquivo.delete()
+            erroAudio = exception.localizedMessage ?: "Não foi possível iniciar a gravação."
+            return
+        }
+        arquivoAudioTemporario = arquivo
+        gravadorAudio = recorder
+        inicioGravacaoMs = System.currentTimeMillis()
+        tempoGravacaoMs = 0L
+        gravandoAudio = true
+        erroAudio = ""
+    }
+
+    fun pararEEnviarAudio() {
+        val recorder = gravadorAudio ?: return
+        val arquivo = arquivoAudioTemporario
+        val duracaoMs = (System.currentTimeMillis() - inicioGravacaoMs).coerceIn(0L, 60_000L).toInt()
+        gravadorAudio = null
+        gravandoAudio = false
+        runCatching { recorder.stop() }
+        runCatching { recorder.release() }
+        if (arquivo == null || !arquivo.exists() || arquivo.length() == 0L || duracaoMs < 500) {
+            arquivo?.delete()
+            arquivoAudioTemporario = null
+            erroAudio = "Grave pelo menos meio segundo de áudio."
+            return
+        }
+        enviandoAudioLocal = true
+        onEnviarAudio(arquivo, duracaoMs, UUID.randomUUID().toString()) { error ->
+            enviandoAudioLocal = false
+            arquivo.delete()
+            arquivoAudioTemporario = null
+            erroAudio = error?.localizedMessage.orEmpty()
+        }
+    }
+
+    val permissaoMicrofone = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) iniciarGravacaoAudio() else erroAudio = "Permita o acesso ao microfone para gravar áudio."
+    }
+
+    LaunchedEffect(gravandoAudio, inicioGravacaoMs) {
+        while (gravandoAudio) {
+            tempoGravacaoMs = System.currentTimeMillis() - inicioGravacaoMs
+            if (tempoGravacaoMs >= 60_000L) {
+                pararEEnviarAudio()
+                break
+            }
+            delay(250)
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            runCatching { gravadorAudio?.stop() }
+            runCatching { gravadorAudio?.release() }
+            arquivoAudioTemporario?.delete()
+        }
+    }
+
     val invertida = remember(mensagens) { mensagens.asReversed() }
     val podeEnviar = rascunho.isNotBlank() && !enviando && podeEnviarMensagem
 
@@ -1430,6 +1536,23 @@ private fun TelaConversa(
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
             )
         }
+        if (erroAudio.isNotBlank()) {
+            Text(
+                erroAudio,
+                color = Cores.Laranja,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+            )
+        }
+        if (gravandoAudio || enviandoAudioLocal) {
+            Text(
+                if (gravandoAudio) "Gravando áudio · ${(tempoGravacaoMs / 1_000).toInt()}s / 60s · toque em parar para enviar"
+                else "Enviando áudio…",
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+                color = if (gravandoAudio) Color(0xFFFF8790) else Cores.Verde,
+                fontSize = 11.sp,
+            )
+        }
 
         Row(
             modifier = Modifier
@@ -1449,6 +1572,25 @@ private fun TelaConversa(
                 ) {
                     Icon(Icons.Filled.QrCode2, contentDescription = "Criar código de pagamento", tint = Cores.Verde)
                 }
+            }
+            IconButton(
+                onClick = {
+                    if (gravandoAudio) {
+                        pararEEnviarAudio()
+                    } else if (contexto.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                        iniciarGravacaoAudio()
+                    } else {
+                        permissaoMicrofone.launch(Manifest.permission.RECORD_AUDIO)
+                    }
+                },
+                enabled = podeEnviarMensagem && !enviando && !enviandoAudioLocal,
+                modifier = Modifier.size(48.dp),
+            ) {
+                Icon(
+                    if (gravandoAudio) Icons.Filled.Stop else Icons.Filled.Mic,
+                    contentDescription = if (gravandoAudio) "Parar e enviar áudio" else "Gravar áudio",
+                    tint = if (gravandoAudio) Color(0xFFFF8790) else Cores.Verde,
+                )
             }
             OutlinedTextField(
                 value = rascunho,
@@ -1473,7 +1615,15 @@ private fun TelaConversa(
                     .clickable(enabled = podeEnviar) {
                         val alvo = respondendo
                         val resposta = alvo?.let {
-                            RespostaChat(it.id, it.autor, if (it.apagadaParaTodos) "Mensagem apagada" else it.texto)
+                            RespostaChat(
+                                it.id,
+                                it.autor,
+                                when {
+                                    it.apagadaParaTodos -> "Mensagem apagada"
+                                    it.audioUrl.isNotBlank() -> "Mensagem de áudio"
+                                    else -> it.texto
+                                },
+                            )
                         }
                         onEnviar(resposta) { respondendo = null }
                     },
@@ -1752,10 +1902,14 @@ private fun BolhaMensagem(
                         fontStyle = FontStyle.Italic,
                     )
                 } else {
-                    val cobranca = remember(mensagem.texto) { parseCodigoCobranca(mensagem.texto) }
-                    if (cobranca == null) {
-                        Text(mensagem.texto, color = Color.White, fontSize = 14.sp)
-                    } else {
+                    if (mensagem.audioUrl.isNotBlank()) {
+                        AudioMensagem(mensagem.audioUrl, mensagem.audioDurationMs)
+                    }
+                    if (mensagem.texto.isNotBlank()) {
+                        val cobranca = remember(mensagem.texto) { parseCodigoCobranca(mensagem.texto) }
+                        if (cobranca == null) {
+                            Text(mensagem.texto, color = Color.White, fontSize = 14.sp)
+                        } else {
                         Text("COBRANÇA ZECA", color = Cores.Verde, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         Text(formatarReais(cobranca.valorCentavos), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Black)
                         val imagem = remember(cobranca.uri) { criarQrCodeChat(cobranca.uri) }
@@ -1795,6 +1949,7 @@ private fun BolhaMensagem(
                             fontSize = 11.sp,
                             textAlign = TextAlign.Center,
                         )
+                        }
                     }
                 }
                 if (mensagem.editada || mensagem.enviadaEmMs > 0) {
@@ -1815,6 +1970,99 @@ private fun BolhaMensagem(
         }
     }
 }
+
+@Composable
+private fun AudioMensagem(url: String, duracaoMs: Int) {
+    val contexto = LocalContext.current
+    var player by remember(url) { mutableStateOf<MediaPlayer?>(null) }
+    var reproduzindo by remember(url) { mutableStateOf(false) }
+    var erro by remember(url) { mutableStateOf("") }
+
+    DisposableEffect(url) {
+        onDispose { runCatching { player?.release() } }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            IconButton(onClick = {
+                val atual = player
+                if (atual?.isPlaying == true) {
+                    atual.pause()
+                    reproduzindo = false
+                } else if (atual != null) {
+                    atual.start()
+                    reproduzindo = true
+                } else {
+                    try {
+                        val novo = MediaPlayer()
+                        player = novo
+                        novo.setDataSource(url)
+                        novo.setOnPreparedListener { prepared ->
+                            prepared.start()
+                            reproduzindo = true
+                            erro = ""
+                        }
+                        novo.setOnCompletionListener { completed ->
+                            reproduzindo = false
+                            completed.release()
+                            player = null
+                        }
+                        novo.setOnErrorListener { failed, _, _ ->
+                            reproduzindo = false
+                            failed.release()
+                            player = null
+                            erro = "Não foi possível reproduzir este áudio."
+                            true
+                        }
+                        novo.prepareAsync()
+                    } catch (exception: Exception) {
+                        player?.release()
+                        player = null
+                        erro = exception.localizedMessage ?: "Não foi possível abrir este áudio."
+                    }
+                }
+            }) {
+                Icon(
+                    if (reproduzindo) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    contentDescription = if (reproduzindo) "Pausar áudio" else "Reproduzir áudio",
+                    tint = Cores.Verde,
+                )
+            }
+            Text(formatarDuracaoAudio(duracaoMs), color = Color.White.copy(alpha = 0.75f), fontSize = 11.sp)
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = {
+                try {
+                    val download = DownloadManager.Request(Uri.parse(url))
+                        .setTitle("Áudio do Zeca")
+                        .setDescription("Salvando áudio na pasta Downloads")
+                        .setMimeType("audio/mp4")
+                        .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                        .setDestinationInExternalPublicDir(
+                            Environment.DIRECTORY_DOWNLOADS,
+                            "zeca_audio_${System.currentTimeMillis()}.m4a",
+                        )
+                    contexto.getSystemService(DownloadManager::class.java)?.enqueue(download)
+                    Toast.makeText(contexto, "Áudio salvo em Downloads", Toast.LENGTH_SHORT).show()
+                } catch (exception: Exception) {
+                    erro = exception.localizedMessage ?: "Não foi possível salvar o áudio."
+                }
+            }) {
+                Icon(Icons.Filled.FileDownload, contentDescription = "Salvar áudio", tint = Cores.Turquesa)
+                Text("Salvar", color = Cores.Turquesa, fontSize = 11.sp)
+            }
+        }
+        if (erro.isNotBlank()) Text(erro, color = Cores.Laranja, fontSize = 10.sp)
+    }
+}
+
+private fun formatarDuracaoAudio(duracaoMs: Int): String {
+    val segundos = (duracaoMs / 1_000).coerceAtLeast(0)
+    return "%d:%02d".format(Locale.ROOT, segundos / 60, segundos % 60)
+}
+
+@Suppress("DEPRECATION")
+private fun novoGravadorAudio(contexto: Context): MediaRecorder =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(contexto) else MediaRecorder()
 
 @Composable
 private fun PreviaResposta(alvo: MensagemChat, onFechar: () -> Unit) {
@@ -1847,7 +2095,11 @@ private fun PreviaResposta(alvo: MensagemChat, onFechar: () -> Unit) {
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                if (alvo.apagadaParaTodos) "Mensagem apagada" else alvo.texto,
+                when {
+                    alvo.apagadaParaTodos -> "Mensagem apagada"
+                    alvo.audioUrl.isNotBlank() -> "Mensagem de áudio"
+                    else -> alvo.texto
+                },
                 color = Color.White.copy(alpha = 0.7f),
                 fontSize = 12.sp,
                 maxLines = 1,

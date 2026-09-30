@@ -2,7 +2,13 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { initializeBalance, levelProgress, normalizeUsername } = require("./profile-logic");
+const {
+  advanceMissionProgress,
+  getMissionProgress,
+  initializeBalance,
+  levelProgress,
+  normalizeUsername,
+} = require("./profile-logic");
 
 test("new profiles receive R$500 and migration grants it once to empty legacy profiles", () => {
   assert.deepEqual(initializeBalance(), { balanceCents: 50_000, balanceInitialized: true });
@@ -51,6 +57,42 @@ test("level reward is granted once at each ten settled games", () => {
     level: 2,
     gamesTowardNextLevel: 0,
     gamesToNextLevel: 10,
+    rewardCents: 5_000,
+  });
+  assert.deepEqual(levelProgress(20), {
+    level: 3,
+    gamesTowardNextLevel: 0,
+    gamesToNextLevel: 10,
+    rewardCents: 10_000,
+  });
+});
+
+test("daily and weekly missions progress on settled games and reward once", () => {
+  const start = Date.UTC(2026, 8, 30, 12);
+  let profile = {};
+  for (let game = 0; game < 4; game += 1) {
+    const progress = advanceMissionProgress(profile, start);
+    assert.equal(progress.totalRewardCents, 0);
+    profile = { ...profile, ...progress.profileFields };
+  }
+  const dailyCompletion = advanceMissionProgress(profile, start);
+  assert.equal(dailyCompletion.totalRewardCents, 1_000);
+  assert.equal(dailyCompletion.progress.daily.completed, true);
+  profile = { ...profile, ...dailyCompletion.profileFields };
+  assert.equal(advanceMissionProgress(profile, start).totalRewardCents, 0);
+
+  for (let game = 0; game < 19; game += 1) {
+    const progress = advanceMissionProgress(profile, start);
+    profile = { ...profile, ...progress.profileFields };
+  }
+  const weeklyCompletion = advanceMissionProgress(profile, start);
+  assert.equal(weeklyCompletion.totalRewardCents, 5_000);
+  assert.equal(weeklyCompletion.progress.weekly.completed, true);
+  assert.deepEqual(getMissionProgress(profile, start + 7 * 24 * 60 * 60 * 1_000).daily, {
+    period: "2026-10-07",
+    progress: 0,
+    target: 5,
     rewardCents: 1_000,
+    completed: false,
   });
 });

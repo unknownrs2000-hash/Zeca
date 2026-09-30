@@ -150,6 +150,7 @@ private fun AppAutenticado(usuario: FirebaseUser) {
     val movimentos = remember { mutableStateListOf<Movimento>() }
     val itensComprados = remember { mutableStateListOf<String>() }
     val notificacoes = remember { mutableStateListOf<NotificacaoApp>() }
+    val convitesCaboNotificados = remember(usuario.uid) { mutableSetOf<String>() }
     val stateHolder = rememberSaveableStateHolder()
 
     LaunchedEffect(usuario.uid) {
@@ -160,6 +161,28 @@ private fun AppAutenticado(usuario: FirebaseUser) {
         if (notificacoes.none { it.id == notificacao.id }) {
             notificacoes.add(notificacao)
             if (notificacoes.size > 4) notificacoes.removeAt(0)
+        }
+    }
+
+    LaunchedEffect(usuario.uid) {
+        while (true) {
+            FirebaseRepository.listarSalasCaboGuerra { rooms, error ->
+                if (error == null) {
+                    rooms.filter { it.conviteParaMim && it.status == "waiting" }.forEach { room ->
+                        if (convitesCaboNotificados.add(room.id)) {
+                            notificar(
+                                NotificacaoApp(
+                                    id = "tug-invite:${room.id}",
+                                    titulo = "Convite para Cabo de Guerra",
+                                    detalhe = "${room.criadorNome} convidou você · aposta ${formatarValorNotificacao(room.apostaCentavos)}",
+                                    aba = Aba.Jogos,
+                                ),
+                            )
+                        }
+                    }
+                }
+            }
+            delay(15_000)
         }
     }
 
@@ -314,6 +337,7 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                             erroSincronizacao = erroPerfil,
                             ganhoTotalCentavos = jogador.ganhoTotalCentavos,
                             perdaTotalCentavos = jogador.perdaTotalCentavos,
+                            onCarregarMissoes = { concluir -> FirebaseRepository.carregarMissoes(concluir) },
                             onAbrirAba = { aba = it },
                             onAbrirLoja = {
                                 mostrarLoja = true
@@ -326,11 +350,39 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                         Aba.Jogos -> TelaJogos(
                             saldoCentavos = jogador.saldoCentavos,
                             partidas = jogador.partidas,
+                            uidAtual = usuario.uid,
+                            jogadores = ranking,
                             onCarregarConfiguracaoMinas = { concluir ->
                                 FirebaseRepository.carregarConfiguracaoMinas(concluir)
                             },
                             onCarregarMinasAtiva = { concluir ->
                                 FirebaseRepository.carregarMinasAtiva(concluir)
+                            },
+                            onCarregarPartidasEsportivas = { concluir ->
+                                FirebaseRepository.carregarPartidasEsportivas(concluir)
+                            },
+                            onCarregarApostasEsportivas = { concluir ->
+                                FirebaseRepository.listarApostasEsportivas(concluir)
+                            },
+                            onApostarEsportiva = { fixtureId, selecao, valor, requestId, concluir ->
+                                FirebaseRepository.apostarPartidaEsportiva(fixtureId, selecao, valor, requestId, concluir)
+                            },
+                            onLiquidarApostasEsportivas = { concluir ->
+                                FirebaseRepository.liquidarApostasEsportivas(concluir)
+                            },
+                            onCarregarSalasCaboGuerra = { concluir -> FirebaseRepository.listarSalasCaboGuerra(concluir) },
+                            onCriarSalaCaboGuerra = { aposta, convites, senha, requestId, concluir ->
+                                FirebaseRepository.criarSalaCaboGuerra(aposta, convites, senha, requestId, concluir)
+                            },
+                            onEntrarSalaCaboGuerra = { roomId, senha, requestId, concluir ->
+                                FirebaseRepository.entrarSalaCaboGuerra(roomId, senha, requestId, concluir)
+                            },
+                            onGerenciarSalaCaboGuerra = { roomId, acao, requestId, targetUid, aposta, senha, concluir ->
+                                FirebaseRepository.gerenciarSalaCaboGuerra(roomId, acao, requestId, targetUid, aposta, senha, concluir)
+                            },
+                            onIniciarSalaCaboGuerra = { roomId, concluir -> FirebaseRepository.iniciarSalaCaboGuerra(roomId, concluir) },
+                            onPuxarCordaCaboGuerra = { roomId, requestId, concluir ->
+                                FirebaseRepository.puxarCordaCaboGuerra(roomId, requestId, concluir)
                             },
                             onIniciarMinas = { aposta, minas, requestId, concluir ->
                                 FirebaseRepository.iniciarMinas(aposta, minas, requestId, concluir)
@@ -406,6 +458,16 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                                 ) { _, error ->
                                     concluir(error)
                                 }
+                            },
+                            onEnviarAudio = { destinatarioUid, grupoId, arquivo, duracaoMs, requestId, concluir ->
+                                FirebaseRepository.enviarAudioChat(
+                                    arquivo,
+                                    duracaoMs,
+                                    destinatarioUid,
+                                    grupoId,
+                                    requestId,
+                                    concluir,
+                                )
                             },
                             onEncaminhar = { destinatarioUid, grupoId, texto, requestId, concluir ->
                                 FirebaseRepository.enviarMensagemChat(

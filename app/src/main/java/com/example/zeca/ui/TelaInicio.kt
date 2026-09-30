@@ -25,8 +25,10 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,6 +41,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.zeca.Aba
+import com.example.zeca.EstadoMissoes
 import com.example.zeca.JogadorRanking
 import com.example.zeca.PerfilPublico
 import com.example.zeca.ui.theme.Cores
@@ -51,6 +54,7 @@ fun TelaInicio(
     erroSincronizacao: String = "",
     ganhoTotalCentavos: Long = 0L,
     perdaTotalCentavos: Long = 0L,
+    onCarregarMissoes: ((EstadoMissoes?, Exception?) -> Unit) -> Unit,
     onAbrirAba: (Aba) -> Unit,
     onAbrirLoja: () -> Unit,
     onBuscarPerfil: (String, (PerfilPublico?, Exception?) -> Unit) -> Unit,
@@ -59,6 +63,11 @@ fun TelaInicio(
     var perfilPublico by remember { mutableStateOf<PerfilPublico?>(null) }
     var erroPerfil by remember { mutableStateOf("") }
     var carregandoPerfil by remember { mutableStateOf(false) }
+    var missoes by remember { mutableStateOf<EstadoMissoes?>(null) }
+
+    LaunchedEffect(Unit) {
+        onCarregarMissoes { state, _ -> missoes = state }
+    }
 
     Box(
         modifier = Modifier
@@ -110,6 +119,14 @@ fun TelaInicio(
                 }
                 Spacer(Modifier.height(14.dp))
                 AcaoCarteira("Ir para a loja", Modifier.fillMaxWidth(), true) { onAbrirLoja() }
+            }
+
+            missoes?.let { state ->
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Missões", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    MissaoProgresso("Diária", "Conclua 5 partidas hoje", state.diaria)
+                    MissaoProgresso("Semanal", "Conclua 25 partidas nesta semana", state.semanal)
+                }
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -206,6 +223,48 @@ fun TelaInicio(
                 onFechar = { jogadorAberto = null },
             )
         }
+    }
+}
+
+@Composable
+private fun MissaoProgresso(titulo: String, descricao: String, missao: com.example.zeca.ProgressoMissao) {
+    val progresso = if (missao.meta > 0) {
+        (missao.progresso.toFloat() / missao.meta).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.White.copy(alpha = 0.055f), RoundedCornerShape(10.dp))
+            .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(10.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(titulo, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Text(descricao, color = Color.White.copy(alpha = 0.6f), fontSize = 10.sp)
+            }
+            Text(
+                "+${formatarReais(missao.recompensaCentavos)}",
+                color = Cores.Verde,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+        LinearProgressIndicator(
+            progress = { progresso },
+            modifier = Modifier.fillMaxWidth(),
+            color = Cores.Verde,
+            trackColor = Color.White.copy(alpha = 0.1f),
+        )
+        Text(
+            if (missao.concluida) "Concluída · prêmio creditado"
+            else "${missao.progresso}/${missao.meta} partidas concluídas",
+            color = if (missao.concluida) Cores.Verde else Color.White.copy(alpha = 0.55f),
+            fontSize = 10.sp,
+        )
     }
 }
 
