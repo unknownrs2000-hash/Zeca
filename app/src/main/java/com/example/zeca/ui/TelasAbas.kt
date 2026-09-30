@@ -849,7 +849,7 @@ fun TelaPerfil(
             )
             if (mensagemMoldura.isNotBlank()) Text(mensagemMoldura, color = Cores.Laranja, fontSize = 12.sp)
         }
-        Button(onClick = onAbrirLoja, modifier = Modifier.fillMaxWidth()) { Text("Abrir Loja") }
+        Button(onClick = onAbrirLoja, modifier = Modifier.fillMaxWidth()) { Text("Personalizar avatar e abrir loja") }
         TextButton(onClick = onSair, modifier = Modifier.fillMaxWidth()) { Text("Sair da conta") }
     }
 }
@@ -858,17 +858,49 @@ fun TelaPerfil(
 fun TelaLoja(
     saldoCentavos: Long,
     itensComprados: List<String>,
+    apelido: String,
+    username: String,
+    avatarUrl: String,
+    avatarItensEquipados: List<String>,
+    avatarComoFotoPerfil: Boolean,
+    molduraEquipada: String,
     onVoltar: () -> Unit,
     onComprar: (String, (String?) -> Unit) -> Unit,
+    onEquiparAvatar: (String, String?, (String?) -> Unit) -> Unit,
+    onEquiparMoldura: (String, (String?) -> Unit) -> Unit,
 ) {
     val produtos = catalogoLoja
+    var categoria by rememberSaveable { mutableStateOf("Avatar") }
     var mensagem by rememberSaveable { mutableStateOf("") }
     var mensagemErro by rememberSaveable { mutableStateOf(false) }
     var itemEmCompra by rememberSaveable { mutableStateOf("") }
+    var itemEmUso by rememberSaveable { mutableStateOf("") }
 
     BackHandler(onBack = onVoltar)
 
     TelaBase("Loja", "Escolha um detalhe para o seu perfil.", onVoltar = onVoltar) {
+        GlassCard {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                AvatarComMoldura(
+                    apelido.take(1).uppercase(),
+                    molduraEquipada,
+                    70.dp,
+                    photoUrl = avatarUrl,
+                    avatarItems = avatarItensEquipados,
+                    avatarAsProfilePhoto = avatarComoFotoPerfil,
+                )
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text("SEU AVATAR", color = Cores.Verde, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Text(apelido, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                    Text("@${username}", color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp)
+                    Text("${avatarItensEquipados.size} peças vestidas", color = Cores.Turquesa, fontSize = 11.sp)
+                }
+            }
+            TextButton(onClick = onVoltar, modifier = Modifier.fillMaxWidth()) {
+                Text("Editar avatar e foto no perfil", color = Cores.Turquesa)
+            }
+        }
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -884,7 +916,17 @@ fun TelaLoja(
             }
             Text("${itensComprados.size} itens", color = Cores.Verde, fontSize = 13.sp, fontWeight = FontWeight.Bold)
         }
-        produtos.forEach { produto ->
+        Opcoes(listOf("Todos", "Avatar", "Molduras", "Títulos"), categoria) { categoria = it }
+        val produtosVisiveis = produtos.filter { produto ->
+            when (categoria) {
+                "Avatar" -> produto.avatarSlot.isNotBlank()
+                "Molduras" -> produto.id.startsWith("frame_")
+                "Títulos" -> produto.id.startsWith("title_")
+                else -> true
+            }
+        }
+        Text("${produtosVisiveis.size} itens", color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp)
+        produtosVisiveis.forEach { produto ->
             val comprado = produto.id in itensComprados
             Column(
                 modifier = Modifier
@@ -926,6 +968,54 @@ fun TelaLoja(
                         fontWeight = FontWeight.Black,
                         maxLines = 1,
                     )
+                    if (produto.avatarSlot.isNotBlank() && comprado) {
+                        val vestido = produto.id in avatarItensEquipados
+                        TextButton(
+                            onClick = {
+                                itemEmUso = produto.id
+                                onEquiparAvatar(produto.avatarSlot, if (vestido) null else produto.id) { erro ->
+                                    itemEmUso = ""
+                                    mensagemErro = erro != null
+                                    mensagem = erro ?: if (vestido) "Peça removida do avatar." else "Peça vestida no avatar."
+                                }
+                            },
+                            enabled = itemEmUso.isBlank() && itemEmCompra.isBlank(),
+                        ) {
+                            Text(
+                                when {
+                                    itemEmUso == produto.id -> "Salvando..."
+                                    vestido -> "Vestindo"
+                                    else -> "Vestir"
+                                },
+                                color = if (vestido) Cores.Turquesa else Color.White,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                    }
+                    if (produto.id.startsWith("frame_") && comprado) {
+                        val molduraEmUso = produto.id == molduraEquipada
+                        TextButton(
+                            onClick = {
+                                itemEmUso = produto.id
+                                onEquiparMoldura(if (molduraEmUso) "" else produto.id) { erro ->
+                                    itemEmUso = ""
+                                    mensagemErro = erro != null
+                                    mensagem = erro ?: if (molduraEmUso) "Moldura removida." else "Moldura aplicada ao avatar."
+                                }
+                            },
+                            enabled = itemEmUso.isBlank() && itemEmCompra.isBlank(),
+                        ) {
+                            Text(
+                                when {
+                                    itemEmUso == produto.id -> "Salvando..."
+                                    molduraEmUso -> "Em uso"
+                                    else -> "Usar"
+                                },
+                                color = if (molduraEmUso) produto.cor else Color.White,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                    }
                     Button(
                         onClick = {
                             itemEmCompra = produto.id

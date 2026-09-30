@@ -420,9 +420,21 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                             TelaLoja(
                                 saldoCentavos = jogador.saldoCentavos,
                                 itensComprados = jogador.inventario,
+                                apelido = jogador.apelido,
+                                username = jogador.username,
+                                avatarUrl = jogador.avatarUrl,
+                                avatarItensEquipados = jogador.avatarItensEquipados,
+                                avatarComoFotoPerfil = jogador.avatarComoFotoPerfil,
+                                molduraEquipada = jogador.molduraEquipada,
                                 onVoltar = { mostrarLoja = false },
                                 onComprar = { itemId, concluir ->
                                     FirebaseRepository.comprarCosmetico(itemId, concluir)
+                                },
+                                onEquiparAvatar = { slot, itemId, concluir ->
+                                    FirebaseRepository.equiparItemAvatar(slot, itemId) { error -> concluir(error?.localizedMessage) }
+                                },
+                                onEquiparMoldura = { itemId, concluir ->
+                                    FirebaseRepository.equiparMoldura(itemId) { error -> concluir(error?.localizedMessage) }
                                 },
                             )
                         } else {

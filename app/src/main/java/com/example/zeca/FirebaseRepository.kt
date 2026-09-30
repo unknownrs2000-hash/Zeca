@@ -722,85 +722,13 @@ object FirebaseRepository {
     }
 
     fun comprarCosmetico(itemId: String, callback: (String?) -> Unit) {
-        val produtos = mapOf(
-            "frame_aurora" to ("Moldura Aurora" to 1_299L),
-            "title_lucky" to ("Título: Sorte Grande" to 799L),
-            "frame_neon" to ("Moldura Neon" to 1_999L),
-            "frame_gold" to ("Moldura Dourada" to 2_499L),
-            "title_highroller" to ("Título: Alto Rolo" to 1_499L),
-            "frame_emerald" to ("Moldura Esmeralda" to 1_699L),
-            "title_champion" to ("Título: Campeão" to 2_999L),
-            "frame_royal" to ("Moldura Real" to 3_999L),
-            "title_jucineia" to ("Título: Jucineia" to 1_250_000L),
-            "title_donizete" to ("Título: Donizete" to 1_000_000L),
-            "title_erasmo" to ("Título: Erasmo" to 1_500_000L),
-            "title_milena" to ("Título: Milena" to 1_100_000L),
-        )
-        val produto = produtos[itemId]
-        val uid = auth.currentUser?.uid
-        if (uid == null) {
-            callback("Entre na sua conta para comprar.")
-            return
-        }
-        if (produto == null) {
+        if (itemId.isBlank()) {
             callback("Este item não está disponível.")
             return
         }
-
-        val purchaseId = java.util.UUID.randomUUID().toString()
-        val userRef = database.collection("users").document(uid)
-        val rankRef = database.collection("leaderboard").document(uid)
-        val purchaseRef = userRef.collection("purchases").document(purchaseId)
-        val transactionRef = userRef.collection("transactions").document(purchaseId)
-        database.runTransaction { transaction ->
-            val userSnapshot = transaction.get(userRef)
-            val rankSnapshot = transaction.get(rankRef)
-            val existingPurchase = transaction.get(purchaseRef)
-            if (existingPurchase.exists()) throw IllegalStateException("Compra duplicada.")
-            if (!userSnapshot.exists() || !rankSnapshot.exists()) {
-                throw IllegalStateException("Perfil ainda não está pronto.")
-            }
-
-            val balance = userSnapshot.getLong("balanceCents") ?: 0L
-            val inventory = (userSnapshot.get("inventory") as? List<*>)
-                ?.filterIsInstance<String>()
-                .orEmpty()
-            if (itemId in inventory) throw IllegalStateException("Você já possui este item.")
-            if (balance < produto.second) throw IllegalStateException("Saldo insuficiente.")
-            val balanceAfter = balance - produto.second
-            val serverTime = com.google.firebase.firestore.FieldValue.serverTimestamp()
-
-            transaction.update(
-                userRef,
-                mapOf(
-                    "balanceCents" to balanceAfter,
-                    "inventory" to (inventory + itemId),
-                    "lastPurchaseId" to purchaseId,
-                ),
-            )
-            transaction.update(rankRef, "balanceCents", balanceAfter)
-            transaction.set(
-                purchaseRef,
-                mapOf(
-                    "uid" to uid,
-                    "itemId" to itemId,
-                    "amountCents" to produto.second,
-                    "createdAt" to serverTime,
-                ),
-            )
-            transaction.set(
-                transactionRef,
-                mapOf(
-                    "description" to "Loja · ${produto.first}",
-                    "deltaCents" to -produto.second,
-                    "itemId" to itemId,
-                    "createdAt" to serverTime,
-                ),
-            )
-            balanceAfter
+        chamarFunction("buyCosmetic", mapOf("itemId" to itemId)) { _, error ->
+            callback(error?.localizedMessage)
         }
-            .addOnSuccessListener { callback(null) }
-            .addOnFailureListener { callback(erroParaUsuario(it).localizedMessage ?: "Não foi possível concluir a compra.") }
     }
 
     fun equiparMoldura(itemId: String, callback: (Exception?) -> Unit) {
