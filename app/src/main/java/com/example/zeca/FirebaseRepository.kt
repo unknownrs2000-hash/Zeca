@@ -525,6 +525,11 @@ object FirebaseRepository {
             "frame_aurora" to ("Moldura Aurora" to 1_299L),
             "title_lucky" to ("Título: Sorte Grande" to 799L),
             "frame_neon" to ("Moldura Neon" to 1_999L),
+            "frame_gold" to ("Moldura Dourada" to 2_499L),
+            "title_highroller" to ("Título: Alto Rolo" to 1_499L),
+            "frame_emerald" to ("Moldura Esmeralda" to 1_699L),
+            "title_champion" to ("Título: Campeão" to 2_999L),
+            "frame_royal" to ("Moldura Real" to 3_999L),
         )
         val produto = produtos[itemId]
         val uid = auth.currentUser?.uid

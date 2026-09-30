@@ -14,6 +14,11 @@ service cloud.firestore {
       return itemId == 'frame_aurora' ? 1299
         : itemId == 'title_lucky' ? 799
         : itemId == 'frame_neon' ? 1999
+        : itemId == 'frame_gold' ? 2499
+        : itemId == 'title_highroller' ? 1499
+        : itemId == 'frame_emerald' ? 1699
+        : itemId == 'title_champion' ? 2999
+        : itemId == 'frame_royal' ? 3999
         : -1;
     }
 
@@ -21,6 +26,11 @@ service cloud.firestore {
       return itemId == 'frame_aurora' ? 'Moldura Aurora'
         : itemId == 'title_lucky' ? 'Título: Sorte Grande'
         : itemId == 'frame_neon' ? 'Moldura Neon'
+        : itemId == 'frame_gold' ? 'Moldura Dourada'
+        : itemId == 'title_highroller' ? 'Título: Alto Rolo'
+        : itemId == 'frame_emerald' ? 'Moldura Esmeralda'
+        : itemId == 'title_champion' ? 'Título: Campeão'
+        : itemId == 'frame_royal' ? 'Moldura Real'
         : '';
     }
 

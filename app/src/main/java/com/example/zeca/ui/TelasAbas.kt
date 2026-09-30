@@ -298,6 +298,11 @@ fun TelaLoja(
         Produto("frame_aurora", "Moldura Aurora", "Um brilho suave em volta do seu avatar.", 1_299L, Cores.Turquesa, "✦"),
         Produto("title_lucky", "Sorte Grande", "Um título para mostrar no seu perfil.", 799L, Cores.Laranja, "★"),
         Produto("frame_neon", "Moldura Neon", "Uma borda vibrante para o seu avatar.", 1_999L, Color(0xFFFF8290), "◈"),
+        Produto("frame_gold", "Moldura Dourada", "Um contorno dourado de alto nível.", 2_499L, Color(0xFFFFD166), "❖"),
+        Produto("title_highroller", "Alto Rolo", "Um título para quem aposta grande.", 1_499L, Color(0xFFB388FF), "♦"),
+        Produto("frame_emerald", "Moldura Esmeralda", "Um verde profundo em volta do avatar.", 1_699L, Color(0xFF3DDC97), "✧"),
+        Produto("title_champion", "Campeão", "O título de quem domina o ranking.", 2_999L, Color(0xFF64B5F6), "✪"),
+        Produto("frame_royal", "Moldura Real", "Uma moldura digna de realeza.", 3_999L, Color(0xFFE040FB), "♛"),
     )
     var mensagem by rememberSaveable { mutableStateOf("") }
     var mensagemErro by rememberSaveable { mutableStateOf(false) }
@@ -320,6 +325,7 @@ fun TelaLoja(
             Text("${itensComprados.size} itens", color = Cores.Verde, fontSize = 13.sp, fontWeight = FontWeight.Bold)
         }
         produtos.forEach { produto ->
+            val comprado = produto.id in itensComprados
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -347,33 +353,47 @@ fun TelaLoja(
                         Text(produto.descricao, color = Color.White.copy(alpha = 0.68f), fontSize = 12.sp)
                     }
                 }
-                Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text(formatarReais(produto.precoCentavos), color = produto.cor, fontSize = 17.sp, fontWeight = FontWeight.Black)
-                val comprado = produto.id in itensComprados
-                Button(
-                    onClick = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        formatarReais(produto.precoCentavos),
+                        modifier = Modifier.weight(1f),
+                        color = produto.cor,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Black,
+                        maxLines = 1,
+                    )
+                    Button(
+                        onClick = {
                             itemEmCompra = produto.id
                             mensagem = ""
-                        onComprar(produto.id) { erro ->
+                            onComprar(produto.id) { erro ->
                                 itemEmCompra = ""
                                 mensagemErro = erro != null
-                            mensagem = erro ?: "Item adicionado à coleção."
-                        }
-                    },
+                                mensagem = erro ?: "Item adicionado à coleção."
+                            }
+                        },
                         enabled = !comprado && saldoCentavos >= produto.precoCentavos && itemEmCompra.isBlank(),
-                        colors = ButtonDefaults.buttonColors(containerColor = if (comprado) Color.White.copy(alpha = 0.14f) else Color.White),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (comprado) Color.White.copy(alpha = 0.14f) else Color.White,
+                            disabledContainerColor = Color.White.copy(alpha = 0.14f),
+                        ),
                     ) {
                         val buttonLabel = when {
-                                comprado -> "Na coleção"
-                                itemEmCompra == produto.id -> "Comprando..."
-                                saldoCentavos < produto.precoCentavos -> "Saldo insuficiente"
-                                else -> "Desbloquear"
+                            comprado -> "Na coleção"
+                            itemEmCompra == produto.id -> "Comprando..."
+                            saldoCentavos < produto.precoCentavos -> "Saldo insuficiente"
+                            else -> "Desbloquear"
                         }
                         Crossfade(targetState = buttonLabel, label = "store-purchase-${produto.id}") { label ->
                             Text(
                                 label,
-                            color = if (comprado) Color.White else Color(0xFF111418),
-                            fontWeight = FontWeight.Bold,
+                                color = if (comprado || label == "Saldo insuficiente" || label == "Comprando...") Color.White else Color(0xFF111418),
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
                             )
                         }
                     }
