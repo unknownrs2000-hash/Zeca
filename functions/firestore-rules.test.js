@@ -192,6 +192,21 @@ test("denies private-chat metadata that forges the last sender", async () => {
   ));
 });
 
+test("allows an authenticated listener before a direct chat exists, then protects it", async () => {
+  const participantUids = ["empty-chat-member", "empty-chat-other"].sort();
+  const chatId = participantUids.join("_");
+  const member = environment.authenticatedContext(participantUids[0]).firestore();
+  const outsider = environment.authenticatedContext("empty-chat-outsider").firestore();
+  const messagePath = (database) => doc(database, "chats", chatId, "messages", "first-message");
+
+  await assertSucceeds(getDoc(messagePath(member)));
+  await environment.withSecurityRulesDisabled(async (context) => {
+    await context.firestore().doc(`chats/${chatId}`).set({ participantUids });
+  });
+  await assertFails(getDoc(messagePath(outsider)));
+  await assertSucceeds(getDoc(messagePath(member)));
+});
+
 test("allows a new account to create an incomplete profile before choosing its username", async () => {
   const uid = "new-profile-user";
   const database = environment.authenticatedContext(uid).firestore();

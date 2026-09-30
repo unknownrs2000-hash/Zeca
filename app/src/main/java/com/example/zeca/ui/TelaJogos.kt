@@ -60,6 +60,10 @@ fun TelaJogos(
     var tipoRoleta by rememberSaveable { mutableStateOf("Cor") }
     var selecaoRoleta by rememberSaveable { mutableStateOf("Vermelho") }
     var numeroRoleta by rememberSaveable { mutableStateOf("17") }
+    var ladoMoeda by rememberSaveable { mutableStateOf("Cara") }
+    var numeroDado by rememberSaveable { mutableStateOf("1") }
+    var paridadeDado by rememberSaveable { mutableStateOf("Par") }
+    var casaMinas by rememberSaveable { mutableStateOf("1") }
     var resultado by rememberSaveable { mutableStateOf("Escolha um jogo para começar") }
     var mensagem by rememberSaveable { mutableStateOf("") }
     var ocupado by rememberSaveable { mutableStateOf(false) }
@@ -114,6 +118,25 @@ fun TelaJogos(
         mensagem
     }
 
+    fun jogarMiniJogo(gameId: String, selection: String) {
+        val wager = apostaCentavos ?: return
+        ocupado = true
+        onJogar(gameId, wager, "", selection, UUID.randomUUID().toString()) { round, error ->
+            ocupado = false
+            if (error != null || round == null) {
+                lucroUltimo = 0L
+                atrasoSaldo = 0L
+                mensagem = error?.localizedMessage ?: "Não foi possível concluir a rodada."
+            } else {
+                resultado = round.resultado
+                lucroUltimo = round.variacaoCentavos
+                atrasoSaldo = 1_300L
+                mensagem = mensagemPremio(round.variacaoCentavos)
+                rodada += 1
+            }
+        }
+    }
+
     TelaJogosBase {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -128,7 +151,10 @@ fun TelaJogos(
         }
 
         JogosPainel {
-            SeletorJogos(listOf("Slots", "Roleta", "Crash", "Blackjack"), jogo) {
+            SeletorJogos(
+                listOf("Slots", "Roleta", "Crash", "Blackjack", "Cara ou coroa", "Dado", "Par ou ímpar", "Minas", "Raspadinha"),
+                jogo,
+            ) {
                 jogo = it
                 mensagem = ""
                 lucroUltimo = 0L
@@ -291,7 +317,7 @@ fun TelaJogos(
                         }
                     },
                 )
-                else -> BlackjackJogo(
+                "Blackjack" -> BlackjackJogo(
                     apostaValida = apostaValida,
                     carregando = ocupado,
                     estado = estadoBlackjack,
@@ -327,8 +353,104 @@ fun TelaJogos(
                         }
                     },
                 )
+                else -> {
+                    val opcoes = when (jogo) {
+                        "Cara ou coroa" -> listOf("Cara", "Coroa")
+                        "Dado" -> listOf("1", "2", "3", "4", "5", "6")
+                        "Par ou ímpar" -> listOf("Par", "Ímpar")
+                        "Minas" -> listOf("1", "2", "3", "4", "5")
+                        else -> emptyList()
+                    }
+                    val selecionada = when (jogo) {
+                        "Cara ou coroa" -> ladoMoeda
+                        "Dado" -> numeroDado
+                        "Par ou ímpar" -> paridadeDado
+                        "Minas" -> casaMinas
+                        else -> ""
+                    }
+                    val regras = when (jogo) {
+                        "Cara ou coroa" -> "Escolha um lado. Acerto paga 1,90x."
+                        "Dado" -> "Adivinhe o resultado de 1 a 6. Acerto paga 5,50x."
+                        "Par ou ímpar" -> "Escolha a paridade do dado. Acerto paga 1,90x."
+                        "Minas" -> "Escolha uma casa entre cinco. Quatro são seguras e pagam 1,18x."
+                        else -> "Três estrelas pagam 20x, sinos 4x e cerejas 2x."
+                    }
+                    val gameId = when (jogo) {
+                        "Cara ou coroa" -> "coin"
+                        "Dado" -> "dice"
+                        "Par ou ímpar" -> "parity"
+                        "Minas" -> "mines"
+                        else -> "scratch"
+                    }
+                    val selecaoServidor = when (jogo) {
+                        "Cara ou coroa" -> if (ladoMoeda == "Cara") "heads" else "tails"
+                        "Dado" -> numeroDado
+                        "Par ou ímpar" -> if (paridadeDado == "Par") "even" else "odd"
+                        "Minas" -> casaMinas
+                        else -> ""
+                    }
+                    MiniGameCard(
+                        nome = jogo,
+                        regras = regras,
+                        opcoes = opcoes,
+                        selecionada = selecionada,
+                        onSelecionar = { escolha ->
+                            when (jogo) {
+                                "Cara ou coroa" -> ladoMoeda = escolha
+                                "Dado" -> numeroDado = escolha
+                                "Par ou ímpar" -> paridadeDado = escolha
+                                "Minas" -> casaMinas = escolha
+                            }
+                        },
+                        resultado = resultado,
+                        mensagem = mensagemTela,
+                        lucroCentavos = lucroUltimo,
+                        carregando = ocupado,
+                        habilitado = apostaValida && !ocupado,
+                        onJogar = { jogarMiniJogo(gameId, selecaoServidor) },
+                    )
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun MiniGameCard(
+    nome: String,
+    regras: String,
+    opcoes: List<String>,
+    selecionada: String,
+    onSelecionar: (String) -> Unit,
+    resultado: String,
+    mensagem: String,
+    lucroCentavos: Long,
+    carregando: Boolean,
+    habilitado: Boolean,
+    onJogar: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(nome, color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+        Text(regras, color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp)
+        if (opcoes.isNotEmpty()) SeletorJogos(opcoes, selecionada, onSelecionar)
+        if (resultado != "Escolha um jogo para começar") {
+            Text(resultado, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text(
+                "Variação: ${if (lucroCentavos > 0) "+" else ""}${formatarReais(lucroCentavos)}",
+                color = if (lucroCentavos > 0) Cores.Verde else Color(0xFFFF8790),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+        Button(
+            onClick = onJogar,
+            enabled = habilitado,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = Cores.Verde, contentColor = Color(0xFF06110B)),
+        ) {
+            Text(if (carregando) "Sorteando..." else "Jogar", fontWeight = FontWeight.Bold)
+        }
+        StatusText(mensagem)
     }
 }
 

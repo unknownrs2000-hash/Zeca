@@ -4,9 +4,12 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -54,6 +57,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
@@ -84,6 +88,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -99,6 +104,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -114,8 +120,11 @@ import com.example.zeca.MensagemChat
 import com.example.zeca.PerfilPublico
 import com.example.zeca.RespostaChat
 import com.example.zeca.ui.theme.Cores
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.qrcode.QRCodeWriter
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.math.BigDecimal
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -125,6 +134,7 @@ import kotlin.math.roundToInt
 @Composable
 fun TelaChat(
     uidAtual: String,
+    chavePixAtual: String,
     jogadores: List<JogadorRanking>,
     onEnviar: (String?, String?, String, String, RespostaChat?, (Exception?) -> Unit) -> Unit,
     onEncaminhar: (String?, String?, String, String, (Exception?) -> Unit) -> Unit,
@@ -233,8 +243,8 @@ fun TelaChat(
         }
     }
 
-    val enviarMensagem: (RespostaChat?, () -> Unit) -> Unit = { resposta, aoSucesso ->
-        val texto = rascunho.trim()
+    fun enviarTextoChat(textoOriginal: String, resposta: RespostaChat?, aoSucesso: () -> Unit) {
+        val texto = textoOriginal.trim()
         if (texto.isNotEmpty() && !enviando) {
             enviando = true
             erro = ""
@@ -247,13 +257,16 @@ fun TelaChat(
             ) { error ->
                 enviando = false
                 if (error == null) {
-                    rascunho = ""
+                    if (textoOriginal == rascunho) rascunho = ""
                     aoSucesso()
                 } else {
                     erro = error.localizedMessage ?: "Não foi possível enviar a mensagem."
                 }
             }
         }
+    }
+    val enviarMensagem: (RespostaChat?, () -> Unit) -> Unit = { resposta, aoSucesso ->
+        enviarTextoChat(rascunho, resposta, aoSucesso)
     }
 
     LaunchedEffect(perfilUid) {
@@ -405,6 +418,9 @@ fun TelaChat(
                 mensagens = mensagens,
                 jogadores = jogadores,
                 uidAtual = uidAtual,
+                chavePixAtual = chavePixAtual,
+                podeCriarCobranca = modo == "Privado" && destinatarioUid.isNotBlank() && !emGrupo,
+                onEnviarCobranca = { texto, aoSucesso -> enviarTextoChat(texto, null, aoSucesso) },
                 onEncaminhar = onEncaminhar,
                 ehGlobal = modo == "Global",
                 rascunho = rascunho,
@@ -1085,6 +1101,9 @@ private fun TelaConversa(
     mensagens: List<MensagemChat>,
     jogadores: List<JogadorRanking>,
     uidAtual: String,
+    chavePixAtual: String,
+    podeCriarCobranca: Boolean,
+    onEnviarCobranca: (String, () -> Unit) -> Unit,
     onEncaminhar: (String?, String?, String, String, (Exception?) -> Unit) -> Unit,
     ehGlobal: Boolean,
     rascunho: String,
@@ -1109,6 +1128,23 @@ private fun TelaConversa(
     var menu by remember { mutableStateOf<MensagemChat?>(null) }
     var apagando by remember { mutableStateOf<MensagemChat?>(null) }
     var encaminhando by remember { mutableStateOf<MensagemChat?>(null) }
+    var cobrancaAberta by rememberSaveable { mutableStateOf(false) }
+    var valorCobranca by rememberSaveable { mutableStateOf("") }
+    val valorCobrancaCentavos = remember(valorCobranca) { parseValorCobranca(valorCobranca) }
+    val conteudoCobranca = remember(chavePixAtual, valorCobrancaCentavos) {
+        valorCobrancaCentavos?.let { valor ->
+            Uri.Builder()
+                .scheme("zeca")
+                .authority("pix")
+                .appendQueryParameter("key", chavePixAtual)
+                .appendQueryParameter("amount", valor.toString())
+                .build()
+                .toString()
+        }
+    }
+    val imagemCobranca = remember(conteudoCobranca) {
+        conteudoCobranca?.let(::criarQrCodeChat)
+    }
     val invertida = remember(mensagens) { mensagens.asReversed() }
     val podeEnviar = rascunho.isNotBlank() && !enviando && podeEnviarMensagem
 
@@ -1220,6 +1256,18 @@ private fun TelaConversa(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.Bottom,
         ) {
+            if (podeCriarCobranca) {
+                IconButton(
+                    onClick = {
+                        valorCobranca = ""
+                        cobrancaAberta = true
+                    },
+                    enabled = !enviando,
+                    modifier = Modifier.size(48.dp),
+                ) {
+                    Icon(Icons.Filled.QrCode2, contentDescription = "Criar código de pagamento", tint = Cores.Verde)
+                }
+            }
             OutlinedTextField(
                 value = rascunho,
                 onValueChange = onRascunhoChange,
@@ -1254,6 +1302,70 @@ private fun TelaConversa(
                     contentDescription = "Enviar",
                     tint = if (podeEnviar) Color(0xFF07130F) else Color.White.copy(alpha = 0.4f),
                 )
+            }
+        }
+    }
+
+    if (cobrancaAberta) {
+        Dialog(onDismissRequest = { cobrancaAberta = false }) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth(0.92f)
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(Brush.verticalGradient(listOf(Color(0xFF20282C), Cores.Cartao, Cores.Fundo)))
+                    .border(1.dp, Color.White.copy(alpha = 0.17f), RoundedCornerShape(24.dp))
+                    .verticalScroll(rememberScrollState())
+                    .padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                Text("Criar cobrança", color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                if (chavePixAtual.isBlank()) {
+                    Text(
+                        "Cadastre uma chave Pix na Carteira antes de criar uma cobrança.",
+                        color = Cores.Laranja,
+                        fontSize = 13.sp,
+                    )
+                } else {
+                    OutlinedTextField(
+                        value = valorCobranca,
+                        onValueChange = { valorCobranca = it.filter { caractere -> caractere.isDigit() || caractere == ',' || caractere == '.' }.take(8) },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Valor") },
+                        prefix = { Text("R$ ") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    )
+                    if (valorCobranca.isNotBlank() && valorCobrancaCentavos == null) {
+                        Text("Informe um valor entre R$ 0,01 e R$ 10.000,00.", color = Cores.Laranja, fontSize = 12.sp)
+                    }
+                    imagemCobranca?.let { bitmap ->
+                        Image(
+                            bitmap = bitmap.asImageBitmap(),
+                            contentDescription = "Prévia do código de pagamento",
+                            modifier = Modifier.size(190.dp),
+                        )
+                        Text(
+                            "Cobrança para saldo interno do Zeca. Não é um Pix bancário.",
+                            color = Color.White.copy(alpha = 0.68f),
+                            fontSize = 12.sp,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                    Button(
+                        onClick = {
+                            val centavos = valorCobrancaCentavos ?: return@Button
+                            val codigo = conteudoCobranca ?: return@Button
+                            val texto = "COBRANÇA ZECA\nValor: ${formatarReais(centavos)}\n$codigo"
+                            onEnviarCobranca(texto) { cobrancaAberta = false }
+                        },
+                        enabled = imagemCobranca != null && !enviando && podeEnviarMensagem,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(if (enviando) "Enviando..." else "Enviar cobrança no chat")
+                    }
+                }
+                TextButton(onClick = { cobrancaAberta = false }) { Text("Cancelar", color = Color.White.copy(alpha = 0.75f)) }
             }
         }
     }
@@ -1436,7 +1548,27 @@ private fun BolhaMensagem(
                         fontStyle = FontStyle.Italic,
                     )
                 } else {
-                    Text(mensagem.texto, color = Color.White, fontSize = 14.sp)
+                    val cobranca = remember(mensagem.texto) { parseCodigoCobranca(mensagem.texto) }
+                    if (cobranca == null) {
+                        Text(mensagem.texto, color = Color.White, fontSize = 14.sp)
+                    } else {
+                        Text("COBRANÇA ZECA", color = Cores.Verde, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text(formatarReais(cobranca.valorCentavos), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Black)
+                        val imagem = remember(cobranca.uri) { criarQrCodeChat(cobranca.uri) }
+                        if (imagem != null) {
+                            Image(
+                                bitmap = imagem.asImageBitmap(),
+                                contentDescription = "Código de pagamento ${formatarReais(cobranca.valorCentavos)}",
+                                modifier = Modifier.align(Alignment.CenterHorizontally).size(176.dp),
+                            )
+                        }
+                        Text(
+                            "Escaneie pela Carteira para transferir no Zeca. Não é um Pix bancário.",
+                            color = Color.White.copy(alpha = 0.7f),
+                            fontSize = 11.sp,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
                 }
                 if (mensagem.enviadaEmMs > 0) {
                     Text(
@@ -1593,6 +1725,35 @@ private fun compartilharTexto(contexto: Context, texto: String) {
     }
     contexto.startActivity(Intent.createChooser(envio, "Compartilhar mensagem"))
 }
+
+private data class CodigoPagamentoChat(val uri: String, val valorCentavos: Long)
+
+private fun parseValorCobranca(valor: String): Long? {
+    val formatado = valor.trim().replace(',', '.')
+    if (!Regex("^\\d{1,5}(\\.\\d{1,2})?$").matches(formatado)) return null
+    val centavos = runCatching { BigDecimal(formatado).movePointRight(2).longValueExact() }.getOrNull()
+    return centavos?.takeIf { it in 1..1_000_000 }
+}
+
+private fun parseCodigoCobranca(texto: String): CodigoPagamentoChat? = runCatching {
+    if (!texto.startsWith("COBRANÇA ZECA\n")) return null
+    val uriTexto = texto.lineSequence().firstOrNull { it.startsWith("zeca://pix?") } ?: return null
+    val uri = Uri.parse(uriTexto)
+    if (uri.scheme != "zeca" || uri.host != "pix" || uri.getQueryParameter("key").isNullOrBlank()) return null
+    val valor = uri.getQueryParameter("amount")?.toLongOrNull()?.takeIf { it in 1..1_000_000 } ?: return null
+    CodigoPagamentoChat(uriTexto, valor)
+}.getOrNull()
+
+private fun criarQrCodeChat(conteudo: String): Bitmap? = runCatching {
+    val matriz = QRCodeWriter().encode(conteudo, BarcodeFormat.QR_CODE, 384, 384)
+    val pixels = IntArray(matriz.width * matriz.height) { indice ->
+        if (matriz[indice % matriz.width, indice / matriz.width]) android.graphics.Color.BLACK
+        else android.graphics.Color.WHITE
+    }
+    Bitmap.createBitmap(matriz.width, matriz.height, Bitmap.Config.ARGB_8888).apply {
+        setPixels(pixels, 0, matriz.width, 0, 0, matriz.width, matriz.height)
+    }
+}.getOrNull()
 
 @Composable
 private fun DialogoEncaminhar(

@@ -4,6 +4,9 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -72,6 +75,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -85,6 +89,8 @@ import com.example.zeca.ui.theme.Cores
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
+import java.io.File
+import java.io.FileOutputStream
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.text.NumberFormat
@@ -211,6 +217,58 @@ private fun criarQrCode(conteudo: String): Bitmap? = runCatching {
         }
     }
 }.getOrNull()
+
+private fun compartilharComprovanteImagem(context: android.content.Context, recibo: ComprovantePix) {
+    val bitmap = Bitmap.createBitmap(1080, 1350, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    canvas.drawColor(android.graphics.Color.rgb(10, 16, 18))
+    val painel = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.rgb(27, 36, 39) }
+    canvas.drawRoundRect(44f, 44f, 1036f, 1306f, 42f, 42f, painel)
+
+    fun drawText(value: String, y: Float, size: Float, color: Int, bold: Boolean = false) {
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = color
+            textSize = size
+            typeface = if (bold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+        }
+        var visibleText = value
+        while (visibleText.isNotEmpty() && paint.measureText(visibleText) > 840f) {
+            visibleText = visibleText.dropLast(2) + "…"
+        }
+        canvas.drawText(visibleText, 112f, y, paint)
+    }
+
+    val green = android.graphics.Color.rgb(61, 220, 151)
+    val white = android.graphics.Color.rgb(245, 248, 248)
+    val muted = android.graphics.Color.rgb(170, 184, 186)
+    drawText("ZECA · COMPROVANTE", 150f, 36f, green, true)
+    drawText(if (recibo.recebimento) "Recebimento concluído" else "Pagamento concluído", 265f, 52f, white, true)
+    drawText(formatarReais(recibo.valorCentavos), 430f, 82f, white, true)
+    canvas.drawRect(112f, 500f, 968f, 503f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.rgb(66, 82, 85) })
+    drawText(if (recibo.recebimento) "RECEBIDO DE" else "ENVIADO PARA", 580f, 25f, muted, true)
+    drawText(recibo.contraparte, 630f, 36f, white)
+    drawText("ORIGEM / DESTINO", 735f, 25f, muted, true)
+    drawText(if (recibo.recebimento) "Carteira Zeca" else "Seu saldo Zeca", 785f, 34f, white)
+    drawText("DATA", 890f, 25f, muted, true)
+    drawText(recibo.horario, 940f, 34f, white)
+    drawText("IDENTIFICADOR", 1045f, 25f, muted, true)
+    drawText(recibo.id, 1095f, 29f, white)
+    recibo.saldoAposCentavos?.let { drawText("Saldo após: ${formatarReais(it)}", 1170f, 28f, green, true) }
+    drawText("Saldo interno do Zeca · não é liquidação bancária Pix", 1250f, 23f, muted)
+
+    val directory = File(context.cacheDir, "receipts").apply { mkdirs() }
+    val file = File(directory, "receipt-${UUID.randomUUID()}.png")
+    FileOutputStream(file).use { output -> bitmap.compress(Bitmap.CompressFormat.PNG, 100, output) }
+    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "image/png"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        putExtra(Intent.EXTRA_TEXT, "Comprovante Zeca · ${formatarReais(recibo.valorCentavos)}")
+        clipData = android.content.ClipData.newUri(context.contentResolver, "Comprovante Zeca", uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(shareIntent, "Compartilhar comprovante"))
+}
 
 @Composable
 fun TelaCarteira(
@@ -656,24 +714,15 @@ fun TelaCarteira(
 
                     Button(
                         onClick = {
-                            val texto = "COMPROVANTE ZECA\n" +
-                                "${if (recibo.recebimento) "Recebimento" else "Pagamento"} concluído\n" +
-                                "Valor: ${formatarReais(recibo.valorCentavos)}\n" +
-                                "${if (recibo.recebimento) "Recebido de" else "Enviado para"}: ${recibo.contraparte}\n" +
-                                "${if (recibo.recebimento) "Destino" else "Origem"}: ${if (recibo.recebimento) "Carteira Zeca" else "Seu saldo Zeca"}\n" +
-                                "Tipo: Transferência entre usuários\nData: ${recibo.horario}\nID: ${recibo.id}\n" +
-                                (recibo.saldoAposCentavos?.let { "Saldo após o envio: ${formatarReais(it)}\n" } ?: "") +
-                                "Movimentação de saldo interno; não é liquidação bancária Pix."
-                            val compartilhar = Intent(Intent.ACTION_SEND).apply {
-                                type = "text/plain"
-                                putExtra(Intent.EXTRA_TEXT, texto)
-                            }
-                            context.startActivity(Intent.createChooser(compartilhar, "Compartilhar comprovante"))
+                            runCatching { compartilharComprovanteImagem(context, recibo) }
+                                .onFailure {
+                                    Toast.makeText(context, "Não foi possível criar a imagem do comprovante.", Toast.LENGTH_LONG).show()
+                                }
                         },
                         modifier = Modifier.fillMaxWidth().height(52.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Cores.Verde, contentColor = Color(0xFF06110B)),
                     ) {
-                        Text("Compartilhar comprovante", fontWeight = FontWeight.Bold)
+                        Text("Compartilhar comprovante em imagem", fontWeight = FontWeight.Bold)
                     }
                     TextButton(onClick = { comprovante = null }, modifier = Modifier.fillMaxWidth()) {
                         Text("Fechar", color = Color.White.copy(alpha = 0.75f))

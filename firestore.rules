@@ -311,6 +311,7 @@ service cloud.firestore {
       match /messages/{messageId} {
         allow read: if signedIn()
           && (chatId == 'global'
+              || !exists(/databases/$(database)/documents/chats/$(chatId))
             || request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participantUids);
         allow create: if signedIn()
           && request.resource.data.keys().hasOnly([

@@ -7,11 +7,16 @@ const { FieldValue, getFirestore } = require("firebase-admin/firestore");
 const { HttpsError, onCall } = require("./callable");
 const {
   blackjackHandValue,
+  coinFlipResult,
   crashMultiplierBasisPoints,
   crashPointBasisPoints,
   createShuffledDeck,
+  diceGuessResult,
   isBlackjack,
+  minesPickResult,
+  parityDiceResult,
   rouletteResult,
+  scratchCardResult,
   settleBlackjack,
   spinSlots,
   validateWager,
@@ -415,7 +420,7 @@ exports.playGame = onCall(async (request) => {
   if (!validateWager(amountCents, MAX_TRANSFER_CENTS)) {
     throw new HttpsError("invalid-argument", "Valor da aposta inválido.");
   }
-  if (!new Set(["slots", "roulette"]).has(game)
+  if (!new Set(["slots", "roulette", "coin", "dice", "parity", "mines", "scratch"]).has(game)
       || typeof requestId !== "string"
       || !/^[a-f0-9-]{36}$/i.test(requestId)) {
     throw new HttpsError("invalid-argument", "Jogo ou identificador inválido.");
@@ -453,7 +458,7 @@ exports.playGame = onCall(async (request) => {
     if (game === "slots") {
       result = spinSlots(amountCents);
       returnedCents = result.payoutCents;
-    } else {
+    } else if (game === "roulette") {
       try {
         result = rouletteResult(
           request.data?.betType,
@@ -464,6 +469,17 @@ exports.playGame = onCall(async (request) => {
         returnedCents = result.payoutCents;
       } catch {
         throw new HttpsError("invalid-argument", "Aposta de roleta inválida.");
+      }
+    } else {
+      try {
+        if (game === "coin") result = coinFlipResult(request.data?.selection, amountCents);
+        else if (game === "dice") result = diceGuessResult(request.data?.selection, amountCents);
+        else if (game === "parity") result = parityDiceResult(request.data?.selection, amountCents);
+        else if (game === "mines") result = minesPickResult(request.data?.selection, amountCents);
+        else result = scratchCardResult(amountCents);
+        returnedCents = result.payoutCents;
+      } catch {
+        throw new HttpsError("invalid-argument", "Aposta do minijogo inválida.");
       }
     }
 
@@ -479,9 +495,18 @@ exports.playGame = onCall(async (request) => {
     if (!Number.isSafeInteger(balanceFinal)) {
       throw new HttpsError("failed-precondition", "Saldo resultante inválido.");
     }
+    const gameNames = {
+      coin: "Cara ou coroa",
+      dice: "Dado",
+      parity: "Par ou ímpar",
+      mines: "Minas",
+      scratch: "Raspadinha",
+    };
     const description = game === "slots"
       ? `Slots · ${result.reels.join(" ")}`
-      : `Roleta · ${result.number} ${result.color}`;
+      : game === "roulette"
+        ? `Roleta · ${result.number} ${result.color}`
+        : `${gameNames[game]} · ${result.displayText}`;
     transaction.update(userRef, {
       balanceCents: balanceFinal,
       gamesPlayed,
@@ -499,7 +524,11 @@ exports.playGame = onCall(async (request) => {
     });
     registrarPremioNivel(transaction, userRef, requestId, progression);
     response = {
-      result: game === "slots" ? result.reels : { number: result.number, color: result.color },
+      result: game === "slots"
+        ? result.reels
+        : game === "roulette"
+          ? { number: result.number, color: result.color }
+          : { display: result.displayText },
       payoutMultiplier: result.multiplier,
       deltaCents,
       balanceCents: balanceFinal,

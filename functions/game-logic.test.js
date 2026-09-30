@@ -4,11 +4,16 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   blackjackHandValue,
+  coinFlipResult,
   crashMultiplierBasisPoints,
   crashPointBasisPoints,
   createShuffledDeck,
+  diceGuessResult,
   rouletteResult,
   settleBlackjack,
+  minesPickResult,
+  parityDiceResult,
+  scratchCardResult,
   spinSlots,
   validateWager,
 } = require("./game-logic");
@@ -70,4 +75,23 @@ test("crash curve starts at 1.00x, grows, and stays capped", () => {
   assert.equal(crashMultiplierBasisPoints(100_000), 1_000_000);
   assert.equal(crashPointBasisPoints(() => 0), 100);
   assert.equal(crashPointBasisPoints(() => 999_999), 1_000_000);
+});
+
+test("coin flip, exact dice and parity settle the server-selected outcomes", () => {
+  assert.equal(coinFlipResult("heads", 1_000, () => 0).payoutCents, 1_900);
+  assert.equal(coinFlipResult("heads", 1_000, () => 1).payoutCents, 0);
+  assert.equal(diceGuessResult("6", 1_000, () => 5).payoutCents, 5_500);
+  assert.equal(diceGuessResult("2", 1_000, () => 5).payoutCents, 0);
+  assert.equal(parityDiceResult("odd", 1_000, () => 0).payoutCents, 1_900);
+  assert.equal(parityDiceResult("even", 1_000, () => 0).payoutCents, 0);
+});
+
+test("mines and scratch cards pay only their predefined winning outcomes", () => {
+  assert.equal(minesPickResult("3", 1_000, () => 2).payoutCents, 0);
+  assert.equal(minesPickResult("3", 1_000, () => 1).payoutCents, 1_180);
+  assert.equal(scratchCardResult(1_000, () => 0).payoutCents, 20_000);
+  assert.equal(scratchCardResult(1_000, () => 5).payoutCents, 4_000);
+  assert.equal(scratchCardResult(1_000, () => 100).payoutCents, 2_000);
+  assert.equal(scratchCardResult(1_000, () => 320).payoutCents, 0);
+  assert.throws(() => minesPickResult("6", 1_000, () => 0), RangeError);
 });

@@ -21,6 +21,90 @@ function spinSlots(wagerCents, secureRandomInt = randomInt) {
   return { reels, payoutCents: wagerCents * multiplier, multiplier };
 }
 
+function coinFlipResult(selection, wagerCents, secureRandomInt = randomInt) {
+  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER) || !["heads", "tails"].includes(selection)) {
+    throw new RangeError("Invalid coin-flip wager.");
+  }
+  const outcome = secureRandomInt(2) === 0 ? "heads" : "tails";
+  const won = outcome === selection;
+  return {
+    displayText: `${outcome === "heads" ? "Cara" : "Coroa"} · ${won ? "Acertou" : "Errou"}`,
+    outcome,
+    won,
+    payoutCents: won ? Math.floor(wagerCents * 190 / 100) : 0,
+    multiplier: won ? 190 : 0,
+  };
+}
+
+function diceGuessResult(selection, wagerCents, secureRandomInt = randomInt) {
+  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER)
+      || !/^[1-6]$/.test(String(selection))) {
+    throw new RangeError("Invalid dice wager.");
+  }
+  const roll = secureRandomInt(6) + 1;
+  const won = roll === Number(selection);
+  return {
+    displayText: `Saiu ${roll} · ${won ? "Acertou" : "Errou"}`,
+    roll,
+    won,
+    payoutCents: won ? Math.floor(wagerCents * 550 / 100) : 0,
+    multiplier: won ? 550 : 0,
+  };
+}
+
+function parityDiceResult(selection, wagerCents, secureRandomInt = randomInt) {
+  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER) || !["even", "odd"].includes(selection)) {
+    throw new RangeError("Invalid parity wager.");
+  }
+  const roll = secureRandomInt(6) + 1;
+  const outcome = roll % 2 === 0 ? "even" : "odd";
+  const won = outcome === selection;
+  return {
+    displayText: `Dado ${roll} · ${won ? "Acertou" : "Errou"}`,
+    roll,
+    outcome,
+    won,
+    payoutCents: won ? Math.floor(wagerCents * 190 / 100) : 0,
+    multiplier: won ? 190 : 0,
+  };
+}
+
+function minesPickResult(selection, wagerCents, secureRandomInt = randomInt) {
+  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER)
+      || !/^[1-5]$/.test(String(selection))) {
+    throw new RangeError("Invalid mines wager.");
+  }
+  const mine = secureRandomInt(5) + 1;
+  const chosenCell = Number(selection);
+  const won = chosenCell !== mine;
+  return {
+    displayText: won ? `Casa ${chosenCell} segura · venceu` : `Mina na casa ${mine} · perdeu`,
+    chosenCell,
+    mine,
+    won,
+    payoutCents: won ? Math.floor(wagerCents * 118 / 100) : 0,
+    multiplier: won ? 118 : 0,
+  };
+}
+
+function scratchCardResult(wagerCents, secureRandomInt = randomInt) {
+  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER)) {
+    throw new RangeError("Invalid scratch-card wager.");
+  }
+  const draw = secureRandomInt(1_000);
+  const prize = draw < 5
+    ? { displayText: "Três estrelas · prêmio máximo", multiplier: 2_000 }
+    : draw < 100
+      ? { displayText: "Três sinos · prêmio", multiplier: 400 }
+      : draw < 320
+        ? { displayText: "Três cerejas · prêmio", multiplier: 200 }
+        : { displayText: "Não premiada", multiplier: 0 };
+  return {
+    ...prize,
+    payoutCents: Math.floor(wagerCents * prize.multiplier / 100),
+  };
+}
+
 function rouletteResult(betType, selection, number, wagerCents) {
   if (!Number.isInteger(number) || number < 0 || number > 36) {
     throw new RangeError("Roulette number must be between 0 and 36.");
@@ -114,11 +198,16 @@ function crashMultiplierBasisPoints(elapsedMs) {
 module.exports = {
   SLOT_SYMBOLS,
   blackjackHandValue,
+  coinFlipResult,
   crashMultiplierBasisPoints,
   crashPointBasisPoints,
   createShuffledDeck,
+  diceGuessResult,
   isBlackjack,
+  minesPickResult,
+  parityDiceResult,
   rouletteResult,
+  scratchCardResult,
   settleBlackjack,
   spinSlots,
   validateWager,

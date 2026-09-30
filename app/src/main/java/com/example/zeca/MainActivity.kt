@@ -371,6 +371,7 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                         )
                         Aba.Chat -> TelaChat(
                             uidAtual = usuario.uid,
+                            chavePixAtual = jogador.chavePix,
                             jogadores = ranking,
                             onEnviar = { destinatarioUid, grupoId, texto, requestId, resposta, concluir ->
                                 FirebaseRepository.enviarMensagemChat(

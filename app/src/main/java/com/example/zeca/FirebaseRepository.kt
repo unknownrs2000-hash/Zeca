@@ -459,14 +459,22 @@ object FirebaseRepository {
                 if (snapshot == null) return@addSnapshotListener
                 callback(snapshot.documents.mapNotNull { doc ->
                     val data = doc.data ?: return@mapNotNull null
+                    val description = data["description"] as? String ?: "Movimentação"
+                    val delta = (data["deltaCents"] as? Number)?.toLong() ?: 0L
+                    val transfer = data["type"] == "pix_transfer"
+                    val counterparty = description.removePrefix("De ").removePrefix("Para ")
                     Movimento(
-                        titulo = data["description"] as? String ?: "Movimentação",
-                        variacaoCentavos = (data["deltaCents"] as? Number)?.toLong() ?: 0L,
+                        titulo = when {
+                            transfer && delta > 0L -> "Recebido de $counterparty"
+                            transfer -> "Enviado para $counterparty"
+                            else -> description
+                        },
+                        variacaoCentavos = delta,
                         horario = (data["createdAt"] as? com.google.firebase.Timestamp)
                             ?.toDate()?.let { java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.forLanguageTag("pt-BR")).format(it) }
                             ?: "Agora",
                         id = doc.id,
-                        ehTransferenciaPix = data["type"] == "pix_transfer",
+                        ehTransferenciaPix = transfer,
                         ehPremioNivel = data["type"] == "level_reward",
                     )
                 }, snapshot.metadata.isFromCache)
@@ -660,7 +668,8 @@ object FirebaseRepository {
             val rawResult = data?.get("result")
             val resultText = when (rawResult) {
                 is List<*> -> rawResult.joinToString("     ")
-                is Map<*, *> -> "${rawResult["number"]} · ${rawResult["color"]}"
+                is Map<*, *> -> rawResult["display"] as? String
+                    ?: "${rawResult["number"]} · ${rawResult["color"]}"
                 else -> ""
             }
             val resultado = data?.let {

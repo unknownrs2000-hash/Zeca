@@ -44,6 +44,7 @@ import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
+import com.google.firebase.auth.FirebaseAuthUserCollisionException
 import kotlinx.coroutines.launch
 
 @Composable
@@ -107,6 +108,13 @@ fun TelaAutenticacao(onAutenticado: (FirebaseUser) -> Unit) {
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
             )
+            if (modoCadastro) {
+                Text(
+                    "Cada e-mail pode ser usado em uma única conta.",
+                    color = Color.White.copy(alpha = 0.58f),
+                    fontSize = 11.sp,
+                )
+            }
             OutlinedTextField(
                 value = senha,
                 onValueChange = { senha = it; erro = "" },
@@ -128,9 +136,9 @@ fun TelaAutenticacao(onAutenticado: (FirebaseUser) -> Unit) {
                         ocupado = true
                         erro = ""
                         val tarefa = if (modoCadastro) {
-                            auth.createUserWithEmailAndPassword(email, senha)
+                            auth.createUserWithEmailAndPassword(email.trim(), senha)
                         } else {
-                            auth.signInWithEmailAndPassword(email, senha)
+                            auth.signInWithEmailAndPassword(email.trim(), senha)
                         }
                         tarefa.addOnCompleteListener { result ->
                             val user = result.result?.user
@@ -261,7 +269,9 @@ private fun RowDivider() {
     Spacer(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.13f)))
 }
 
-private fun mensagemAuth(exception: Exception?): String = when (exception) {
-    null -> "Não foi possível concluir a operação."
+private fun mensagemAuth(exception: Exception?): String = when {
+    exception == null -> "Não foi possível concluir a operação."
+    exception is FirebaseAuthUserCollisionException ->
+        "Já existe uma conta vinculada a este e-mail. Entre usando o método do cadastro original."
     else -> exception.localizedMessage ?: "Não foi possível concluir a operação."
 }
