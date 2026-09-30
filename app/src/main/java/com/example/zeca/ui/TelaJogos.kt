@@ -720,6 +720,7 @@ private fun MiniGameCard(
                     "Dado" -> "Lançar dado"
                     "Par ou ímpar" -> "Lançar dado"
                     "Minas" -> "Revelar casa"
+                    "Futebol" -> "Chutar"
                     else -> "Raspar cartão"
                 },
                 onClick = onJogar,
