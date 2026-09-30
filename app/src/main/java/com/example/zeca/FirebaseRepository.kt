@@ -167,6 +167,7 @@ object FirebaseRepository {
     private const val SERVER_URL = "https://zeca-jvic.onrender.com"
     private const val CLOUDINARY_CLOUD_NAME = "vwctfu9u"
     private const val CLOUDINARY_UPLOAD_PRESET = "zeca_unsigned"
+    private const val REQUEST_TIMEOUT_MS = 30_000L
     private val principal = android.os.Handler(android.os.Looper.getMainLooper())
 
     fun garantirPerfil(user: FirebaseUser, callback: (Exception?) -> Unit) {
@@ -742,13 +743,33 @@ object FirebaseRepository {
         dados: Map<String, Any>,
         callback: (Map<String, Any>?, Exception?) -> Unit,
     ) {
+        val callbackConcluido = java.util.concurrent.atomic.AtomicBoolean(false)
+        val timeout = Runnable {
+            if (callbackConcluido.compareAndSet(false, true)) {
+                callback(
+                    null,
+                    IllegalStateException(
+                        "A solicitação demorou para confirmar. Confira seu saldo e coleção antes de tentar novamente.",
+                    ),
+                )
+            }
+        }
+        principal.postDelayed(timeout, REQUEST_TIMEOUT_MS)
+        fun concluir(data: Map<String, Any>?, error: Exception?) {
+            if (callbackConcluido.compareAndSet(false, true)) {
+                principal.removeCallbacks(timeout)
+                callback(data, error)
+            }
+        }
+
         val usuario = auth.currentUser
         if (usuario == null) {
-            callback(null, IllegalStateException("Entre na sua conta para continuar."))
+            concluir(null, IllegalStateException("Entre na sua conta para continuar."))
             return
         }
         usuario.getIdToken(false)
             .addOnSuccessListener { tokenResult ->
+                if (callbackConcluido.get()) return@addOnSuccessListener
                 Thread {
                     var dadosRetorno: Map<String, Any>? = null
                     var erroRetorno: Exception? = null
@@ -765,10 +786,10 @@ object FirebaseRepository {
                     } catch (e: Exception) {
                         erroRetorno = e
                     }
-                    principal.post { callback(dadosRetorno, erroRetorno) }
+                    principal.post { concluir(dadosRetorno, erroRetorno) }
                 }.start()
             }
-            .addOnFailureListener { erro -> callback(null, erroParaUsuario(erro)) }
+            .addOnFailureListener { erro -> concluir(null, erroParaUsuario(erro)) }
     }
 
     private fun postarNoServidor(nome: String, dados: Map<String, Any>, token: String): Map<String, Any>? {
