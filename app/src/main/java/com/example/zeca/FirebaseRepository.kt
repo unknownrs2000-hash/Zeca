@@ -268,7 +268,11 @@ object FirebaseRepository {
                     chamarFunction("ensurePlayerProfile", emptyMap()) { _, _ -> }
                 }
             }
-            .addOnFailureListener { callback(erroParaUsuario(it)) }
+            .addOnFailureListener {
+                chamarFunction("ensurePlayerProfile", emptyMap()) { _, fallbackError ->
+                    callback(fallbackError?.let(::erroParaUsuario))
+                }
+            }
     }
 
     fun observarPerfil(uid: String, callback: (PerfilJogador?) -> Unit): ListenerRegistration =

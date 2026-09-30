@@ -119,7 +119,9 @@ fun TelaAutenticacao(onAutenticado: (FirebaseUser) -> Unit) {
             Button(
                 onClick = {
                     val emailValido = android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()
-                    if (!emailValido || senha.length < 6 || (modoCadastro && nome.isBlank())) {
+                    if (modoCadastro && nome.trim().length !in 2..24) {
+                        erro = "O apelido deve ter entre 2 e 24 caracteres."
+                    } else if (!emailValido || senha.length < 6) {
                         erro = "Informe um e-mail válido e uma senha com pelo menos 6 caracteres."
                     } else {
                         ocupado = true

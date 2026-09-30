@@ -114,7 +114,8 @@ exports.ensurePlayerProfile = onCall(async (request) => {
   const authUser = await getAuth().getUser(uid);
   const userRef = database.collection("users").doc(uid);
   const rankRef = database.collection("leaderboard").doc(uid);
-  const fallbackName = authUser.email?.split("@")[0] || "Jogador";
+  const emailName = authUser.email?.split("@")[0]?.trim() || "";
+  const fallbackName = emailName.length >= 2 && emailName.length <= 24 ? emailName : "Jogador";
   const displayName = safeName(authUser.displayName, fallbackName);
 
   await database.runTransaction(async (transaction) => {

@@ -244,7 +244,7 @@ private fun AppAutenticado(usuario: FirebaseUser) {
             }
         }
         FirebaseRepository.garantirPerfil(usuario) { error ->
-            if (error != null) erroPerfil = error.localizedMessage ?: "Não foi possível carregar seu perfil."
+            erroPerfil = error?.localizedMessage.orEmpty()
         }
         onDispose {
             profileRegistration.remove()
