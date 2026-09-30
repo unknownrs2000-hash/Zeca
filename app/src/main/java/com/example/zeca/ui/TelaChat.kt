@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
@@ -44,6 +45,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Forward
 import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
@@ -116,6 +118,7 @@ fun TelaChat(
     uidAtual: String,
     jogadores: List<JogadorRanking>,
     onEnviar: (String?, String, String, RespostaChat?, (Exception?) -> Unit) -> Unit,
+    onEncaminhar: (String?, String, String, (Exception?) -> Unit) -> Unit,
     onApagarParaMim: (String, String, (Exception?) -> Unit) -> Unit,
     onApagarParaTodos: (String, String, (Exception?) -> Unit) -> Unit,
 ) {
@@ -258,6 +261,9 @@ fun TelaChat(
         key(chatId) {
             TelaConversa(
                 mensagens = mensagens,
+                jogadores = jogadores,
+                uidAtual = uidAtual,
+                onEncaminhar = onEncaminhar,
                 ehGlobal = modo == "Global",
                 rascunho = rascunho,
                 onRascunhoChange = { rascunho = it.take(500); erro = "" },
@@ -517,6 +523,9 @@ private fun OpcoesChat(opcoes: List<String>, selecionada: String, onSelecionar: 
 @Composable
 private fun TelaConversa(
     mensagens: List<MensagemChat>,
+    jogadores: List<JogadorRanking>,
+    uidAtual: String,
+    onEncaminhar: (String?, String, String, (Exception?) -> Unit) -> Unit,
     ehGlobal: Boolean,
     rascunho: String,
     onRascunhoChange: (String) -> Unit,
@@ -538,6 +547,7 @@ private fun TelaConversa(
     var respondendo by remember { mutableStateOf<MensagemChat?>(null) }
     var menu by remember { mutableStateOf<MensagemChat?>(null) }
     var apagando by remember { mutableStateOf<MensagemChat?>(null) }
+    var encaminhando by remember { mutableStateOf<MensagemChat?>(null) }
     val invertida = remember(mensagens) { mensagens.asReversed() }
     val podeEnviar = rascunho.isNotBlank() && !enviando
 
@@ -683,8 +693,24 @@ private fun TelaConversa(
             onResponder = { respondendo = alvo; menu = null },
             onCopiar = { copiarTexto(contexto, alvo.texto); menu = null },
             onCompartilhar = { compartilharTexto(contexto, alvo.texto); menu = null },
+            onEncaminhar = { encaminhando = alvo; menu = null },
             onPerfil = if (!alvo.minha) ({ onPerfil(alvo.autorUid); menu = null }) else null,
             onApagar = { apagando = alvo; menu = null },
+        )
+    }
+
+    encaminhando?.let { alvo ->
+        DialogoEncaminhar(
+            jogadores = jogadores.filter { it.uid != uidAtual },
+            onEscolher = { destinoUid ->
+                encaminhando = null
+                onEncaminhar(destinoUid, alvo.texto, UUID.randomUUID().toString()) { e ->
+                    val aviso = if (e == null) "Mensagem encaminhada"
+                    else e.localizedMessage ?: "Não foi possível encaminhar."
+                    Toast.makeText(contexto, aviso, Toast.LENGTH_SHORT).show()
+                }
+            },
+            onCancelar = { encaminhando = null },
         )
     }
 
@@ -767,6 +793,25 @@ private fun BolhaMensagem(
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.clickable(onClick = onPerfil),
                     )
+                }
+                if (mensagem.encaminhada && !mensagem.apagadaParaTodos) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.Forward,
+                            contentDescription = null,
+                            tint = Color.White.copy(alpha = 0.55f),
+                            modifier = Modifier.size(13.dp),
+                        )
+                        Text(
+                            "Encaminhada",
+                            color = Color.White.copy(alpha = 0.55f),
+                            fontSize = 11.sp,
+                            fontStyle = FontStyle.Italic,
+                        )
+                    }
                 }
                 if (mensagem.respostaId.isNotBlank() && !mensagem.apagadaParaTodos) {
                     Row(
@@ -877,6 +922,7 @@ private fun MenuMensagem(
     onResponder: () -> Unit,
     onCopiar: () -> Unit,
     onCompartilhar: () -> Unit,
+    onEncaminhar: () -> Unit,
     onPerfil: (() -> Unit)?,
     onApagar: () -> Unit,
 ) {
@@ -898,6 +944,7 @@ private fun MenuMensagem(
             )
             if (!mensagem.apagadaParaTodos) {
                 AcaoMenu(Icons.AutoMirrored.Filled.Reply, "Responder", onResponder)
+                AcaoMenu(Icons.AutoMirrored.Filled.Forward, "Encaminhar", onEncaminhar)
                 AcaoMenu(Icons.Filled.ContentCopy, "Copiar", onCopiar)
                 AcaoMenu(Icons.Filled.Share, "Compartilhar", onCompartilhar)
                 if (onPerfil != null) AcaoMenu(Icons.Filled.Person, "Ver perfil", onPerfil)
@@ -965,4 +1012,80 @@ private fun compartilharTexto(contexto: Context, texto: String) {
         putExtra(Intent.EXTRA_TEXT, texto)
     }
     contexto.startActivity(Intent.createChooser(envio, "Compartilhar mensagem"))
+}
+
+@Composable
+private fun DialogoEncaminhar(
+    jogadores: List<JogadorRanking>,
+    onEscolher: (String?) -> Unit,
+    onCancelar: () -> Unit,
+) {
+    Dialog(onDismissRequest = onCancelar) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFF1A2126), RoundedCornerShape(22.dp))
+                .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(22.dp))
+                .padding(vertical = 12.dp),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 20.dp, end = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Encaminhar para",
+                    color = Color.White,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(onClick = onCancelar) {
+                    Icon(Icons.Filled.Close, contentDescription = "Fechar", tint = Color.White)
+                }
+            }
+            LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
+                item(key = "global") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onEscolher(null) }
+                            .padding(horizontal = 20.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        AvatarChat("#", 40.dp)
+                        Column {
+                            Text("Sala global", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                            Text("Todos os jogadores veem", color = Color.White.copy(alpha = 0.55f), fontSize = 11.sp)
+                        }
+                    }
+                }
+                items(jogadores, key = { it.uid }) { jogador ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onEscolher(jogador.uid) }
+                            .padding(horizontal = 20.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        AvatarChat(jogador.apelido, 40.dp)
+                        Column {
+                            Text(
+                                jogador.apelido,
+                                color = Color.White,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text("Nível ${jogador.nivel}", color = Color.White.copy(alpha = 0.55f), fontSize = 11.sp)
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

@@ -206,7 +206,7 @@ service cloud.firestore {
           && (chatId == 'global'
             || request.auth.uid in chatId.split('_'));
         allow create: if signedIn()
-          && request.resource.data.keys().hasOnly(['senderUid', 'senderName', 'text', 'createdAt', 'replyToId', 'replyToName', 'replyToText'])
+          && request.resource.data.keys().hasOnly(['senderUid', 'senderName', 'text', 'createdAt', 'replyToId', 'replyToName', 'replyToText', 'forwarded'])
           && request.resource.data.senderUid == request.auth.uid
           && request.resource.data.senderName
             == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.displayName
@@ -214,6 +214,7 @@ service cloud.firestore {
           && request.resource.data.text.size() >= 1
           && request.resource.data.text.size() <= 500
           && request.resource.data.createdAt == request.time
+          && (!('forwarded' in request.resource.data) || request.resource.data.forwarded == true)
           && (!('replyToId' in request.resource.data) || (
             request.resource.data.keys().hasAll(['replyToId', 'replyToName', 'replyToText'])
             && request.resource.data.replyToId is string

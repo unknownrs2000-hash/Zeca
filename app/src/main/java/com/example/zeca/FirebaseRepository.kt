@@ -43,6 +43,7 @@ data class MensagemChat(
     val respostaAutor: String = "",
     val respostaTexto: String = "",
     val apagadaParaTodos: Boolean = false,
+    val encaminhada: Boolean = false,
 )
 
 data class RespostaChat(
@@ -223,6 +224,7 @@ object FirebaseRepository {
                     respostaAutor = data["replyToName"] as? String ?: "",
                     respostaTexto = data["replyToText"] as? String ?: "",
                     apagadaParaTodos = data["deletedForAll"] as? Boolean ?: false,
+                    encaminhada = data["forwarded"] as? Boolean ?: false,
                 )
             }.sortedBy { it.enviadaEmMs }
             callback(mensagens, error)
@@ -254,6 +256,7 @@ object FirebaseRepository {
         texto: String,
         requestId: String,
         resposta: RespostaChat?,
+        encaminhada: Boolean = false,
         callback: (String?, Exception?) -> Unit,
     ) {
         val uid = auth.currentUser?.uid
@@ -329,6 +332,7 @@ object FirebaseRepository {
                 dadosMensagem["replyToName"] = resposta.autor
                 dadosMensagem["replyToText"] = resposta.texto.take(200)
             }
+            if (encaminhada) dadosMensagem["forwarded"] = true
             transaction.set(messageRef, dadosMensagem)
             chatId
         }

@@ -209,6 +209,11 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                                     concluir(error)
                                 }
                             },
+                            onEncaminhar = { destinatarioUid, texto, requestId, concluir ->
+                                FirebaseRepository.enviarMensagemChat(destinatarioUid, texto, requestId, null, true) { _, error ->
+                                    concluir(error)
+                                }
+                            },
                             onApagarParaMim = { chatId, mensagemId, concluir ->
                                 FirebaseRepository.apagarMensagemParaMim(chatId, mensagemId, concluir)
                             },
