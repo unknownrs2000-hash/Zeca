@@ -209,6 +209,7 @@ data class DetalhesAdmin(
     val partidas: Int,
     val vitorias: Int,
     val movimentacoes: List<MovimentoAdmin>,
+    val inventario: List<String>,
 )
 
 data class ConfiguracaoMinas(
@@ -947,6 +948,7 @@ object FirebaseRepository {
                     partidas = (user["gamesPlayed"] as? Number)?.toInt() ?: 0,
                     vitorias = (user["wins"] as? Number)?.toInt() ?: 0,
                     movimentacoes = transactions,
+                    inventario = (user["inventory"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
                 )
             }
             callback(detalhes, error)
@@ -995,6 +997,26 @@ object FirebaseRepository {
             "adminAdjustBalance",
             mapOf("uid" to uid, "deltaCents" to deltaCentavos, "reason" to motivo, "requestId" to requestId),
         ) { data, error -> callback((data?.get("balanceCents") as? Number)?.toLong(), error) }
+    }
+
+    fun atualizarInventarioAdmin(
+        uid: String,
+        acao: String,
+        itemId: String,
+        motivo: String,
+        requestId: String,
+        callback: (Exception?) -> Unit,
+    ) {
+        chamarFunction(
+            "adminUpdateUserInventory",
+            mapOf(
+                "uid" to uid,
+                "action" to acao,
+                "itemId" to itemId,
+                "reason" to motivo,
+                "requestId" to requestId,
+            ),
+        ) { _, error -> callback(error) }
     }
 
     fun definirBloqueioAdmin(

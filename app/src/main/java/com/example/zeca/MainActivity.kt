@@ -468,6 +468,9 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                                 onAjustarSaldo = { uid, delta, motivo, requestId, concluir ->
                                     FirebaseRepository.ajustarSaldoAdmin(uid, delta, motivo, requestId, concluir)
                                 },
+                                onAtualizarInventario = { uid, acao, itemId, motivo, requestId, concluir ->
+                                    FirebaseRepository.atualizarInventarioAdmin(uid, acao, itemId, motivo, requestId, concluir)
+                                },
                                 onDefinirBloqueio = { uid, bloqueado, motivo, requestId, concluir ->
                                     FirebaseRepository.definirBloqueioAdmin(uid, bloqueado, motivo, requestId, concluir)
                                 },

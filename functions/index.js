@@ -1650,6 +1650,9 @@ exports.adminGetUserDetails = onCall(async (request) => {
       isBlocked: user.isBlocked === true,
       gamesPlayed: user.gamesPlayed || 0,
       wins: user.wins || 0,
+      inventory: Array.isArray(user.inventory)
+        ? user.inventory.filter((itemId) => typeof itemId === "string" && Object.hasOwn(COSMETICS, itemId))
+        : [],
     },
     transactions: transactionSnapshot.docs.map((document) => {
       const entry = document.data();
@@ -1662,6 +1665,83 @@ exports.adminGetUserDetails = onCall(async (request) => {
       };
     }),
   };
+});
+
+exports.adminUpdateUserInventory = onCall(async (request) => {
+  const adminUid = requireAdmin(request);
+  const targetUid = request.data?.uid;
+  const action = request.data?.action;
+  const itemId = request.data?.itemId;
+  const requestId = request.data?.requestId;
+  const reason = typeof request.data?.reason === "string" ? request.data.reason.trim() : "";
+  if (typeof targetUid !== "string" || targetUid.length < 1 || targetUid.length > 128
+      || !["add", "remove"].includes(action)
+      || typeof itemId !== "string" || !Object.hasOwn(COSMETICS, itemId)
+      || typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)
+      || reason.length < 8 || reason.length > 200) {
+    throw new HttpsError("invalid-argument", "Ação, item, motivo ou identificador inválido.");
+  }
+
+  const userRef = database.collection("users").doc(targetUid);
+  const rankRef = database.collection("leaderboard").doc(targetUid);
+  const auditRef = database.collection("adminAuditLogs").doc(`${adminUid}_${requestId}`);
+  let response;
+  await database.runTransaction(async (transaction) => {
+    const [auditSnapshot, userSnapshot, rankSnapshot] = await Promise.all([
+      transaction.get(auditRef),
+      transaction.get(userRef),
+      transaction.get(rankRef),
+    ]);
+    if (auditSnapshot.exists) {
+      const previous = auditSnapshot.data();
+      if (previous.action !== "update_inventory" || previous.targetUid !== targetUid
+          || previous.inventoryAction !== action || previous.itemId !== itemId || previous.reason !== reason) {
+        throw new HttpsError("already-exists", "Identificador de inventário já utilizado.");
+      }
+      response = previous.response;
+      return;
+    }
+    if (!userSnapshot.exists) throw new HttpsError("not-found", "Conta não encontrada.");
+    const inventory = Array.isArray(userSnapshot.get("inventory")) ? userSnapshot.get("inventory") : [];
+    if (action === "add" && inventory.includes(itemId)) {
+      throw new HttpsError("already-exists", "O usuário já possui este item.");
+    }
+    if (action === "remove" && !inventory.includes(itemId)) {
+      throw new HttpsError("failed-precondition", "O usuário não possui este item.");
+    }
+
+    const nextInventory = action === "add"
+      ? [...inventory, itemId]
+      : inventory.filter((ownedItemId) => ownedItemId !== itemId);
+    const userUpdate = { inventory: nextInventory };
+    let equippedAvatarItems;
+    if (action === "remove") {
+      if (userSnapshot.get("equippedFrame") === itemId) userUpdate.equippedFrame = "";
+      const currentEquipped = Array.isArray(userSnapshot.get("equippedAvatarItems"))
+        ? userSnapshot.get("equippedAvatarItems")
+        : [];
+      equippedAvatarItems = currentEquipped.filter((equippedItemId) => equippedItemId !== itemId);
+      if (equippedAvatarItems.length !== currentEquipped.length) {
+        userUpdate.equippedAvatarItems = equippedAvatarItems;
+      }
+    }
+    transaction.update(userRef, userUpdate);
+    if (equippedAvatarItems && rankSnapshot.exists) {
+      transaction.update(rankRef, { equippedAvatarItems });
+    }
+    response = { ok: true, uid: targetUid, action, itemId, inventory: nextInventory };
+    transaction.create(auditRef, {
+      actorUid: adminUid,
+      targetUid,
+      action: "update_inventory",
+      inventoryAction: action,
+      itemId,
+      reason,
+      response,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+  });
+  return response;
 });
 
 exports.adminAdjustBalance = onCall(async (request) => {
