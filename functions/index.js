@@ -36,9 +36,9 @@ const { applyStreakMessage, dateUtc } = require("./chat-logic");
 const { AVATAR_ITEM_SLOTS, equipAvatarItem, unequipAvatarSlot } = require("./avatar-logic");
 const {
   combinedOddsBps,
+  estimateMatchMarkets,
   fixtureWinner,
-  parseFixtures,
-  parseMatchOdds,
+  parseFootballDataMatches,
   settleSportsSelection,
   sportsPayoutCents,
 } = require("./sports-logic");
@@ -195,30 +195,41 @@ function enforceGameCooldown(profile, nowMs) {
   }
 }
 
-async function apiFootballGet(endpoint, params = {}) {
-  const apiKey = process.env.API_FOOTBALL_KEY;
-  if (!apiKey) {
-    throw new HttpsError("failed-precondition", "Apostas esportivas não estão configuradas: falta API_FOOTBALL_KEY no servidor.");
+async function footballDataGet(endpoint, params = {}) {
+  const token = process.env.FOOTBALL_DATA_TOKEN;
+  if (!token) {
+    throw new HttpsError("failed-precondition", "Configure FOOTBALL_DATA_TOKEN no servidor para consultar partidas e resultados.");
   }
-  const url = new URL(`https://v3.football.api-sports.io/${endpoint}`);
+  const url = new URL(endpoint, "https://api.football-data.org/v4/");
   Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, String(value)));
   let response;
   try {
     response = await fetch(url, {
-      headers: { "x-apisports-key": apiKey },
+      headers: { "X-Auth-Token": token },
       signal: AbortSignal.timeout(12_000),
     });
   } catch {
-    throw new HttpsError("resource-exhausted", "A API de futebol não respondeu. Tente novamente.");
+    throw new HttpsError("resource-exhausted", "football-data.org não respondeu. Tente novamente.");
+  }
+  if (response.status === 401 || response.status === 403) {
+    throw new HttpsError("failed-precondition", "football-data.org recusou o token ou o plano não permite esta consulta.");
+  }
+  if (response.status === 429) {
+    throw new HttpsError("resource-exhausted", "Limite de consultas do football-data.org atingido. Tente novamente mais tarde.");
   }
   if (!response.ok) {
-    throw new HttpsError("failed-precondition", `A API de futebol respondeu com erro ${response.status}.`);
+    throw new HttpsError("failed-precondition", `football-data.org respondeu com erro ${response.status}.`);
   }
   const payload = await response.json();
-  if (payload.errors && Object.keys(payload.errors).length > 0) {
-    throw new HttpsError("failed-precondition", "A API de futebol recusou a consulta. Verifique a chave e a cota no provedor.");
+  if (payload.errorCode || payload.message) {
+    throw new HttpsError("failed-precondition", "football-data.org recusou a consulta. Verifique token, competições autorizadas e cota.");
   }
   return payload;
+}
+
+function dateUtcOffset(date, days) {
+  const timestamp = Date.parse(`${date}T00:00:00Z`) + days * 86_400_000;
+  return new Date(timestamp).toISOString().slice(0, 10);
 }
 
 function profitTotals(profitCents) {
@@ -693,14 +704,15 @@ exports.listFootballMatches = onCall(async (request) => {
   if (!Number.isFinite(dayOffset) || dayOffset < -1 || dayOffset > 7) {
     throw new HttpsError("invalid-argument", "Consulte partidas de hoje ou dos próximos 7 dias.");
   }
-  const [fixturesPayload, oddsPayload] = await Promise.all([
-    apiFootballGet("fixtures", { date }),
-    apiFootballGet("odds", { date }),
+  const [fixturesPayload, historyPayload] = await Promise.all([
+    footballDataGet("matches", { dateFrom: date, dateTo: date }),
+    footballDataGet("matches", { dateFrom: dateUtcOffset(date, -120), dateTo: date, limit: 500 }),
   ]);
-  const fixtures = parseFixtures(fixturesPayload)
+  const history = parseFootballDataMatches(historyPayload);
+  const fixtures = parseFootballDataMatches(fixturesPayload)
     .filter((fixture) => fixture.status === "NS" && fixture.kickoffMs > Date.now());
   const matches = fixtures.map((fixture) => {
-    const markets = parseMatchOdds(oddsPayload, fixture.fixtureId, fixture.homeTeam, fixture.awayTeam);
+    const markets = estimateMatchMarkets(fixture, history);
     const home = markets.find((option) => option.marketId === "match_winner" && option.selectionId === "home");
     const away = markets.find((option) => option.marketId === "match_winner" && option.selectionId === "away");
     return {
@@ -769,25 +781,28 @@ exports.placeSportsBet = onCall(async (request) => {
     return { betId: requestId, status: bet.status, oddsBps: bet.oddsBps, payoutPotentialCents: bet.payoutPotentialCents };
   }
 
-  const quotedLegs = await Promise.all(legs.map(async (leg) => {
-    const [fixturePayload, oddsPayload] = await Promise.all([
-      apiFootballGet("fixtures", { id: leg.fixtureId }),
-      apiFootballGet("odds", { fixture: leg.fixtureId }),
-    ]);
-    const fixture = parseFixtures(fixturePayload).find((item) => item.fixtureId === leg.fixtureId);
+  const date = new Date().toISOString().slice(0, 10);
+  const [fixturesPayload, historyPayload] = await Promise.all([
+    footballDataGet("matches", { dateFrom: date, dateTo: date }),
+    footballDataGet("matches", { dateFrom: dateUtcOffset(date, -120), dateTo: date, limit: 500 }),
+  ]);
+  const fixtures = parseFootballDataMatches(fixturesPayload);
+  const history = parseFootballDataMatches(historyPayload);
+  const quotedLegs = legs.map((leg) => {
+    const fixture = fixtures.find((item) => item.fixtureId === leg.fixtureId);
     if (!fixture || fixture.status !== "NS" || fixture.kickoffMs <= Date.now()) {
       throw new HttpsError("failed-precondition", "Só é possível apostar antes do início de cada partida.");
     }
-    const quote = parseMatchOdds(oddsPayload, leg.fixtureId, fixture.homeTeam, fixture.awayTeam)
+    const quote = estimateMatchMarkets(fixture, history)
       .find((option) => option.marketId === leg.marketId && option.selectionId === leg.selectionId);
     if (!quote || quote.oddsBps <= 10_000) {
-      throw new HttpsError("failed-precondition", "A API não oferece odds para uma das seleções deste bilhete.");
+      throw new HttpsError("failed-precondition", "Não foi possível calcular a odd para uma das seleções.");
     }
     if (leg.expectedOddsBps != null && leg.expectedOddsBps !== quote.oddsBps) {
-      throw new HttpsError("failed-precondition", "Uma odd mudou. Atualize as partidas e confira o bilhete novamente.");
+      throw new HttpsError("failed-precondition", "A estimativa mudou. Atualize as partidas e confira o bilhete novamente.");
     }
     return { ...fixture, ...quote, fixtureId: leg.fixtureId };
-  }));
+  });
   let oddsBps;
   try {
     oddsBps = combinedOddsBps(quotedLegs);
@@ -872,6 +887,20 @@ exports.settleMySportsBets = onCall(async (request) => {
     .limit(10)
     .get();
   let settledCount = 0;
+  const allLegs = openBets.docs.flatMap((document) => {
+    const bet = document.data();
+    return Array.isArray(bet.legs) && bet.legs.length > 0
+      ? bet.legs
+      : [{ fixtureId: bet.fixtureId, kickoffMs: bet.kickoffMs, homeTeam: bet.homeTeam, awayTeam: bet.awayTeam }];
+  });
+  const playedLegs = allLegs.filter((leg) => Number.isFinite(leg.kickoffMs) && leg.kickoffMs <= Date.now());
+  if (playedLegs.length === 0) return { settledCount };
+  const dateTo = new Date().toISOString().slice(0, 10);
+  const dateFrom = new Date(Math.min(...playedLegs.map((leg) => leg.kickoffMs))).toISOString().slice(0, 10);
+  const fixturesPayload = await footballDataGet("matches", { dateFrom, dateTo, limit: 500 });
+  const fixtures = parseFootballDataMatches(fixturesPayload);
+  const normalizeTeam = (name) => String(name || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().replace(/[^a-z0-9]/g, "");
   for (const betDocument of openBets.docs) {
     const bet = betDocument.data();
     const legs = Array.isArray(bet.legs) && bet.legs.length > 0
@@ -883,8 +912,10 @@ exports.settleMySportsBets = onCall(async (request) => {
         oddsBps: bet.oddsBps,
       }];
     const results = await Promise.all(legs.map(async (leg) => {
-      const fixturePayload = await apiFootballGet("fixtures", { id: leg.fixtureId });
-      const fixture = parseFixtures(fixturePayload).find((item) => item.fixtureId === leg.fixtureId);
+      const fixture = fixtures.find((item) => item.fixtureId === leg.fixtureId)
+        || fixtures.find((item) => normalizeTeam(item.homeTeam) === normalizeTeam(leg.homeTeam)
+          && normalizeTeam(item.awayTeam) === normalizeTeam(leg.awayTeam)
+          && Math.abs(item.kickoffMs - leg.kickoffMs) <= 36 * 60 * 60 * 1_000);
       return { leg, fixture, outcome: settleSportsSelection(fixture, leg) };
     }));
     const lost = results.some((item) => item.outcome === "lost");

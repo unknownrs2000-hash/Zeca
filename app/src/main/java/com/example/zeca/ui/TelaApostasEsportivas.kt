@@ -96,8 +96,8 @@ fun TelaApostasEsportivas(
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Column {
-                Text("Futebol · odds reais", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                Text("Cotações da API · créditos virtuais", color = Color.White.copy(alpha = 0.58f), fontSize = 11.sp)
+                Text("Futebol · odds estimadas", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text("Modelo estatístico · créditos virtuais", color = Color.White.copy(alpha = 0.58f), fontSize = 11.sp)
             }
             TextButton(onClick = {
                 carregando = true
