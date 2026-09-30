@@ -876,6 +876,7 @@ fun TelaLoja(
     var itemComMensagem by rememberSaveable { mutableStateOf("") }
     var itemEmCompra by rememberSaveable { mutableStateOf("") }
     var itemEmUso by rememberSaveable { mutableStateOf("") }
+    var mostrarPreviaAvatar by rememberSaveable { mutableStateOf(false) }
 
     BackHandler(onBack = onVoltar)
 
@@ -899,6 +900,9 @@ fun TelaLoja(
             }
             TextButton(onClick = onVoltar, modifier = Modifier.fillMaxWidth()) {
                 Text("Editar avatar e foto no perfil", color = Cores.Turquesa)
+            }
+            TextButton(onClick = { mostrarPreviaAvatar = true }, modifier = Modifier.fillMaxWidth()) {
+                Text("Ver prévia do avatar", color = Cores.Turquesa)
             }
         }
 
@@ -1071,6 +1075,41 @@ fun TelaLoja(
             }
         }
         TextButton(onClick = onVoltar, modifier = Modifier.fillMaxWidth()) { Text("Voltar ao perfil") }
+    }
+
+    if (mostrarPreviaAvatar) {
+        Dialog(
+            onDismissRequest = { mostrarPreviaAvatar = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth(0.88f)
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(Brush.verticalGradient(listOf(Color(0xFF222A2E), Cores.Cartao, Cores.Fundo)))
+                    .border(1.dp, Color.White.copy(alpha = 0.17f), RoundedCornerShape(24.dp))
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Text("Prévia do avatar", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                AvatarComMoldura(
+                    apelido.take(1).uppercase(),
+                    molduraEquipada,
+                    190.dp,
+                    avatarItems = avatarItensEquipados,
+                    avatarAsProfilePhoto = true,
+                )
+                Text(
+                    "${avatarItensEquipados.size} peças vestidas",
+                    color = Cores.Turquesa,
+                    fontSize = 13.sp,
+                )
+                TextButton(onClick = { mostrarPreviaAvatar = false }) {
+                    Text("Fechar", color = Cores.Turquesa)
+                }
+            }
+        }
     }
 }
 
