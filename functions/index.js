@@ -33,7 +33,14 @@ const {
 } = require("./profile-logic");
 const { applyStreakMessage, dateUtc } = require("./chat-logic");
 const { AVATAR_ITEM_SLOTS, equipAvatarItem, unequipAvatarSlot } = require("./avatar-logic");
-const { fixtureWinner, parseFixtures, parseWinnerOdds, sportsPayoutCents } = require("./sports-logic");
+const {
+  combinedOddsBps,
+  fixtureWinner,
+  parseFixtures,
+  parseMatchOdds,
+  settleSportsSelection,
+  sportsPayoutCents,
+} = require("./sports-logic");
 const { applyTugPull } = require("./tug-logic");
 
 const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
@@ -692,8 +699,15 @@ exports.listFootballMatches = onCall(async (request) => {
   const fixtures = parseFixtures(fixturesPayload)
     .filter((fixture) => fixture.status === "NS" && fixture.kickoffMs > Date.now());
   const matches = fixtures.map((fixture) => {
-    const odds = parseWinnerOdds(oddsPayload, fixture.fixtureId, fixture.homeTeam, fixture.awayTeam);
-    return { ...fixture, homeOddsBps: odds?.homeOddsBps || 0, awayOddsBps: odds?.awayOddsBps || 0 };
+    const markets = parseMatchOdds(oddsPayload, fixture.fixtureId, fixture.homeTeam, fixture.awayTeam);
+    const home = markets.find((option) => option.marketId === "match_winner" && option.selectionId === "home");
+    const away = markets.find((option) => option.marketId === "match_winner" && option.selectionId === "away");
+    return {
+      ...fixture,
+      markets,
+      homeOddsBps: home?.oddsBps || 0,
+      awayOddsBps: away?.oddsBps || 0,
+    };
   });
   return { date, matches: matches.slice(0, 50) };
 });
@@ -712,39 +726,72 @@ exports.listMySportsBets = onCall(async (request) => {
 
 exports.placeSportsBet = onCall(async (request) => {
   const uid = authenticatedUid(request);
-  const fixtureId = request.data?.fixtureId;
-  const selection = request.data?.selection;
+  const rawLegs = Array.isArray(request.data?.legs)
+    ? request.data.legs
+    : [{ fixtureId: request.data?.fixtureId, marketId: "match_winner", selectionId: request.data?.selection }];
   const amountCents = request.data?.amountCents;
   const requestId = request.data?.requestId;
-  if (!Number.isSafeInteger(fixtureId) || fixtureId <= 0
-      || !["home", "away"].includes(selection)
+  const legs = rawLegs.map((leg) => ({
+    fixtureId: leg?.fixtureId,
+    marketId: leg?.marketId,
+    selectionId: leg?.selectionId,
+    expectedOddsBps: leg?.expectedOddsBps,
+  }));
+  const validLeg = (leg) => Number.isSafeInteger(leg.fixtureId) && leg.fixtureId > 0
+    && ((leg.marketId === "match_winner" && ["home", "draw", "away"].includes(leg.selectionId))
+      || (leg.marketId === "total_goals" && /^(over|under)_\d+(?:_\d+)?$/.test(leg.selectionId || ""))
+      || (leg.marketId === "both_teams_score" && ["yes", "no"].includes(leg.selectionId)))
+    && (leg.expectedOddsBps == null
+      || (Number.isSafeInteger(leg.expectedOddsBps) && leg.expectedOddsBps > 10_000));
+  if (legs.length < 1 || legs.length > 10 || legs.some((leg) => !validLeg(leg))
+      || new Set(legs.map((leg) => leg.fixtureId)).size !== legs.length
       || !validateWager(amountCents, MAX_TRANSFER_CENTS)
       || typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)) {
-    throw new HttpsError("invalid-argument", "Partida, seleção de vencedor, aposta ou identificador inválido.");
+    throw new HttpsError("invalid-argument", "Seleções, partidas, aposta ou identificador inválido. Use até 10 partidas diferentes.");
   }
 
   const betRef = database.collection("sportsBets").doc(requestId);
+  const legKey = (leg) => `${leg.fixtureId}:${leg.marketId}:${leg.selectionId}`;
+  const sameTicket = (bet) => {
+    const storedLegs = Array.isArray(bet.legs) && bet.legs.length > 0
+      ? bet.legs
+      : [{ fixtureId: bet.fixtureId, marketId: "match_winner", selectionId: bet.selection }];
+    return bet.uid === uid && bet.stakeCents === amountCents
+      && JSON.stringify(storedLegs.map(legKey)) === JSON.stringify(legs.map(legKey));
+  };
   const previous = await betRef.get();
   if (previous.exists) {
     const bet = previous.data();
-    if (bet.uid !== uid || bet.fixtureId !== fixtureId || bet.selection !== selection || bet.stakeCents !== amountCents) {
+    if (!sameTicket(bet)) {
       throw new HttpsError("already-exists", "Identificador de aposta já utilizado.");
     }
     return { betId: requestId, status: bet.status, oddsBps: bet.oddsBps, payoutPotentialCents: bet.payoutPotentialCents };
   }
 
-  const [fixturePayload, oddsPayload] = await Promise.all([
-    apiFootballGet("fixtures", { id: fixtureId }),
-    apiFootballGet("odds", { fixture: fixtureId }),
-  ]);
-  const fixture = parseFixtures(fixturePayload).find((item) => item.fixtureId === fixtureId);
-  if (!fixture || fixture.status !== "NS" || fixture.kickoffMs <= Date.now()) {
-    throw new HttpsError("failed-precondition", "Só é possível apostar antes do início da partida.");
-  }
-  const odds = parseWinnerOdds(oddsPayload, fixtureId, fixture.homeTeam, fixture.awayTeam);
-  const oddsBps = selection === "home" ? odds?.homeOddsBps : odds?.awayOddsBps;
-  if (!Number.isSafeInteger(oddsBps) || oddsBps <= 10_000) {
-    throw new HttpsError("failed-precondition", "Não há cotação de vitória disponível para esta seleção.");
+  const quotedLegs = await Promise.all(legs.map(async (leg) => {
+    const [fixturePayload, oddsPayload] = await Promise.all([
+      apiFootballGet("fixtures", { id: leg.fixtureId }),
+      apiFootballGet("odds", { fixture: leg.fixtureId }),
+    ]);
+    const fixture = parseFixtures(fixturePayload).find((item) => item.fixtureId === leg.fixtureId);
+    if (!fixture || fixture.status !== "NS" || fixture.kickoffMs <= Date.now()) {
+      throw new HttpsError("failed-precondition", "Só é possível apostar antes do início de cada partida.");
+    }
+    const quote = parseMatchOdds(oddsPayload, leg.fixtureId, fixture.homeTeam, fixture.awayTeam)
+      .find((option) => option.marketId === leg.marketId && option.selectionId === leg.selectionId);
+    if (!quote || quote.oddsBps <= 10_000) {
+      throw new HttpsError("failed-precondition", "A API não oferece odds para uma das seleções deste bilhete.");
+    }
+    if (leg.expectedOddsBps != null && leg.expectedOddsBps !== quote.oddsBps) {
+      throw new HttpsError("failed-precondition", "Uma odd mudou. Atualize as partidas e confira o bilhete novamente.");
+    }
+    return { ...fixture, ...quote, fixtureId: leg.fixtureId };
+  }));
+  let oddsBps;
+  try {
+    oddsBps = combinedOddsBps(quotedLegs);
+  } catch {
+    throw new HttpsError("invalid-argument", "A odd total do bilhete excede o limite permitido.");
   }
   const payoutPotentialCents = sportsPayoutCents(amountCents, oddsBps);
   const userRef = database.collection("users").doc(uid);
@@ -759,7 +806,7 @@ exports.placeSportsBet = onCall(async (request) => {
     ]);
     if (betSnapshot.exists) {
       const bet = betSnapshot.data();
-      if (bet.uid !== uid || bet.fixtureId !== fixtureId || bet.selection !== selection || bet.stakeCents !== amountCents) {
+      if (!sameTicket(bet)) {
         throw new HttpsError("already-exists", "Identificador de aposta já utilizado.");
       }
       response = { betId: requestId, status: bet.status, oddsBps: bet.oddsBps, payoutPotentialCents: bet.payoutPotentialCents };
@@ -769,16 +816,32 @@ exports.placeSportsBet = onCall(async (request) => {
     const balanceCents = userSnapshot.get("balanceCents") || 0;
     if (balanceCents < amountCents) throw new HttpsError("failed-precondition", "Saldo insuficiente.");
     const balanceAfter = balanceCents - amountCents;
-    const selectionName = selection === "home" ? fixture.homeTeam : fixture.awayTeam;
+    const selectionName = quotedLegs.length === 1 ? quotedLegs[0].selectionName : `${quotedLegs.length} seleções`;
+    const primaryLeg = quotedLegs[0];
     const bet = {
       uid,
-      fixtureId,
-      league: fixture.league,
-      homeTeam: fixture.homeTeam,
-      awayTeam: fixture.awayTeam,
-      kickoffMs: fixture.kickoffMs,
-      selection,
+      fixtureId: primaryLeg.fixtureId,
+      league: primaryLeg.league,
+      homeTeam: primaryLeg.homeTeam,
+      awayTeam: primaryLeg.awayTeam,
+      kickoffMs: primaryLeg.kickoffMs,
+      selection: quotedLegs.length === 1 ? primaryLeg.selectionId : "multiple",
       selectionName,
+      marketId: quotedLegs.length === 1 ? primaryLeg.marketId : "multiple",
+      legs: quotedLegs.map((leg) => ({
+        fixtureId: leg.fixtureId,
+        league: leg.league,
+        homeTeam: leg.homeTeam,
+        awayTeam: leg.awayTeam,
+        kickoffMs: leg.kickoffMs,
+        marketId: leg.marketId,
+        marketName: leg.marketName,
+        selectionId: leg.selectionId,
+        selectionName: leg.selectionName,
+        line: leg.line,
+        oddsBps: leg.oddsBps,
+        bookmaker: leg.bookmaker,
+      })),
       oddsBps,
       stakeCents: amountCents,
       payoutPotentialCents,
@@ -789,7 +852,7 @@ exports.placeSportsBet = onCall(async (request) => {
     transaction.update(rankRef, { balanceCents: balanceAfter });
     transaction.create(betRef, bet);
     transaction.create(historyRef, {
-      description: `Aposta esportiva · ${selectionName} vence (${(oddsBps / 10_000).toFixed(2)}x)`,
+      description: `Aposta esportiva · ${selectionName} (${(oddsBps / 10_000).toFixed(2)}x)`,
       deltaCents: -amountCents,
       type: "sports_bet",
       betId: requestId,
@@ -810,10 +873,21 @@ exports.settleMySportsBets = onCall(async (request) => {
   let settledCount = 0;
   for (const betDocument of openBets.docs) {
     const bet = betDocument.data();
-    const fixturePayload = await apiFootballGet("fixtures", { id: bet.fixtureId });
-    const fixture = parseFixtures(fixturePayload).find((item) => item.fixtureId === bet.fixtureId);
-    const result = fixtureWinner(fixture);
-    if (!result) continue;
+    const legs = Array.isArray(bet.legs) && bet.legs.length > 0
+      ? bet.legs
+      : [{
+        fixtureId: bet.fixtureId,
+        marketId: "match_winner",
+        selectionId: bet.selection,
+        oddsBps: bet.oddsBps,
+      }];
+    const results = await Promise.all(legs.map(async (leg) => {
+      const fixturePayload = await apiFootballGet("fixtures", { id: leg.fixtureId });
+      const fixture = parseFixtures(fixturePayload).find((item) => item.fixtureId === leg.fixtureId);
+      return { leg, fixture, outcome: settleSportsSelection(fixture, leg) };
+    }));
+    const lost = results.some((item) => item.outcome === "lost");
+    if (!lost && results.some((item) => item.outcome == null)) continue;
     const betRef = betDocument.ref;
     const userRef = database.collection("users").doc(uid);
     const rankRef = database.collection("leaderboard").doc(uid);
@@ -827,8 +901,12 @@ exports.settleMySportsBets = onCall(async (request) => {
       if (!betSnapshot.exists || betSnapshot.get("status") !== "open") return;
       if (!userSnapshot.exists || !rankSnapshot.exists) throw new HttpsError("failed-precondition", "Perfil ainda não foi criado.");
       const currentBet = betSnapshot.data();
-      const won = result === currentBet.selection;
-      const payoutCents = won ? sportsPayoutCents(currentBet.stakeCents, currentBet.oddsBps) : 0;
+      const won = !lost && results.every((item) => item.outcome === "won" || item.outcome === "void");
+      const activeLegs = results.filter((item) => item.outcome !== "void").map((item) => item.leg);
+      const effectiveOddsBps = activeLegs.length > 0 ? combinedOddsBps(activeLegs) : 10_000;
+      const payoutCents = won
+        ? effectiveOddsBps === 10_000 ? currentBet.stakeCents : sportsPayoutCents(currentBet.stakeCents, effectiveOddsBps)
+        : 0;
       const profitCents = payoutCents - currentBet.stakeCents;
       const profile = userSnapshot.data();
       const gamesPlayed = (profile.gamesPlayed || 0) + 1;
@@ -850,13 +928,21 @@ exports.settleMySportsBets = onCall(async (request) => {
       transaction.update(rankRef, { balanceCents, level: progression.level });
       transaction.update(betRef, {
         status: "settled",
-        result,
+        result: legs.length === 1 && legs[0].marketId === "match_winner"
+          ? fixtureWinner(results[0].fixture)
+          : won ? "won" : "lost",
+        legResults: results.map(({ leg, outcome }) => ({
+          fixtureId: leg.fixtureId,
+          marketId: leg.marketId,
+          selectionId: leg.selectionId,
+          outcome,
+        })),
         payoutCents,
         profitCents,
         settledAt: FieldValue.serverTimestamp(),
       });
       transaction.create(historyRef, {
-        description: `Aposta esportiva · ${result === "draw" ? "empate" : won ? "vitória" : "derrota"}`,
+        description: `Aposta esportiva · ${won ? "bilhete vencedor" : "bilhete perdido"}`,
         deltaCents: payoutCents,
         type: "sports_settlement",
         betId: betDocument.id,

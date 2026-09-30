@@ -103,7 +103,7 @@ test("new multiplayer and sports callables reject unauthenticated requests", asy
   }
 });
 
-test("tug rooms and sports bets reject invalid stakes and draw selections before API/database calls", async () => {
+test("tug rooms and sports bets reject invalid stakes and duplicate or unknown selections", async () => {
   const uid = "player";
   const requestId = "123e4567-e89b-42d3-a456-426614174000";
   await assert.rejects(
@@ -111,7 +111,21 @@ test("tug rooms and sports bets reject invalid stakes and draw selections before
     (error) => error.code === "invalid-argument",
   );
   await assert.rejects(
-    placeSportsBet({ auth: { uid, token: {} }, data: { fixtureId: 42, selection: "draw", amountCents: 100, requestId } }),
+    placeSportsBet({ auth: { uid, token: {} }, data: { fixtureId: 42, selection: "unknown", amountCents: 100, requestId } }),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    placeSportsBet({
+      auth: { uid, token: {} },
+      data: {
+        legs: [
+          { fixtureId: 42, marketId: "match_winner", selectionId: "home" },
+          { fixtureId: 42, marketId: "match_winner", selectionId: "draw" },
+        ],
+        amountCents: 100,
+        requestId,
+      },
+    }),
     (error) => error.code === "invalid-argument",
   );
   await assert.rejects(

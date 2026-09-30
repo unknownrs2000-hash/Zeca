@@ -242,6 +242,30 @@ data class EstadoMissoes(
     val semanal: ProgressoMissao,
 )
 
+data class OpcaoApostaEsportiva(
+    val mercadoId: String,
+    val mercadoNome: String,
+    val selecaoId: String,
+    val selecaoNome: String,
+    val linha: Double?,
+    val oddBps: Int,
+    val bookmaker: String,
+)
+
+data class PernaApostaEsportiva(
+    val fixtureId: Int,
+    val campeonato: String,
+    val mandante: String,
+    val visitante: String,
+    val kickoffMs: Long,
+    val mercadoId: String,
+    val mercadoNome: String,
+    val selecaoId: String,
+    val selecaoNome: String,
+    val linha: Double?,
+    val oddBps: Int,
+)
+
 data class PartidaEsportiva(
     val fixtureId: Int,
     val kickoffMs: Long,
@@ -250,6 +274,7 @@ data class PartidaEsportiva(
     val visitante: String,
     val oddMandanteBps: Int,
     val oddVisitanteBps: Int,
+    val mercados: List<OpcaoApostaEsportiva> = emptyList(),
 )
 
 data class ApostaEsportiva(
@@ -266,6 +291,7 @@ data class ApostaEsportiva(
     val status: String,
     val resultado: String,
     val premioCentavos: Long,
+    val pernas: List<PernaApostaEsportiva> = emptyList(),
 )
 
 data class SalaCaboGuerra(
@@ -1201,6 +1227,20 @@ object FirebaseRepository {
                     visitante = match["awayTeam"] as? String ?: "Visitante",
                     oddMandanteBps = (match["homeOddsBps"] as? Number)?.toInt() ?: 0,
                     oddVisitanteBps = (match["awayOddsBps"] as? Number)?.toInt() ?: 0,
+                    mercados = (match["markets"] as? List<*>)?.mapNotNull { optionRaw ->
+                        val option = optionRaw as? Map<*, *> ?: return@mapNotNull null
+                        val marketId = option["marketId"] as? String ?: return@mapNotNull null
+                        val selectionId = option["selectionId"] as? String ?: return@mapNotNull null
+                        OpcaoApostaEsportiva(
+                            mercadoId = marketId,
+                            mercadoNome = option["marketName"] as? String ?: "Mercado",
+                            selecaoId = selectionId,
+                            selecaoNome = option["selectionName"] as? String ?: selectionId,
+                            linha = (option["line"] as? Number)?.toDouble(),
+                            oddBps = (option["oddsBps"] as? Number)?.toInt() ?: 0,
+                            bookmaker = option["bookmaker"] as? String ?: "",
+                        )
+                    }.orEmpty(),
                 )
             }.orEmpty()
             callback(matches, error)
@@ -1212,6 +1252,23 @@ object FirebaseRepository {
             val bets = (data?.get("bets") as? List<*>)?.mapNotNull { raw ->
                 val bet = raw as? Map<*, *> ?: return@mapNotNull null
                 val id = bet["id"] as? String ?: return@mapNotNull null
+                val pernas = (bet["legs"] as? List<*>)?.mapNotNull { legRaw ->
+                    val leg = legRaw as? Map<*, *> ?: return@mapNotNull null
+                    val fixtureId = (leg["fixtureId"] as? Number)?.toInt() ?: return@mapNotNull null
+                    PernaApostaEsportiva(
+                        fixtureId = fixtureId,
+                        campeonato = leg["league"] as? String ?: "Futebol",
+                        mandante = leg["homeTeam"] as? String ?: "Mandante",
+                        visitante = leg["awayTeam"] as? String ?: "Visitante",
+                        kickoffMs = (leg["kickoffMs"] as? Number)?.toLong() ?: 0L,
+                        mercadoId = leg["marketId"] as? String ?: "match_winner",
+                        mercadoNome = leg["marketName"] as? String ?: "Resultado 1X2",
+                        selecaoId = leg["selectionId"] as? String ?: "",
+                        selecaoNome = leg["selectionName"] as? String ?: "Seleção",
+                        linha = (leg["line"] as? Number)?.toDouble(),
+                        oddBps = (leg["oddsBps"] as? Number)?.toInt() ?: 0,
+                    )
+                }.orEmpty()
                 ApostaEsportiva(
                     id = id,
                     fixtureId = (bet["fixtureId"] as? Number)?.toInt() ?: 0,
@@ -1226,6 +1283,23 @@ object FirebaseRepository {
                     status = bet["status"] as? String ?: "open",
                     resultado = bet["result"] as? String ?: "",
                     premioCentavos = (bet["payoutCents"] as? Number)?.toLong() ?: 0L,
+                    pernas = pernas.ifEmpty {
+                        listOf(
+                            PernaApostaEsportiva(
+                                fixtureId = (bet["fixtureId"] as? Number)?.toInt() ?: 0,
+                                campeonato = bet["league"] as? String ?: "Futebol",
+                                mandante = bet["homeTeam"] as? String ?: "Mandante",
+                                visitante = bet["awayTeam"] as? String ?: "Visitante",
+                                kickoffMs = (bet["kickoffMs"] as? Number)?.toLong() ?: 0L,
+                                mercadoId = bet["marketId"] as? String ?: "match_winner",
+                                mercadoNome = "Resultado 1X2",
+                                selecaoId = bet["selection"] as? String ?: "",
+                                selecaoNome = bet["selectionName"] as? String ?: "Seleção",
+                                linha = null,
+                                oddBps = (bet["oddsBps"] as? Number)?.toInt() ?: 0,
+                            ),
+                        )
+                    },
                 )
             }.orEmpty()
             callback(bets, error)
@@ -1233,15 +1307,25 @@ object FirebaseRepository {
     }
 
     fun apostarPartidaEsportiva(
-        fixtureId: Int,
-        selecao: String,
+        pernas: List<PernaApostaEsportiva>,
         valorCentavos: Long,
         requestId: String,
         callback: (Exception?) -> Unit,
     ) {
         chamarFunction(
             "placeSportsBet",
-            mapOf("fixtureId" to fixtureId, "selection" to selecao, "amountCents" to valorCentavos, "requestId" to requestId),
+            mapOf(
+                "legs" to pernas.map { leg ->
+                    mapOf(
+                        "fixtureId" to leg.fixtureId,
+                        "marketId" to leg.mercadoId,
+                        "selectionId" to leg.selecaoId,
+                        "expectedOddsBps" to leg.oddBps,
+                    )
+                },
+                "amountCents" to valorCentavos,
+                "requestId" to requestId,
+            ),
         ) { _, error -> callback(error) }
     }
 

@@ -364,8 +364,8 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                             onCarregarApostasEsportivas = { concluir ->
                                 FirebaseRepository.listarApostasEsportivas(concluir)
                             },
-                            onApostarEsportiva = { fixtureId, selecao, valor, requestId, concluir ->
-                                FirebaseRepository.apostarPartidaEsportiva(fixtureId, selecao, valor, requestId, concluir)
+                            onApostarEsportiva = { pernas, valor, requestId, concluir ->
+                                FirebaseRepository.apostarPartidaEsportiva(pernas, valor, requestId, concluir)
                             },
                             onLiquidarApostasEsportivas = { concluir ->
                                 FirebaseRepository.liquidarApostasEsportivas(concluir)

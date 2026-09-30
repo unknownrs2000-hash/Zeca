@@ -2,7 +2,15 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { fixtureWinner, parseFixtures, parseWinnerOdds, sportsPayoutCents } = require("./sports-logic");
+const {
+  combinedOddsBps,
+  fixtureWinner,
+  parseFixtures,
+  parseMatchOdds,
+  parseWinnerOdds,
+  settleSportsSelection,
+  sportsPayoutCents,
+} = require("./sports-logic");
 
 test("parses fixture identity, teams, status, and kickoff", () => {
   const fixtures = parseFixtures({
@@ -18,7 +26,7 @@ test("parses fixture identity, teams, status, and kickoff", () => {
   assert.equal(fixtures[0].status, "NS");
 });
 
-test("extracts only home and away winner odds", () => {
+test("extracts real 1X2, goals and both-teams-score odds", () => {
   const odds = parseWinnerOdds({
     response: [{
       fixture: { id: 123 },
@@ -30,6 +38,26 @@ test("extracts only home and away winner odds", () => {
     }],
   }, 123, "Time A", "Time B");
   assert.deepEqual(odds, { homeOddsBps: 17_500, awayOddsBps: 45_000 });
+  const markets = parseMatchOdds({
+    response: [{
+      fixture: { id: 123 },
+      bookmakers: [{ name: "Bookmaker", bets: [
+        { id: 1, name: "Match Winner", values: [
+          { value: "Home", odd: "1.75" }, { value: "Draw", odd: "3.2" }, { value: "Away", odd: "4.5" },
+        ] },
+        { id: 5, name: "Goals Over/Under", values: [
+          { value: "Over 2.5", odd: "1.9" }, { value: "Under 2.5", odd: "1.8" },
+        ] },
+        { id: 8, name: "Both Teams Score", values: [
+          { value: "Yes", odd: "1.65" }, { value: "No", odd: "2.1" },
+        ] },
+      ] }],
+    }],
+  }, 123, "Time A", "Time B");
+  assert.deepEqual(markets.map((option) => option.selectionId), [
+    "home", "draw", "away", "over_2_5", "under_2_5", "yes", "no",
+  ]);
+  assert.equal(markets[3].oddsBps, 19_000);
 });
 
 test("settles only final match results; draws are not a win", () => {
@@ -41,5 +69,15 @@ test("settles only final match results; draws are not a win", () => {
 
 test("calculates moneyline payout in integer cents", () => {
   assert.equal(sportsPayoutCents(1_000, 17_500), 1_750);
-  assert.throws(() => sportsPayoutCents(1_000, 10_000), RangeError);
+  assert.equal(combinedOddsBps([{ oddsBps: 20_000 }, { oddsBps: 15_000 }]), 30_000);
+  assert.equal(sportsPayoutCents(1_000, 30_000), 3_000);
+  assert.throws(() => sportsPayoutCents(1_000, 10_000_001), RangeError);
+});
+
+test("settles result, goals and both-teams-score selections from final scores", () => {
+  const fixture = { status: "FT", homeGoals: 2, awayGoals: 1 };
+  assert.equal(settleSportsSelection(fixture, { marketId: "match_winner", selectionId: "draw" }), "lost");
+  assert.equal(settleSportsSelection(fixture, { marketId: "total_goals", selectionId: "over_2_5", line: 2.5 }), "won");
+  assert.equal(settleSportsSelection(fixture, { marketId: "both_teams_score", selectionId: "yes" }), "won");
+  assert.equal(settleSportsSelection({ ...fixture, status: "NS" }, { marketId: "match_winner", selectionId: "home" }), null);
 });

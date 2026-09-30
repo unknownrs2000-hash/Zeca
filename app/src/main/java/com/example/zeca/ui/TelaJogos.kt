@@ -54,6 +54,7 @@ import com.example.zeca.ConfiguracaoMinas
 import com.example.zeca.EstadoMinas
 import com.example.zeca.EstadoBlackjack
 import com.example.zeca.ApostaEsportiva
+import com.example.zeca.PernaApostaEsportiva
 import com.example.zeca.PartidaEsportiva
 import com.example.zeca.SalaCaboGuerra
 import com.example.zeca.JogadorRanking
@@ -76,7 +77,7 @@ fun TelaJogos(
     onCarregarMinasAtiva: ((EstadoMinas?, Exception?) -> Unit) -> Unit,
     onCarregarPartidasEsportivas: ((List<PartidaEsportiva>, Exception?) -> Unit) -> Unit,
     onCarregarApostasEsportivas: ((List<ApostaEsportiva>, Exception?) -> Unit) -> Unit,
-    onApostarEsportiva: (Int, String, Long, String, (Exception?) -> Unit) -> Unit,
+    onApostarEsportiva: (List<PernaApostaEsportiva>, Long, String, (Exception?) -> Unit) -> Unit,
     onLiquidarApostasEsportivas: ((Int?, Exception?) -> Unit) -> Unit,
     onCarregarSalasCaboGuerra: ((List<SalaCaboGuerra>, Exception?) -> Unit) -> Unit,
     onCriarSalaCaboGuerra: (Long, List<String>, String, String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
