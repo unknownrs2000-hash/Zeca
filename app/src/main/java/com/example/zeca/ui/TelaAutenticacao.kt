@@ -1,5 +1,6 @@
 package com.example.zeca.ui
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -143,7 +144,22 @@ fun TelaAutenticacao(onAutenticado: (FirebaseUser) -> Unit) {
                                 user.updateProfile(atualizacao).addOnCompleteListener { profileResult ->
                                     if (profileResult.isSuccessful) {
                                         user.sendEmailVerification()
-                                        finalizarLogin(user)
+                                            .addOnSuccessListener {
+                                                Toast.makeText(
+                                                    context,
+                                                    "O Firebase aceitou o envio. Confira sua caixa de entrada e o spam.",
+                                                    Toast.LENGTH_LONG,
+                                                ).show()
+                                                finalizarLogin(user)
+                                            }
+                                            .addOnFailureListener { verificationError ->
+                                                Toast.makeText(
+                                                    context,
+                                                    "Conta criada, mas o envio falhou: ${mensagemAuth(verificationError)}. Você pode reenviar pela Carteira.",
+                                                    Toast.LENGTH_LONG,
+                                                ).show()
+                                                finalizarLogin(user)
+                                            }
                                     }
                                     else {
                                         ocupado = false
