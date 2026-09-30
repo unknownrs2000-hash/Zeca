@@ -873,6 +873,7 @@ fun TelaLoja(
     var categoria by rememberSaveable { mutableStateOf("Avatar") }
     var mensagem by rememberSaveable { mutableStateOf("") }
     var mensagemErro by rememberSaveable { mutableStateOf(false) }
+    var itemComMensagem by rememberSaveable { mutableStateOf("") }
     var itemEmCompra by rememberSaveable { mutableStateOf("") }
     var itemEmUso by rememberSaveable { mutableStateOf("") }
 
@@ -972,6 +973,9 @@ fun TelaLoja(
                         val vestido = produto.id in avatarItensEquipados
                         TextButton(
                             onClick = {
+                                itemComMensagem = produto.id
+                                mensagem = ""
+                                mensagemErro = false
                                 itemEmUso = produto.id
                                 onEquiparAvatar(produto.avatarSlot, if (vestido) null else produto.id) { erro ->
                                     itemEmUso = ""
@@ -996,6 +1000,9 @@ fun TelaLoja(
                         val molduraEmUso = produto.id == molduraEquipada
                         TextButton(
                             onClick = {
+                                itemComMensagem = produto.id
+                                mensagem = ""
+                                mensagemErro = false
                                 itemEmUso = produto.id
                                 onEquiparMoldura(if (molduraEmUso) "" else produto.id) { erro ->
                                     itemEmUso = ""
@@ -1018,17 +1025,23 @@ fun TelaLoja(
                     }
                     Button(
                         onClick = {
-                            itemEmCompra = produto.id
-                            mensagem = ""
-                            onComprar(produto.id) { erro ->
-                                itemEmCompra = ""
-                                mensagemErro = erro != null
-                                mensagem = erro ?: "Item adicionado à coleção."
+                            itemComMensagem = produto.id
+                            if (saldoCentavos < produto.precoCentavos) {
+                                mensagemErro = true
+                                mensagem = "Faltam ${formatarReais(produto.precoCentavos - saldoCentavos)} para comprar ${produto.nome}."
+                            } else {
+                                itemEmCompra = produto.id
+                                mensagem = ""
+                                onComprar(produto.id) { erro ->
+                                    itemEmCompra = ""
+                                    mensagemErro = erro != null
+                                    mensagem = erro ?: "Item adicionado à coleção."
+                                }
                             }
                         },
-                        enabled = !comprado && saldoCentavos >= produto.precoCentavos && itemEmCompra.isBlank(),
+                        enabled = !comprado && itemEmCompra.isBlank(),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = if (comprado) Color.White.copy(alpha = 0.14f) else Color.White,
+                            containerColor = if (comprado || saldoCentavos < produto.precoCentavos) Color.White.copy(alpha = 0.14f) else Color.White,
                             disabledContainerColor = Color.White.copy(alpha = 0.14f),
                         ),
                     ) {
@@ -1041,16 +1054,22 @@ fun TelaLoja(
                         Crossfade(targetState = buttonLabel, label = "store-purchase-${produto.id}") { label ->
                             Text(
                                 label,
-                                color = if (comprado || label == "Saldo insuficiente" || label == "Comprando...") Color.White else Color(0xFF111418),
+                                color = if (comprado || saldoCentavos < produto.precoCentavos || label == "Comprando...") Color.White else Color(0xFF111418),
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
                             )
                         }
                     }
                 }
+                if (itemComMensagem == produto.id && mensagem.isNotBlank()) {
+                    Text(
+                        mensagem,
+                        color = if (mensagemErro) Cores.Laranja else Cores.Verde,
+                        fontSize = 12.sp,
+                    )
+                }
             }
         }
-        if (mensagem.isNotBlank()) Text(mensagem, color = if (mensagemErro) Cores.Laranja else Cores.Verde, fontSize = 13.sp)
         TextButton(onClick = onVoltar, modifier = Modifier.fillMaxWidth()) { Text("Voltar ao perfil") }
     }
 }
