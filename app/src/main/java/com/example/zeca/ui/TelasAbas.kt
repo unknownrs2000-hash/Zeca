@@ -7,6 +7,8 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.scaleIn
@@ -24,6 +26,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -34,14 +37,18 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
@@ -55,6 +62,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -62,6 +70,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.example.zeca.MensagemChat
 import com.example.zeca.ConversaChat
 import com.example.zeca.Movimento
@@ -78,6 +89,90 @@ import java.text.NumberFormat
 import java.util.Locale
 import java.util.UUID
 
+@Composable
+fun TelaConfigurarPerfil(
+    nomeInicial: String,
+    avatarUrlInicial: String,
+    onEnviarFoto: (Uri, (String?, String?) -> Unit) -> Unit,
+    onSalvarPerfil: (String, String, String, (String?) -> Unit) -> Unit,
+) {
+    var username by rememberSaveable { mutableStateOf("") }
+    var displayName by rememberSaveable { mutableStateOf(nomeInicial) }
+    var avatarUrl by rememberSaveable { mutableStateOf(avatarUrlInicial) }
+    var mensagem by rememberSaveable { mutableStateOf("") }
+    var enviandoFoto by remember { mutableStateOf(false) }
+    var salvando by remember { mutableStateOf(false) }
+    val seletorFoto = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            enviandoFoto = true
+            mensagem = "Enviando foto..."
+            onEnviarFoto(uri) { url, erro ->
+                enviandoFoto = false
+                if (erro == null && url != null) {
+                    avatarUrl = url
+                    mensagem = "Foto atualizada."
+                } else mensagem = erro ?: "Não foi possível enviar a foto."
+            }
+        }
+    }
+    val usernameValido = Regex("^[a-z0-9_]{3,20}$").matches(username)
+    val nomeValido = displayName.trim().length in 2..24
+
+    TelaBase("Seu perfil", "Escolha sua identidade no Zeca para continuar.") {
+        GlassCard {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                AvatarComMoldura(displayName.take(1).uppercase().ifBlank { "?" }, "", 92.dp, photoUrl = avatarUrl)
+                Button(
+                    onClick = { seletorFoto.launch("image/*") },
+                    enabled = !enviandoFoto,
+                ) { Text(if (enviandoFoto) "Enviando foto..." else "Escolher foto de perfil") }
+            }
+            OutlinedTextField(
+                value = username,
+                onValueChange = { value ->
+                    username = value.filter { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '_' }
+                        .lowercase().take(20)
+                    mensagem = ""
+                },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Nome de usuário") },
+                prefix = { Text("@") },
+                supportingText = { Text("3 a 20 caracteres: letras, números e _") },
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = displayName,
+                onValueChange = { displayName = it.take(24); mensagem = "" },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Nome de exibição") },
+                supportingText = { Text("Este nome aparecerá no ranking e no chat.") },
+                singleLine = true,
+            )
+            Button(
+                onClick = {
+                    salvando = true
+                    mensagem = ""
+                    onSalvarPerfil(username, displayName.trim(), avatarUrl) { erro ->
+                        salvando = false
+                        mensagem = erro ?: "Perfil salvo."
+                    }
+                },
+                enabled = usernameValido && nomeValido && !salvando && !enviandoFoto,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = Cores.Verde),
+            ) { Text(if (salvando) "Salvando..." else "Salvar e continuar") }
+            if (mensagem.isNotBlank()) {
+                Text(mensagem, color = if (mensagem == "Perfil salvo." || mensagem == "Foto atualizada.") Cores.Verde else Cores.Laranja, fontSize = 12.sp)
+            }
+            Text("O nome de usuário é exclusivo. A foto é opcional e pode ser alterada depois.", color = Color.White.copy(alpha = 0.58f), fontSize = 11.sp)
+        }
+    }
+}
+
 fun formatarReais(centavos: Long): String =
     NumberFormat.getCurrencyInstance(Locale.forLanguageTag("pt-BR")).format(BigDecimal.valueOf(centavos, 2))
 
@@ -87,6 +182,7 @@ private data class ComprovantePix(
     val valorCentavos: Long,
     val horario: String,
     val recebimento: Boolean,
+    val saldoAposCentavos: Long? = null,
 )
 
 private fun criarQrCode(conteudo: String): Bitmap? = runCatching {
@@ -362,6 +458,7 @@ fun TelaCarteira(
                                     horario = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.forLanguageTag("pt-BR"))
                                         .format(java.util.Date()),
                                     recebimento = false,
+                                    saldoAposCentavos = resultado.saldoCentavos,
                                 )
                                 destinatario = null
                                 mensagemTransferencia = "Transferência concluída para ${resultado.nomeDestino}."
@@ -422,45 +519,189 @@ fun TelaCarteira(
     }
 
     comprovante?.let { recibo ->
-        AlertDialog(
+        Dialog(
             onDismissRequest = { comprovante = null },
-            title = {
-                Text(if (recibo.recebimento) "Comprovante de recebimento" else "Comprovante de pagamento")
-            },
-            text = {
-                AnimatedVisibility(visible = true, enter = scaleIn() + fadeIn()) {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("✓  Transferência concluída", color = Cores.Verde, fontWeight = FontWeight.Bold)
-                        Text(recibo.contraparte, color = Color.White)
-                        Text(formatarReais(recibo.valorCentavos), color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.Bold)
-                        Text("Data: ${recibo.horario}", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
-                        Text("ID: ${recibo.id}", color = Color.White.copy(alpha = 0.58f), fontSize = 11.sp)
-                        Text("Comprovante de saldo interno do Zeca; não comprova liquidação bancária.", color = Cores.Laranja, fontSize = 11.sp)
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            AnimatedVisibility(visible = true, enter = scaleIn() + fadeIn()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth(0.94f)
+                        .heightIn(max = 680.dp)
+                        .clip(RoundedCornerShape(28.dp))
+                        .background(
+                            Brush.verticalGradient(listOf(Color(0xFF222A2E), Cores.Cartao, Cores.Fundo)),
+                        )
+                        .border(1.dp, Color.White.copy(alpha = 0.17f), RoundedCornerShape(28.dp))
+                        .verticalScroll(rememberScrollState())
+                        .padding(22.dp),
+                    verticalArrangement = Arrangement.spacedBy(18.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .clip(CircleShape)
+                                    .background(Cores.Verde.copy(alpha = 0.14f)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Cores.Verde, modifier = Modifier.size(30.dp))
+                            }
+                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text("ZECA · COMPROVANTE", color = Cores.Verde, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                Text(
+                                    if (recibo.recebimento) "Recebimento concluído" else "Pagamento concluído",
+                                    color = Color.White,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                        }
+                        IconButton(onClick = { comprovante = null }) {
+                            Icon(Icons.Filled.Close, contentDescription = "Fechar comprovante", tint = Color.White.copy(alpha = 0.72f))
+                        }
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(Color.White.copy(alpha = 0.055f))
+                            .padding(horizontal = 18.dp, vertical = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
+                        Text("VALOR DA TRANSFERÊNCIA", color = Color.White.copy(alpha = 0.56f), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            formatarReais(recibo.valorCentavos),
+                            color = Color.White,
+                            fontSize = 34.sp,
+                            fontWeight = FontWeight.Black,
+                        )
+                        Text("Concluída · ${recibo.horario}", color = Cores.Verde, fontSize = 12.sp)
+                    }
+
+                    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        LinhaComprovante(
+                            rotulo = if (recibo.recebimento) "Recebido de" else "Enviado para",
+                            valor = recibo.contraparte,
+                        )
+                        LinhaComprovante(
+                            rotulo = if (recibo.recebimento) "Destino" else "Origem",
+                            valor = if (recibo.recebimento) "Carteira Zeca" else "Seu saldo Zeca",
+                            iconeCarteira = true,
+                        )
+                        LinhaComprovante(rotulo = "Tipo", valor = "Transferência entre usuários")
+                        LinhaComprovante(rotulo = "Status", valor = "Concluída", valorVerde = true)
+                        recibo.saldoAposCentavos?.let {
+                            LinhaComprovante(rotulo = "Saldo após o envio", valor = formatarReais(it))
+                        }
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color.Black.copy(alpha = 0.2f))
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text("IDENTIFICADOR", color = Color.White.copy(alpha = 0.52f), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                recibo.id,
+                                modifier = Modifier.weight(1f),
+                                color = Color.White.copy(alpha = 0.82f),
+                                fontSize = 11.sp,
+                            )
+                            IconButton(onClick = {
+                                context.getSystemService(ClipboardManager::class.java)
+                                    ?.setPrimaryClip(ClipData.newPlainText("ID do comprovante Zeca", recibo.id))
+                                Toast.makeText(context, "Identificador copiado", Toast.LENGTH_SHORT).show()
+                            }) {
+                                Icon(Icons.Filled.ContentCopy, contentDescription = "Copiar identificador", tint = Cores.Turquesa)
+                            }
+                        }
+                    }
+
+                    Text(
+                        "Movimentação de saldo interno do Zeca. Este comprovante não representa uma liquidação bancária Pix.",
+                        color = Cores.Laranja,
+                        fontSize = 11.sp,
+                    )
+
+                    Button(
+                        onClick = {
+                            val texto = "COMPROVANTE ZECA\n" +
+                                "${if (recibo.recebimento) "Recebimento" else "Pagamento"} concluído\n" +
+                                "Valor: ${formatarReais(recibo.valorCentavos)}\n" +
+                                "${if (recibo.recebimento) "Recebido de" else "Enviado para"}: ${recibo.contraparte}\n" +
+                                "${if (recibo.recebimento) "Destino" else "Origem"}: ${if (recibo.recebimento) "Carteira Zeca" else "Seu saldo Zeca"}\n" +
+                                "Tipo: Transferência entre usuários\nData: ${recibo.horario}\nID: ${recibo.id}\n" +
+                                (recibo.saldoAposCentavos?.let { "Saldo após o envio: ${formatarReais(it)}\n" } ?: "") +
+                                "Movimentação de saldo interno; não é liquidação bancária Pix."
+                            val compartilhar = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, texto)
+                            }
+                            context.startActivity(Intent.createChooser(compartilhar, "Compartilhar comprovante"))
+                        },
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Cores.Verde, contentColor = Color(0xFF06110B)),
+                    ) {
+                        Text("Compartilhar comprovante", fontWeight = FontWeight.Bold)
+                    }
+                    TextButton(onClick = { comprovante = null }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Fechar", color = Color.White.copy(alpha = 0.75f))
                     }
                 }
-            },
-            confirmButton = {
-                TextButton(onClick = { comprovante = null }) { Text("Fechar") }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    val texto = "Comprovante Zeca\n${if (recibo.recebimento) "Recebimento" else "Pagamento"}: ${recibo.contraparte}\n" +
-                        "Valor: ${formatarReais(recibo.valorCentavos)}\nData: ${recibo.horario}\nID: ${recibo.id}\n" +
-                        "Transferência interna; não é liquidação bancária."
-                    val compartilhar = Intent(Intent.ACTION_SEND).apply {
-                        type = "text/plain"
-                        putExtra(Intent.EXTRA_TEXT, texto)
-                    }
-                    context.startActivity(Intent.createChooser(compartilhar, "Compartilhar comprovante"))
-                }) { Text("Compartilhar") }
-            },
-        )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LinhaComprovante(
+    rotulo: String,
+    valor: String,
+    valorVerde: Boolean = false,
+    iconeCarteira: Boolean = false,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(rotulo, color = Color.White.copy(alpha = 0.58f), fontSize = 12.sp)
+        Row(
+            modifier = Modifier.weight(1f, fill = false),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (iconeCarteira) Icon(Icons.Filled.AccountBalanceWallet, contentDescription = null, tint = Cores.Turquesa, modifier = Modifier.size(15.dp))
+            Text(
+                valor,
+                color = if (valorVerde) Cores.Verde else Color.White,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.End,
+            )
+        }
     }
 }
 
 @Composable
 fun TelaPerfil(
     apelido: String,
+    username: String,
     email: String,
     saldoCentavos: Long,
     nivel: Int,
@@ -470,37 +711,85 @@ fun TelaPerfil(
     inventario: List<String>,
     molduraEquipada: String,
     onEscolherMoldura: (String, (String?) -> Unit) -> Unit,
-    onSalvarApelido: (String, (String?) -> Unit) -> Unit,
+    onEnviarFoto: (Uri, (String?, String?) -> Unit) -> Unit,
+    onSalvarPerfil: (String, String, String, (String?) -> Unit) -> Unit,
     onAbrirLoja: () -> Unit,
     onSair: () -> Unit,
 ) {
     var apelidoEditavel by rememberSaveable { mutableStateOf(apelido) }
+    var usernameEditavel by rememberSaveable { mutableStateOf(username) }
+    var avatarUrlEditavel by rememberSaveable { mutableStateOf(avatarUrl) }
     var mensagemPerfil by rememberSaveable { mutableStateOf("") }
     var mensagemMoldura by rememberSaveable { mutableStateOf("") }
-    LaunchedEffect(apelido) { apelidoEditavel = apelido }
+    var enviandoFoto by remember { mutableStateOf(false) }
+    val seletorFoto = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            enviandoFoto = true
+            onEnviarFoto(uri) { url, erro ->
+                enviandoFoto = false
+                if (erro == null && url != null) {
+                    avatarUrlEditavel = url
+                    mensagemPerfil = "Foto atualizada. Salve o perfil para publicar a alteração."
+                } else mensagemPerfil = erro ?: "Não foi possível enviar a foto."
+            }
+        }
+    }
+    LaunchedEffect(apelido, username, avatarUrl) {
+        apelidoEditavel = apelido
+        usernameEditavel = username
+        avatarUrlEditavel = avatarUrl
+    }
 
     TelaBase("Perfil", "Seu espaço no Zeca.") {
         GlassCard {
-            AvatarComMoldura(apelido.take(1).uppercase(), molduraEquipada, 72.dp)
+            AvatarComMoldura(apelidoEditavel.take(1).uppercase(), molduraEquipada, 72.dp, photoUrl = avatarUrlEditavel)
+            Button(
+                onClick = { seletorFoto.launch("image/*") },
+                enabled = !enviandoFoto,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(if (enviandoFoto) "Enviando foto..." else "Alterar foto de perfil") }
+            OutlinedTextField(
+                value = usernameEditavel,
+                onValueChange = { value ->
+                    usernameEditavel = value.filter { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '_' }
+                        .lowercase().take(20)
+                    mensagemPerfil = ""
+                },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Nome de usuário") },
+                prefix = { Text("@") },
+                supportingText = { Text("3 a 20 caracteres: letras, números e _") },
+                singleLine = true,
+            )
             OutlinedTextField(
                 value = apelidoEditavel,
                 onValueChange = { apelidoEditavel = it.take(24); mensagemPerfil = "" },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Apelido") },
+                label = { Text("Nome de exibição") },
                 singleLine = true,
             )
             Text(email, color = Color.White.copy(alpha = 0.62f), fontSize = 12.sp)
-            Text("Nível $nivel", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text("Nível $nivel · ${partidas % 10}/10 partidas para o próximo", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            LinearProgressIndicator(
+                progress = { (partidas % 10) / 10f },
+                modifier = Modifier.fillMaxWidth().height(7.dp).clip(CircleShape),
+                color = Cores.Verde,
+                trackColor = Color.White.copy(alpha = 0.12f),
+            )
+            Text("Próximo nível: bônus de R$ 10,00", color = Cores.Turquesa, fontSize = 12.sp)
             Button(
                 onClick = {
-                    onSalvarApelido(apelidoEditavel.trim()) { erro ->
-                        mensagemPerfil = erro ?: "Apelido atualizado."
+                    onSalvarPerfil(usernameEditavel, apelidoEditavel.trim(), avatarUrlEditavel) { erro ->
+                        mensagemPerfil = erro ?: "Perfil atualizado."
                     }
                 },
-                enabled = apelidoEditavel.trim().length >= 2 && apelidoEditavel.trim() != apelido,
+                enabled = Regex("^[a-z0-9_]{3,20}$").matches(usernameEditavel)
+                    && apelidoEditavel.trim().length in 2..24
+                    && (apelidoEditavel.trim() != apelido || usernameEditavel != username || avatarUrlEditavel != avatarUrl)
+                    && !enviandoFoto,
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text("Salvar apelido") }
-            if (mensagemPerfil.isNotBlank()) Text(mensagemPerfil, color = if (mensagemPerfil.contains("atualizado")) Cores.Verde else Cores.Laranja, fontSize = 12.sp)
+            ) { Text("Salvar perfil") }
+            if (mensagemPerfil.isNotBlank()) Text(mensagemPerfil, color = if (mensagemPerfil.contains("atualizado") || mensagemPerfil.contains("Foto atualizada")) Cores.Verde else Cores.Laranja, fontSize = 12.sp)
         }
         GlassCard {
             Text("Estatísticas", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
@@ -746,7 +1035,13 @@ internal fun coresMoldura(id: String): List<Color>? = when (id) {
 }
 
 @Composable
-internal fun AvatarComMoldura(inicial: String, moldura: String, tamanho: Dp, modifier: Modifier = Modifier) {
+internal fun AvatarComMoldura(
+    inicial: String,
+    moldura: String,
+    tamanho: Dp,
+    modifier: Modifier = Modifier,
+    photoUrl: String = "",
+) {
     val cores = coresMoldura(moldura)
     Box(
         modifier = modifier
@@ -762,6 +1057,14 @@ internal fun AvatarComMoldura(inicial: String, moldura: String, tamanho: Dp, mod
             contentAlignment = Alignment.Center,
         ) {
             Text(inicial, color = Cores.Verde, fontSize = (tamanho.value * 0.42f).sp, fontWeight = FontWeight.Black)
+            if (photoUrl.isNotBlank()) {
+                AsyncImage(
+                    model = photoUrl,
+                    contentDescription = "Foto de perfil",
+                    modifier = Modifier.fillMaxSize().clip(CircleShape),
+                    contentScale = ContentScale.Crop,
+                )
+            }
         }
     }
 }

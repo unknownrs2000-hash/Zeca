@@ -16,7 +16,7 @@ const {
   spinSlots,
   validateWager,
 } = require("./game-logic");
-const { initializeBalance } = require("./profile-logic");
+const { initializeBalance, levelProgress, normalizeUsername } = require("./profile-logic");
 
 const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
 initializeApp(serviceAccount ? { credential: cert(JSON.parse(serviceAccount)) } : {});
@@ -88,6 +88,16 @@ function profitTotals(profitCents) {
   };
 }
 
+function registrarPremioNivel(transaction, userRef, requestId, progression) {
+  if (progression.rewardCents <= 0) return;
+  transaction.create(userRef.collection("transactions").doc(`${requestId}_level_reward`), {
+    description: `Nível ${progression.level} · prêmio`,
+    deltaCents: progression.rewardCents,
+    type: "level_reward",
+    createdAt: FieldValue.serverTimestamp(),
+  });
+}
+
 exports.ensurePlayerProfile = onCall(async (request) => {
   const uid = authenticatedUid(request);
   const authUser = await getAuth().getUser(uid);
@@ -103,6 +113,8 @@ exports.ensurePlayerProfile = onCall(async (request) => {
     ]);
     const existing = userSnapshot.data() || {};
     const { balanceCents } = initializeBalance(existing, INITIAL_BALANCE_CENTS);
+    const gamesPlayed = Number.isSafeInteger(existing.gamesPlayed) ? existing.gamesPlayed : 0;
+    const username = normalizeUsername(existing.username) || "";
 
     const profile = {
       ...existing,
@@ -111,12 +123,17 @@ exports.ensurePlayerProfile = onCall(async (request) => {
       email: authUser.email || existing.email || "",
       balanceCents,
       balanceInitialized: true,
-      level: Number.isSafeInteger(existing.level) && existing.level > 0 ? existing.level : 1,
+      level: Math.max(
+        Number.isSafeInteger(existing.level) && existing.level > 0 ? existing.level : 1,
+        levelProgress(gamesPlayed).level,
+      ),
       avatarUrl: existing.avatarUrl || authUser.photoURL || "",
+      username,
+      profileSetupComplete: existing.profileSetupComplete === true && username !== "",
       pixKey: existing.pixKey || "",
       pixKeyType: existing.pixKeyType || "",
       pixKeyHash: existing.pixKeyHash || "",
-      gamesPlayed: Number.isSafeInteger(existing.gamesPlayed) ? existing.gamesPlayed : 0,
+      gamesPlayed,
       wins: Number.isSafeInteger(existing.wins) ? existing.wins : 0,
       inventory: Array.isArray(existing.inventory) ? existing.inventory : [],
       createdAt: existing.createdAt || FieldValue.serverTimestamp(),
@@ -126,6 +143,7 @@ exports.ensurePlayerProfile = onCall(async (request) => {
       balanceCents: profile.balanceCents,
       level: profile.level,
       avatarUrl: profile.avatarUrl,
+      username: profile.username,
     };
 
     if (userSnapshot.exists) transaction.set(userRef, profile);
@@ -140,24 +158,48 @@ exports.ensurePlayerProfile = onCall(async (request) => {
 exports.updatePlayerProfile = onCall(async (request) => {
   const uid = authenticatedUid(request);
   const displayName = safeName(request.data?.displayName, "");
+  const username = normalizeUsername(request.data?.username);
+  const avatarUrl = typeof request.data?.avatarUrl === "string" ? request.data.avatarUrl.trim() : "";
   if (!displayName) {
-    throw new HttpsError("invalid-argument", "O apelido deve ter entre 2 e 24 caracteres.");
+    throw new HttpsError("invalid-argument", "O nome de exibição deve ter entre 2 e 24 caracteres.");
+  }
+  if (!username) {
+    throw new HttpsError("invalid-argument", "Use um nome de usuário de 3 a 20 caracteres: letras, números e _.");
+  }
+  const fotoFirebase = avatarUrl.startsWith("https://firebasestorage.googleapis.com/");
+  const fotoGoogle = /^https:\/\/(?:[a-z0-9-]+\.)*googleusercontent\.com\//i.test(avatarUrl);
+  if (avatarUrl && ((!fotoFirebase && !fotoGoogle) || avatarUrl.length > 2_048)) {
+    throw new HttpsError("invalid-argument", "A foto de perfil precisa estar armazenada no Firebase Storage.");
   }
 
   const userRef = database.collection("users").doc(uid);
   const rankRef = database.collection("leaderboard").doc(uid);
+  const usernameRef = database.collection("usernames").doc(username);
   await database.runTransaction(async (transaction) => {
-    const [userSnapshot, rankSnapshot] = await Promise.all([
+    const [userSnapshot, rankSnapshot, usernameSnapshot] = await Promise.all([
       transaction.get(userRef),
       transaction.get(rankRef),
+      transaction.get(usernameRef),
     ]);
     if (!userSnapshot.exists || !rankSnapshot.exists) {
       throw new HttpsError("failed-precondition", "Perfil ainda não foi criado.");
     }
-    transaction.update(userRef, { displayName });
-    transaction.update(rankRef, { displayName });
+    if (usernameSnapshot.exists && usernameSnapshot.data().uid !== uid) {
+      throw new HttpsError("already-exists", "Este nome de usuário já está em uso.");
+    }
+    const oldUsername = normalizeUsername(userSnapshot.get("username"));
+    const oldUsernameRef = oldUsername && oldUsername !== username
+      ? database.collection("usernames").doc(oldUsername)
+      : null;
+    const oldUsernameSnapshot = oldUsernameRef ? await transaction.get(oldUsernameRef) : null;
+    if (oldUsernameSnapshot?.exists && oldUsernameSnapshot.data().uid === uid) {
+      transaction.delete(oldUsernameRef);
+    }
+    transaction.set(usernameRef, { uid, createdAt: FieldValue.serverTimestamp() });
+    transaction.update(userRef, { username, displayName, avatarUrl, profileSetupComplete: true });
+    transaction.update(rankRef, { username, displayName, avatarUrl });
   });
-  return { ok: true, displayName };
+  return { ok: true, username, displayName, avatarUrl };
 });
 
 exports.registerPixKey = onCall(async (request) => {
@@ -226,6 +268,7 @@ exports.lookupPixKey = onCall(async (request) => {
   return {
     uid,
     displayName: profile.displayName || "Jogador",
+    username: profile.username || "",
     level: profile.level || 1,
     avatarUrl: profile.avatarUrl || "",
   };
@@ -404,29 +447,40 @@ exports.playGame = onCall(async (request) => {
     }
     const gamesPlayed = (profile.gamesPlayed || 0) + 1;
     const wins = (profile.wins || 0) + (returnedCents > amountCents ? 1 : 0);
+    const progression = levelProgress(gamesPlayed);
+    const balanceFinal = balanceAfter + progression.rewardCents;
+    if (!Number.isSafeInteger(balanceFinal)) {
+      throw new HttpsError("failed-precondition", "Saldo resultante inválido.");
+    }
     const description = game === "slots"
       ? `Slots · ${result.reels.join(" ")}`
       : `Roleta · ${result.number} ${result.color}`;
     transaction.update(userRef, {
-      balanceCents: balanceAfter,
+      balanceCents: balanceFinal,
       gamesPlayed,
       wins,
+      level: progression.level,
+      gamesTowardNextLevel: progression.gamesTowardNextLevel,
       lastGameActionAtMs: actionAtMs,
       ...profitTotals(deltaCents),
     });
-    transaction.update(rankRef, { balanceCents: balanceAfter });
+    transaction.update(rankRef, { balanceCents: balanceFinal, level: progression.level });
     transaction.create(transactionRef, {
       description,
       deltaCents,
       createdAt: FieldValue.serverTimestamp(),
     });
+    registrarPremioNivel(transaction, userRef, requestId, progression);
     response = {
       result: game === "slots" ? result.reels : { number: result.number, color: result.color },
       payoutMultiplier: result.multiplier,
       deltaCents,
-      balanceCents: balanceAfter,
+      balanceCents: balanceFinal,
       gamesPlayed,
       wins,
+      level: progression.level,
+      gamesTowardNextLevel: progression.gamesTowardNextLevel,
+      levelRewardCents: progression.rewardCents,
     };
     transaction.create(requestRef, { response, createdAt: FieldValue.serverTimestamp() });
   });
@@ -563,14 +617,21 @@ exports.cashOutCrash = onCall(async (request) => {
     }
     const gamesPlayed = (profile.gamesPlayed || 0) + 1;
     const wins = (profile.wins || 0) + (profitCents > 0 ? 1 : 0);
+    const progression = levelProgress(gamesPlayed);
+    const balanceFinal = balanceAfter + progression.rewardCents;
+    if (!Number.isSafeInteger(balanceFinal)) {
+      throw new HttpsError("failed-precondition", "Saldo resultante inválido.");
+    }
     transaction.update(userRef, {
-      balanceCents: balanceAfter,
+      balanceCents: balanceFinal,
       gamesPlayed,
       wins,
+      level: progression.level,
+      gamesTowardNextLevel: progression.gamesTowardNextLevel,
       lastGameActionAtMs: nowMs,
       ...profitTotals(profitCents),
     });
-    transaction.update(rankRef, { balanceCents: balanceAfter });
+    transaction.update(rankRef, { balanceCents: balanceFinal, level: progression.level });
     transaction.update(gameRef, {
       status: "settled",
       crashed,
@@ -585,14 +646,18 @@ exports.cashOutCrash = onCall(async (request) => {
         createdAt: FieldValue.serverTimestamp(),
       });
     }
+    registrarPremioNivel(transaction, userRef, requestId, progression);
     response = {
       crashed,
       multiplierBps,
       payoutCents,
       profitCents,
-      balanceCents: balanceAfter,
+      balanceCents: balanceFinal,
       gamesPlayed,
       wins,
+      level: progression.level,
+      gamesTowardNextLevel: progression.gamesTowardNextLevel,
+      levelRewardCents: progression.rewardCents,
     };
     transaction.create(requestRef, { response, createdAt: FieldValue.serverTimestamp() });
   });
@@ -613,6 +678,9 @@ function publicBlackjackState(game) {
     payoutCents: game.payoutCents || 0,
     profitCents: game.profitCents || 0,
     balanceCents: game.balanceCents,
+    level: game.level || 1,
+    gamesTowardNextLevel: game.gamesTowardNextLevel || 0,
+    levelRewardCents: game.levelRewardCents || 0,
   };
 }
 
@@ -680,17 +748,23 @@ exports.startBlackjack = onCall(async (request) => {
     let balanceAfter = balance - amountCents;
     let gamesPlayed = profile.gamesPlayed || 0;
     let wins = profile.wins || 0;
+    let progression = levelProgress(gamesPlayed);
     const hasNatural = isBlackjack(playerCards) || isBlackjack(dealerCards);
     if (hasNatural) {
       const settlement = settleBlackjack(playerCards, dealerCards, amountCents);
       balanceAfter += settlement.payoutCents;
       gamesPlayed += 1;
+      progression = levelProgress(gamesPlayed);
+      balanceAfter += progression.rewardCents;
       if (settlement.payoutCents > amountCents) wins += 1;
       initialGame.status = "settled";
       initialGame.outcome = settlement.outcome;
       initialGame.payoutCents = settlement.payoutCents;
       initialGame.profitCents = settlement.payoutCents - amountCents;
       initialGame.balanceCents = balanceAfter;
+      initialGame.level = progression.level;
+      initialGame.gamesTowardNextLevel = progression.gamesTowardNextLevel;
+      initialGame.levelRewardCents = progression.rewardCents;
     }
     if (!Number.isSafeInteger(balanceAfter) || balanceAfter < 0) {
       throw new HttpsError("failed-precondition", "Saldo resultante inválido.");
@@ -700,10 +774,17 @@ exports.startBlackjack = onCall(async (request) => {
       balanceCents: balanceAfter,
       gamesPlayed,
       wins,
+      ...(initialGame.status === "settled" ? {
+        level: progression.level,
+        gamesTowardNextLevel: progression.gamesTowardNextLevel,
+      } : {}),
       lastGameActionAtMs: startedAtMs,
       ...(initialGame.status === "settled" ? profitTotals(initialGame.profitCents) : {}),
     });
-    transaction.update(rankRef, { balanceCents: balanceAfter });
+    transaction.update(rankRef, {
+      balanceCents: balanceAfter,
+      ...(initialGame.status === "settled" ? { level: progression.level } : {}),
+    });
     transaction.set(gameRef, initialGame);
     transaction.create(betHistoryRef, {
       description: "Blackjack · aposta",
@@ -717,6 +798,7 @@ exports.startBlackjack = onCall(async (request) => {
         createdAt: FieldValue.serverTimestamp(),
       });
     }
+    if (initialGame.status === "settled") registrarPremioNivel(transaction, userRef, requestId, progression);
     response = publicBlackjackState(initialGame);
     transaction.create(requestRef, { response, createdAt: FieldValue.serverTimestamp() });
   });
@@ -827,6 +909,11 @@ exports.blackjackAction = onCall(async (request) => {
     }
     const gamesPlayed = (profile.gamesPlayed || 0) + 1;
     const wins = (profile.wins || 0) + (settlement.payoutCents > wagerCents ? 1 : 0);
+    const progression = levelProgress(gamesPlayed);
+    const balanceFinal = balanceAfter + progression.rewardCents;
+    if (!Number.isSafeInteger(balanceFinal)) {
+      throw new HttpsError("failed-precondition", "Saldo resultante inválido.");
+    }
     const finalGame = {
       ...game,
       status: "settled",
@@ -837,17 +924,22 @@ exports.blackjackAction = onCall(async (request) => {
       outcome: settlement.outcome,
       payoutCents: settlement.payoutCents,
       profitCents: settlement.payoutCents - wagerCents,
-      balanceCents: balanceAfter,
+      balanceCents: balanceFinal,
+      level: progression.level,
+      gamesTowardNextLevel: progression.gamesTowardNextLevel,
+      levelRewardCents: progression.rewardCents,
     };
 
     transaction.update(userRef, {
-      balanceCents: balanceAfter,
+      balanceCents: balanceFinal,
       gamesPlayed,
       wins,
+      level: progression.level,
+      gamesTowardNextLevel: progression.gamesTowardNextLevel,
       lastGameActionAtMs: actionAtMs,
       ...profitTotals(finalGame.profitCents),
     });
-    transaction.update(rankRef, { balanceCents: balanceAfter });
+    transaction.update(rankRef, { balanceCents: balanceFinal, level: progression.level });
     transaction.update(gameRef, finalGame);
     if (extraWagerCents > 0) {
       transaction.create(extraBetRef, {
@@ -863,6 +955,7 @@ exports.blackjackAction = onCall(async (request) => {
         createdAt: FieldValue.serverTimestamp(),
       });
     }
+    registrarPremioNivel(transaction, userRef, requestId, progression);
     response = publicBlackjackState(finalGame);
     transaction.create(requestRef, { response, createdAt: FieldValue.serverTimestamp() });
   });
@@ -960,6 +1053,7 @@ exports.getPlayerProfile = onCall(async (request) => {
   return {
     uid: targetUid,
     displayName: rank.displayName || "Jogador",
+    username: rank.username || "",
     level: rank.level || 1,
     avatarUrl: rank.avatarUrl || "",
     balanceCents: rank.balanceCents || 0,
@@ -1054,6 +1148,8 @@ exports.sendChatMessage = onCall(async (request) => {
     transaction.create(messageRef, {
       senderUid: uid,
       senderName,
+      senderUsername: sender.username || "",
+      senderAvatarUrl: sender.avatarUrl || "",
       text,
       createdAt: now,
     });

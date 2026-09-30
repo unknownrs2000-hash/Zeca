@@ -171,10 +171,21 @@ fun TelaInicio(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
                         ) {
+                            AvatarComMoldura(
+                                inicial = jogador.apelido.take(1).uppercase(),
+                                moldura = "",
+                                tamanho = 34.dp,
+                                photoUrl = jogador.avatarUrl,
+                            )
                             Text("${index + 1}", color = Cores.Verde, fontSize = 16.sp, fontWeight = FontWeight.Black)
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(jogador.apelido, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                Text("Nível ${jogador.nivel}", color = Color.White.copy(alpha = 0.58f), fontSize = 11.sp)
+                                Text(
+                                    listOf(jogador.username.takeIf { it.isNotBlank() }?.let { "@$it" }, "Nível ${jogador.nivel}")
+                                        .filterNotNull().joinToString(" · "),
+                                    color = Color.White.copy(alpha = 0.58f),
+                                    fontSize = 11.sp,
+                                )
                             }
                             Text(formatarReais(jogador.saldoCentavos), color = Cores.Turquesa, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         }
@@ -299,9 +310,15 @@ internal fun TelaPerfilJogador(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                AvatarComMoldura(jogador.apelido.take(1).uppercase(), perfil?.molduraEquipada.orEmpty(), 112.dp)
+                AvatarComMoldura(
+                    jogador.apelido.take(1).uppercase(),
+                    perfil?.molduraEquipada.orEmpty(),
+                    112.dp,
+                    photoUrl = perfil?.avatarUrl ?: jogador.avatarUrl,
+                )
                 Spacer(Modifier.height(6.dp))
                 Text(jogador.apelido, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Black)
+                if (jogador.username.isNotBlank()) Text("@${jogador.username}", color = Cores.Turquesa, fontSize = 13.sp)
                 Text("Nível ${perfil?.nivel ?: jogador.nivel}", color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp)
             }
 

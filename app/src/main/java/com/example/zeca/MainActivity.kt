@@ -62,6 +62,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import kotlinx.coroutines.delay
 import com.example.zeca.ui.TelaCarteira
+import com.example.zeca.ui.TelaConfigurarPerfil
 import com.example.zeca.ui.TelaAutenticacao
 import com.example.zeca.ui.TelaChat
 import com.example.zeca.ui.TelaInicio
@@ -96,6 +97,7 @@ data class Movimento(
     val horario: String = SimpleDateFormat("dd/MM HH:mm", Locale.forLanguageTag("pt-BR")).format(Date()),
     val id: String = "",
     val ehTransferenciaPix: Boolean = false,
+    val ehPremioNivel: Boolean = false,
 )
 
 private data class NotificacaoApp(
@@ -167,10 +169,15 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                 recentes.forEach { movimento ->
                     if (idsMovimentos.add(movimento.id) && movimento.variacaoCentavos > 0L) {
                         val pixRecebido = movimento.ehTransferenciaPix
+                        val premioNivel = movimento.ehPremioNivel
                         notificar(
                             NotificacaoApp(
                                 id = "movimento:${movimento.id}",
-                                titulo = if (pixRecebido) "Pix recebido" else "Saldo recebido",
+                                titulo = when {
+                                    premioNivel -> "Novo nível alcançado!"
+                                    pixRecebido -> "Pix recebido"
+                                    else -> "Saldo recebido"
+                                },
                                 detalhe = "${movimento.titulo} · ${formatarValorNotificacao(movimento.variacaoCentavos)}",
                                 aba = Aba.Carteira,
                             ),
@@ -270,6 +277,19 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                 }
             }
         }
+    } else if (!jogador.profileSetupComplete || jogador.username.isBlank()) {
+        TelaConfigurarPerfil(
+            nomeInicial = jogador.apelido,
+            avatarUrlInicial = jogador.avatarUrl,
+            onEnviarFoto = { uri, concluir ->
+                FirebaseRepository.enviarFotoPerfil(uri) { url, error -> concluir(url, error?.localizedMessage) }
+            },
+            onSalvarPerfil = { username, displayName, avatarUrl, concluir ->
+                FirebaseRepository.atualizarPerfil(username, displayName, avatarUrl) { error ->
+                    concluir(error?.localizedMessage)
+                }
+            },
+        )
     } else {
         Box(Modifier.fillMaxSize().background(Cores.Fundo)) {
             Crossfade(targetState = aba, label = "aba") { atual ->
@@ -380,6 +400,7 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                         } else {
                             TelaPerfil(
                                 apelido = jogador.apelido,
+                                username = jogador.username,
                                 email = jogador.email,
                                 saldoCentavos = jogador.saldoCentavos,
                                 nivel = jogador.nivel,
@@ -391,8 +412,11 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                                 onEscolherMoldura = { itemId, concluir ->
                                     FirebaseRepository.equiparMoldura(itemId) { error -> concluir(error?.localizedMessage) }
                                 },
-                                onSalvarApelido = { nome, concluir ->
-                                    FirebaseRepository.atualizarApelido(nome) { error -> concluir(error?.localizedMessage) }
+                                onEnviarFoto = { uri, concluir ->
+                                    FirebaseRepository.enviarFotoPerfil(uri) { url, error -> concluir(url, error?.localizedMessage) }
+                                },
+                                onSalvarPerfil = { username, nome, avatarUrl, concluir ->
+                                    FirebaseRepository.atualizarPerfil(username, nome, avatarUrl) { error -> concluir(error?.localizedMessage) }
                                 },
                                 onAbrirLoja = { mostrarLoja = true },
                                 onSair = { FirebaseRepository.sair() },

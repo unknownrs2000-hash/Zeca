@@ -86,12 +86,12 @@ service cloud.firestore {
         && request.auth.uid == userId
         && request.resource.data.keys().hasAll([
           'uid', 'displayName', 'email', 'balanceCents', 'balanceInitialized', 'level',
-          'avatarUrl', 'pixKey', 'pixKeyType', 'pixKeyHash', 'gamesPlayed', 'wins',
+          'avatarUrl', 'username', 'profileSetupComplete', 'pixKey', 'pixKeyType', 'pixKeyHash', 'gamesPlayed', 'wins',
           'inventory', 'createdAt'
         ])
         && request.resource.data.keys().hasOnly([
           'uid', 'displayName', 'email', 'balanceCents', 'balanceInitialized', 'level',
-          'avatarUrl', 'pixKey', 'pixKeyType', 'pixKeyHash', 'gamesPlayed', 'wins',
+          'avatarUrl', 'username', 'profileSetupComplete', 'pixKey', 'pixKeyType', 'pixKeyHash', 'gamesPlayed', 'wins',
           'inventory', 'createdAt'
         ])
         && request.resource.data.uid == userId
@@ -100,6 +100,8 @@ service cloud.firestore {
         && request.resource.data.balanceCents == 50000
         && request.resource.data.balanceInitialized == true
         && request.resource.data.level == 1
+        && request.resource.data.username == ''
+        && request.resource.data.profileSetupComplete == false
         && request.resource.data.gamesPlayed == 0
         && request.resource.data.wins == 0
         && request.resource.data.inventory is list
@@ -159,9 +161,12 @@ service cloud.firestore {
       allow read: if signedIn();
       allow create: if signedIn()
         && request.auth.uid == userId
-        && request.resource.data.keys().hasOnly(['displayName', 'balanceCents', 'level', 'avatarUrl'])
+        && request.resource.data.keys().hasOnly(['displayName', 'balanceCents', 'level', 'avatarUrl', 'username'])
         && validDisplayName(request.resource.data.displayName)
         && request.resource.data.avatarUrl is string
+        && request.resource.data.username is string
+        && request.resource.data.username
+          == getAfter(/databases/$(database)/documents/users/$(userId)).data.username
         && request.resource.data.displayName
           == getAfter(/databases/$(database)/documents/users/$(userId)).data.displayName
         && request.resource.data.balanceCents
@@ -179,6 +184,10 @@ service cloud.firestore {
           == getAfter(/databases/$(database)/documents/users/$(userId)).data.displayName
         && request.resource.data.balanceCents
           == getAfter(/databases/$(database)/documents/users/$(userId)).data.balanceCents;
+    }
+
+    match /usernames/{username} {
+      allow read, write: if false;
     }
 
     match /pixKeys/{keyHash} {
@@ -235,10 +244,17 @@ service cloud.firestore {
           && (chatId == 'global'
             || request.auth.uid in chatId.split('_'));
         allow create: if signedIn()
-          && request.resource.data.keys().hasOnly(['senderUid', 'senderName', 'text', 'createdAt', 'replyToId', 'replyToName', 'replyToText', 'forwarded'])
+          && request.resource.data.keys().hasOnly([
+            'senderUid', 'senderName', 'senderUsername', 'senderAvatarUrl', 'text', 'createdAt',
+            'replyToId', 'replyToName', 'replyToText', 'forwarded'
+          ])
           && request.resource.data.senderUid == request.auth.uid
           && request.resource.data.senderName
             == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.displayName
+          && request.resource.data.senderUsername
+            == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.username
+          && request.resource.data.senderAvatarUrl
+            == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.avatarUrl
           && request.resource.data.text is string
           && request.resource.data.text.size() >= 1
           && request.resource.data.text.size() <= 500

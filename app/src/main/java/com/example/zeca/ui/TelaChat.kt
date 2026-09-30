@@ -79,6 +79,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
@@ -99,6 +100,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import coil.compose.AsyncImage
 import com.example.zeca.ConversaChat
 import com.example.zeca.FirebaseRepository
 import com.example.zeca.JogadorRanking
@@ -256,8 +258,10 @@ fun TelaChat(
                         val jogador = jogadores.firstOrNull { it.uid == conversa.outroUid }
                         LinhaJogador(
                             nome = jogador?.apelido ?: "Jogador",
+                            username = jogador?.username.orEmpty(),
                             detalhe = conversa.ultimaMensagem,
                             hora = horaConversa(conversa.atualizadaEmMs),
+                            avatarUrl = jogador?.avatarUrl.orEmpty(),
                             onClick = { destinatarioUid = conversa.outroUid; erro = "" },
                             onPerfil = { perfilUid = conversa.outroUid },
                         )
@@ -272,8 +276,10 @@ fun TelaChat(
                     contatos.forEach { jogador ->
                         LinhaJogador(
                             nome = jogador.apelido,
+                            username = jogador.username,
                             detalhe = "Nível ${jogador.nivel}",
                             hora = "",
+                            avatarUrl = jogador.avatarUrl,
                             onClick = { destinatarioUid = jogador.uid; erro = "" },
                             onPerfil = { perfilUid = jogador.uid },
                         )
@@ -315,6 +321,7 @@ fun TelaChat(
                     if (emConversa) {
                         CabecalhoConversa(
                             nome = destinatario?.apelido ?: "Jogador",
+                            avatarUrl = destinatario?.avatarUrl.orEmpty(),
                             detalhe = destinatario?.let { "Nível ${it.nivel}" } ?: "",
                             onVoltar = { destinatarioUid = ""; erro = "" },
                             onPerfil = { perfilUid = destinatarioUid },
@@ -355,7 +362,7 @@ private fun horaConversa(ms: Long): String {
 }
 
 @Composable
-private fun AvatarChat(nome: String, tamanho: Dp, modifier: Modifier = Modifier) {
+private fun AvatarChat(nome: String, tamanho: Dp, modifier: Modifier = Modifier, photoUrl: String = "") {
     val cor = CORES_AVATAR[(nome.hashCode() and Int.MAX_VALUE) % CORES_AVATAR.size]
     Box(
         modifier = Modifier
@@ -372,11 +379,25 @@ private fun AvatarChat(nome: String, tamanho: Dp, modifier: Modifier = Modifier)
             fontSize = (tamanho.value * 0.42f).sp,
             fontWeight = FontWeight.Black,
         )
+        if (photoUrl.isNotBlank()) {
+            AsyncImage(
+                model = photoUrl,
+                contentDescription = "Foto de $nome",
+                modifier = Modifier.fillMaxSize().clip(CircleShape),
+                contentScale = ContentScale.Crop,
+            )
+        }
     }
 }
 
 @Composable
-private fun CabecalhoConversa(nome: String, detalhe: String, onVoltar: () -> Unit, onPerfil: () -> Unit) {
+private fun CabecalhoConversa(
+    nome: String,
+    detalhe: String,
+    avatarUrl: String,
+    onVoltar: () -> Unit,
+    onPerfil: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -397,7 +418,7 @@ private fun CabecalhoConversa(nome: String, detalhe: String, onVoltar: () -> Uni
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            AvatarChat(nome, 42.dp)
+            AvatarChat(nome, 42.dp, photoUrl = avatarUrl)
             Column {
                 Text(nome, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
@@ -433,13 +454,14 @@ private fun PerfilChat(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                AvatarChat(jogador.apelido, 88.dp)
+                AvatarChat(jogador.apelido, 88.dp, photoUrl = jogador.avatarUrl)
                 Text(
                     jogador.apelido + if (ehVoce) " (você)" else "",
                     color = Color.White,
                     fontSize = 22.sp,
                     fontWeight = FontWeight.Black,
                 )
+                if (jogador.username.isNotBlank()) Text("@${jogador.username}", color = Cores.Turquesa, fontSize = 13.sp)
                 Text("Nível ${jogador.nivel}", color = Cores.Turquesa, fontSize = 13.sp, fontWeight = FontWeight.Bold)
             }
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -470,8 +492,10 @@ private fun EstatisticaPerfil(titulo: String, valor: String, modifier: Modifier 
 @Composable
 private fun LinhaJogador(
     nome: String,
+    username: String = "",
     detalhe: String,
     hora: String,
+    avatarUrl: String = "",
     onClick: () -> Unit,
     onPerfil: () -> Unit,
 ) {
@@ -485,10 +509,16 @@ private fun LinhaJogador(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AvatarChat(nome, 42.dp, Modifier.clickable(onClick = onPerfil))
+        AvatarChat(nome, 42.dp, Modifier.clickable(onClick = onPerfil), avatarUrl)
         Column(modifier = Modifier.weight(1f)) {
             Text(nome, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(detalhe, color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                listOf(username.takeIf { it.isNotBlank() }?.let { "@$it" }, detalhe).filterNotNull().joinToString(" · "),
+                color = Color.White.copy(alpha = 0.6f),
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
         Text(
             hora.ifBlank { "Abrir" },
@@ -640,6 +670,7 @@ private fun TelaConversa(
                     BolhaMensagem(
                         mensagem = mensagem,
                         mostrarAutor = ehGlobal && !mensagem.minha,
+                        avatarUrl = mensagem.avatarUrlAutor,
                         onPerfil = { onPerfil(mensagem.autorUid) },
                         onMenu = {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -755,6 +786,7 @@ private fun TelaConversa(
 private fun BolhaMensagem(
     mensagem: MensagemChat,
     mostrarAutor: Boolean,
+    avatarUrl: String,
     onPerfil: () -> Unit,
     onMenu: () -> Unit,
     onResponder: () -> Unit,
@@ -796,7 +828,7 @@ private fun BolhaMensagem(
             verticalAlignment = Alignment.Bottom,
         ) {
             if (!mensagem.minha) {
-                AvatarChat(mensagem.autor, 32.dp, Modifier.clickable(onClick = onPerfil))
+                AvatarChat(mensagem.autor, 32.dp, Modifier.clickable(onClick = onPerfil), avatarUrl)
                 Spacer(Modifier.width(8.dp))
             }
             Column(
@@ -813,7 +845,7 @@ private fun BolhaMensagem(
             ) {
                 if (mostrarAutor) {
                     Text(
-                        mensagem.autor,
+                        mensagem.autor + mensagem.usernameAutor.takeIf { it.isNotBlank() }?.let { " · @$it" }.orEmpty(),
                         color = Cores.Turquesa,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
@@ -1097,7 +1129,7 @@ private fun DialogoEncaminhar(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        AvatarChat(jogador.apelido, 40.dp)
+                        AvatarChat(jogador.apelido, 40.dp, photoUrl = jogador.avatarUrl)
                         Column {
                             Text(
                                 jogador.apelido,

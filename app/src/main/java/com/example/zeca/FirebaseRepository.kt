@@ -9,11 +9,15 @@ import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
 import com.google.firebase.functions.FirebaseFunctions
 import com.google.firebase.functions.FirebaseFunctionsException
+import com.google.firebase.storage.FirebaseStorage
+import android.net.Uri
 
 data class PerfilJogador(
     val uid: String,
     val apelido: String,
     val email: String,
+    val username: String,
+    val profileSetupComplete: Boolean,
     val saldoCentavos: Long,
     val nivel: Int,
     val avatarUrl: String,
@@ -33,6 +37,7 @@ data class JogadorRanking(
     val saldoCentavos: Long,
     val nivel: Int,
     val avatarUrl: String,
+    val username: String = "",
 )
 
 data class MensagemChat(
@@ -47,6 +52,8 @@ data class MensagemChat(
     val respostaTexto: String = "",
     val apagadaParaTodos: Boolean = false,
     val encaminhada: Boolean = false,
+    val usernameAutor: String = "",
+    val avatarUrlAutor: String = "",
 )
 
 data class RespostaChat(
@@ -74,6 +81,7 @@ data class JogadorDestino(
 data class PerfilPublico(
     val uid: String,
     val apelido: String,
+    val username: String,
     val nivel: Int,
     val avatarUrl: String,
     val saldoCentavos: Long,
@@ -135,6 +143,7 @@ data class EstadoBlackjack(
 object FirebaseRepository {
     val auth: FirebaseAuth by lazy { FirebaseAuth.getInstance() }
     private val database by lazy { FirebaseFirestore.getInstance() }
+    private val storage by lazy { FirebaseStorage.getInstance() }
     private const val SERVER_URL = "https://zeca-jvic.onrender.com"
     private val principal = android.os.Handler(android.os.Looper.getMainLooper())
 
@@ -152,6 +161,8 @@ object FirebaseRepository {
                 val profile = mapOf(
                     "uid" to user.uid,
                     "displayName" to nomeConta,
+                    "username" to "",
+                    "profileSetupComplete" to false,
                     "email" to (user.email ?: ""),
                     "balanceCents" to 50_000L,
                     "balanceInitialized" to true,
@@ -170,6 +181,7 @@ object FirebaseRepository {
                     rankRef,
                     mapOf(
                         "displayName" to nomeConta,
+                        "username" to "",
                         "balanceCents" to 50_000L,
                         "level" to 1L,
                         "avatarUrl" to (user.photoUrl?.toString() ?: ""),
@@ -190,10 +202,12 @@ object FirebaseRepository {
                     )
                 }
                 val profileName = profile["displayName"] as? String ?: nomeConta
+                val username = profile["username"] as? String ?: ""
                 val profileLevel = (profile["level"] as? Number)?.toLong()?.takeIf { it > 0L } ?: 1L
                 val profileAvatar = profile["avatarUrl"] as? String ?: user.photoUrl?.toString().orEmpty()
                 val publicProfile = mapOf(
                     "displayName" to profileName,
+                    "username" to username,
                     "balanceCents" to nextBalance,
                     "level" to profileLevel,
                     "avatarUrl" to profileAvatar,
@@ -244,6 +258,8 @@ object FirebaseRepository {
                     respostaTexto = data["replyToText"] as? String ?: "",
                     apagadaParaTodos = data["deletedForAll"] as? Boolean ?: false,
                     encaminhada = data["forwarded"] as? Boolean ?: false,
+                    usernameAutor = data["senderUsername"] as? String ?: "",
+                    avatarUrlAutor = data["senderAvatarUrl"] as? String ?: "",
                 )
             }.sortedBy { it.enviadaEmMs }
             callback(mensagens, error, snapshot?.metadata?.isFromCache ?: true)
@@ -350,6 +366,8 @@ object FirebaseRepository {
             val dadosMensagem = mutableMapOf<String, Any>(
                 "senderUid" to uid,
                 "senderName" to senderName,
+                "senderUsername" to (senderSnapshot.getString("username") ?: ""),
+                "senderAvatarUrl" to (senderSnapshot.getString("avatarUrl") ?: ""),
                 "text" to message,
                 "createdAt" to serverTime,
             )
@@ -405,27 +423,32 @@ object FirebaseRepository {
                             ?: "Agora",
                         id = doc.id,
                         ehTransferenciaPix = data["type"] == "pix_transfer",
+                        ehPremioNivel = data["type"] == "level_reward",
                     )
                 }, snapshot.metadata.isFromCache)
             }
 
-    fun atualizarApelido(apelido: String, callback: (Exception?) -> Unit) {
+    fun atualizarPerfil(username: String, displayName: String, avatarUrl: String, callback: (Exception?) -> Unit) {
+        chamarFunction(
+            "updatePlayerProfile",
+            mapOf("username" to username, "displayName" to displayName, "avatarUrl" to avatarUrl),
+        ) { _, erro -> callback(erro) }
+    }
+
+    fun enviarFotoPerfil(uri: Uri, callback: (String?, Exception?) -> Unit) {
         val uid = auth.currentUser?.uid
         if (uid == null) {
-            callback(IllegalStateException("Entre na sua conta novamente."))
+            callback(null, IllegalStateException("Entre na sua conta novamente."))
             return
         }
-        val nome = apelido.trim()
-        if (nome.length !in 2..24) {
-            callback(IllegalArgumentException("O apelido deve ter entre 2 e 24 caracteres."))
-            return
-        }
-        database.batch()
-            .update(database.collection("users").document(uid), "displayName", nome)
-            .update(database.collection("leaderboard").document(uid), "displayName", nome)
-            .commit()
-            .addOnSuccessListener { callback(null) }
-            .addOnFailureListener { callback(erroParaUsuario(it)) }
+        val foto = storage.reference.child("avatars/$uid/profile")
+        foto.putFile(uri)
+            .continueWithTask { tarefa ->
+                if (!tarefa.isSuccessful) throw tarefa.exception ?: IllegalStateException("Não foi possível enviar a foto.")
+                foto.downloadUrl
+            }
+            .addOnSuccessListener { callback(it.toString(), null) }
+            .addOnFailureListener { callback(null, it) }
     }
 
     fun registrarChavePix(tipo: String, chave: String, callback: (Exception?) -> Unit) {
@@ -474,6 +497,7 @@ object FirebaseRepository {
                 PerfilPublico(
                     uid = it["uid"] as? String ?: uid,
                     apelido = it["displayName"] as? String ?: "Jogador",
+                    username = it["username"] as? String ?: "",
                     nivel = (it["level"] as? Number)?.toInt() ?: 1,
                     avatarUrl = it["avatarUrl"] as? String ?: "",
                     saldoCentavos = (it["balanceCents"] as? Number)?.toLong() ?: 0L,
@@ -785,6 +809,8 @@ object FirebaseRepository {
         uid = snapshot.id,
         apelido = snapshot.getString("displayName") ?: "Jogador",
         email = snapshot.getString("email") ?: "",
+        username = snapshot.getString("username") ?: "",
+        profileSetupComplete = snapshot.getBoolean("profileSetupComplete") == true,
         saldoCentavos = snapshot.getLong("balanceCents") ?: 0L,
         nivel = snapshot.getLong("level")?.toInt() ?: 1,
         avatarUrl = snapshot.getString("avatarUrl") ?: "",
@@ -806,6 +832,7 @@ object FirebaseRepository {
             saldoCentavos = (data["balanceCents"] as? Number)?.toLong() ?: 0L,
             nivel = (data["level"] as? Number)?.toInt() ?: 1,
             avatarUrl = data["avatarUrl"] as? String ?: "",
+            username = data["username"] as? String ?: "",
         )
     }
 

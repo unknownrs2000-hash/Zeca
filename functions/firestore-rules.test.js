@@ -5,7 +5,7 @@ const path = require("node:path");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { initializeTestEnvironment, assertFails, assertSucceeds } = require("@firebase/rules-unit-testing");
-const { doc, getDoc, runTransaction, serverTimestamp, updateDoc } = require("firebase/firestore");
+const { doc, getDoc, runTransaction, serverTimestamp, setDoc, updateDoc } = require("firebase/firestore");
 
 const PROJECT_ID = "demo-zeca-store-rules";
 const RULES = fs.readFileSync(path.join(__dirname, "..", "firestore.rules"), "utf8");
@@ -39,6 +39,8 @@ async function seedPlayer(uid, balanceCents = 50_000) {
       uid,
       displayName: uid,
       email: `${uid}@example.com`,
+      username: uid,
+      profileSetupComplete: true,
       balanceCents,
       balanceInitialized: true,
       level: 1,
@@ -52,6 +54,7 @@ async function seedPlayer(uid, balanceCents = 50_000) {
     });
     await database.doc(`leaderboard/${uid}`).set({
       displayName: uid,
+      username: uid,
       balanceCents,
       level: 1,
       avatarUrl: "",
@@ -118,6 +121,8 @@ async function writePrivateMessage(senderUid, recipientUid, messageId, senderUid
     transaction.set(messageRef, {
       senderUid,
       senderName: senderUid,
+      senderUsername: senderUid,
+      senderAvatarUrl: "",
       text: "Olá",
       createdAt: serverTimestamp(),
     });
@@ -178,4 +183,41 @@ test("denies private-chat metadata that forges the last sender", async () => {
     "87654321-4321-4321-4321-210987654321",
     "chat-forged-sender",
   ));
+});
+
+test("allows a new account to create an incomplete profile before choosing its username", async () => {
+  const uid = "new-profile-user";
+  const database = environment.authenticatedContext(uid).firestore();
+  await assertSucceeds(runTransaction(database, async (transaction) => {
+    transaction.set(doc(database, "users", uid), {
+      uid,
+      displayName: "Jogador Novo",
+      username: "",
+      profileSetupComplete: false,
+      email: "novo@example.com",
+      balanceCents: 50_000,
+      balanceInitialized: true,
+      level: 1,
+      avatarUrl: "",
+      pixKey: "",
+      pixKeyType: "",
+      pixKeyHash: "",
+      gamesPlayed: 0,
+      wins: 0,
+      inventory: [],
+      createdAt: serverTimestamp(),
+    });
+    transaction.set(doc(database, "leaderboard", uid), {
+      displayName: "Jogador Novo",
+      username: "",
+      balanceCents: 50_000,
+      level: 1,
+      avatarUrl: "",
+    });
+  }));
+});
+
+test("denies direct client writes to username reservations", async () => {
+  const database = environment.authenticatedContext("username-attacker").firestore();
+  await assertFails(setDoc(doc(database, "usernames", "already_taken"), { uid: "username-attacker" }));
 });
