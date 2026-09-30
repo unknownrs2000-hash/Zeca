@@ -32,6 +32,7 @@ function levelProgress(gamesPlayed) {
 
 const DAILY_MISSION_TARGET = 5;
 const DAILY_MISSION_REWARD_CENTS = 1_000;
+const DAILY_SPORTS_MISSION_REWARD_CENTS = 2_000;
 const WEEKLY_MISSION_TARGET = 25;
 const WEEKLY_MISSION_REWARD_CENTS = 5_000;
 
@@ -56,6 +57,9 @@ function getMissionProgress(profile = {}, nowMs = Date.now()) {
   const weeklyProgress = profile.weeklyMissionWeekUtc === weeklyPeriod
     ? Math.min(WEEKLY_MISSION_TARGET, Number.isSafeInteger(profile.weeklyMissionGames) ? profile.weeklyMissionGames : 0)
     : 0;
+  const dailySportsProgress = profile.dailySportsMissionDateUtc === dailyPeriod
+    ? Math.min(1, Number.isSafeInteger(profile.dailySportsMissionTickets) ? profile.dailySportsMissionTickets : 0)
+    : 0;
   return {
     daily: {
       period: dailyPeriod,
@@ -70,6 +74,13 @@ function getMissionProgress(profile = {}, nowMs = Date.now()) {
       target: WEEKLY_MISSION_TARGET,
       rewardCents: WEEKLY_MISSION_REWARD_CENTS,
       completed: weeklyProgress >= WEEKLY_MISSION_TARGET,
+    },
+    dailySports: {
+      period: dailyPeriod,
+      progress: dailySportsProgress,
+      target: 1,
+      rewardCents: DAILY_SPORTS_MISSION_REWARD_CENTS,
+      completed: dailySportsProgress >= 1,
     },
   };
 }
@@ -110,8 +121,30 @@ function advanceMissionProgress(profile = {}, nowMs = Date.now()) {
   };
 }
 
+function advanceSportsMissionProgress(profile = {}, nowMs = Date.now()) {
+  const current = getMissionProgress(profile, nowMs).dailySports;
+  const progress = Math.min(current.target, current.progress + 1);
+  const rewards = !current.completed && progress >= current.target
+    ? [{
+      id: `mission_sports_daily_${current.period}`,
+      description: "Missão esportiva diária · múltipla com 2 partidas liquidada",
+      deltaCents: DAILY_SPORTS_MISSION_REWARD_CENTS,
+    }]
+    : [];
+  return {
+    profileFields: {
+      dailySportsMissionDateUtc: current.period,
+      dailySportsMissionTickets: progress,
+    },
+    rewards,
+    totalRewardCents: rewards.reduce((total, reward) => total + reward.deltaCents, 0),
+    progress: { ...current, progress, completed: progress >= current.target },
+  };
+}
+
 module.exports = {
   advanceMissionProgress,
+  advanceSportsMissionProgress,
   getMissionProgress,
   initializeBalance,
   levelProgress,

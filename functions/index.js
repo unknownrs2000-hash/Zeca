@@ -26,6 +26,7 @@ const {
 } = require("./game-logic");
 const {
   advanceMissionProgress,
+  advanceSportsMissionProgress,
   getMissionProgress,
   initializeBalance,
   levelProgress,
@@ -913,8 +914,11 @@ exports.settleMySportsBets = onCall(async (request) => {
       const wins = (profile.wins || 0) + (profitCents > 0 ? 1 : 0);
       const progression = levelProgress(gamesPlayed);
       const missions = advanceMissionProgress(profile, Date.now());
+      const sportsMission = legs.length >= 2
+        ? advanceSportsMissionProgress(profile, Date.now())
+        : { profileFields: {}, rewards: [], totalRewardCents: 0 };
       const balanceCents = (profile.balanceCents || 0) + payoutCents
-        + progression.rewardCents + missions.totalRewardCents;
+        + progression.rewardCents + missions.totalRewardCents + sportsMission.totalRewardCents;
       if (!Number.isSafeInteger(balanceCents)) throw new HttpsError("failed-precondition", "Saldo resultante inválido.");
       transaction.update(userRef, {
         balanceCents,
@@ -923,6 +927,7 @@ exports.settleMySportsBets = onCall(async (request) => {
         level: progression.level,
         gamesTowardNextLevel: progression.gamesTowardNextLevel,
         ...missions.profileFields,
+        ...sportsMission.profileFields,
         ...profitTotals(profitCents),
       });
       transaction.update(rankRef, { balanceCents, level: progression.level });
@@ -950,6 +955,7 @@ exports.settleMySportsBets = onCall(async (request) => {
       });
       registrarPremioNivel(transaction, userRef, betDocument.id, progression);
       registrarPremiosMissao(transaction, userRef, missions);
+      registrarPremiosMissao(transaction, userRef, sportsMission);
     });
     settledCount += 1;
   }

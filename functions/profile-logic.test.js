@@ -4,6 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   advanceMissionProgress,
+  advanceSportsMissionProgress,
   getMissionProgress,
   initializeBalance,
   levelProgress,
@@ -95,4 +96,15 @@ test("daily and weekly missions progress on settled games and reward once", () =
     rewardCents: 1_000,
     completed: false,
   });
+});
+
+test("sports daily mission rewards one settled multiple per UTC day", () => {
+  const now = Date.UTC(2026, 8, 30, 12);
+  const first = advanceSportsMissionProgress({}, now);
+  assert.equal(first.progress.completed, true);
+  assert.equal(first.totalRewardCents, 2_000);
+  const profile = { ...first.profileFields };
+  const repeated = advanceSportsMissionProgress(profile, now);
+  assert.equal(repeated.totalRewardCents, 0);
+  assert.equal(advanceSportsMissionProgress(profile, now + 86_400_000).totalRewardCents, 2_000);
 });

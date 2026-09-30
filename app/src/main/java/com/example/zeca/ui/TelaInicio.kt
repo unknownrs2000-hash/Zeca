@@ -125,6 +125,11 @@ fun TelaInicio(
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Missões", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                     MissaoProgresso("Diária", "Conclua 5 partidas hoje", state.diaria)
+                    MissaoProgresso(
+                        "Esportiva diária",
+                        "Conclua uma múltipla com pelo menos 2 partidas hoje",
+                        state.diariaEsportiva,
+                    )
                     MissaoProgresso("Semanal", "Conclua 25 partidas nesta semana", state.semanal)
                 }
             }

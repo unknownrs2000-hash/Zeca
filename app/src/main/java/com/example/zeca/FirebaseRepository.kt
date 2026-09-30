@@ -240,6 +240,7 @@ data class ProgressoMissao(
 data class EstadoMissoes(
     val diaria: ProgressoMissao,
     val semanal: ProgressoMissao,
+    val diariaEsportiva: ProgressoMissao,
 )
 
 data class OpcaoApostaEsportiva(
@@ -1208,7 +1209,9 @@ object FirebaseRepository {
                 )
             }
             val state = missao("daily")?.let { daily ->
-                missao("weekly")?.let { weekly -> EstadoMissoes(daily, weekly) }
+                missao("weekly")?.let { weekly ->
+                    missao("dailySports")?.let { dailySports -> EstadoMissoes(daily, weekly, dailySports) }
+                }
             }
             callback(state, error)
         }
