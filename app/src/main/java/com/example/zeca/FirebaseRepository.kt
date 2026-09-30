@@ -553,12 +553,68 @@ object FirebaseRepository {
         dados: Map<String, Any>,
         callback: (Map<String, Any>?, Exception?) -> Unit,
     ) {
-        functions.getHttpsCallable(nome).call(dados)
-            .addOnSuccessListener { result ->
-                @Suppress("UNCHECKED_CAST")
-                callback(result.data as? Map<String, Any>, null)
+        val usuario = auth.currentUser
+        if (usuario == null) {
+            callback(null, IllegalStateException("Entre na sua conta para continuar."))
+            return
+        }
+        usuario.getIdToken(false)
+            .addOnSuccessListener { tokenResult ->
+                Thread {
+                    var dadosRetorno: Map<String, Any>? = null
+                    var erroRetorno: Exception? = null
+                    try {
+                        dadosRetorno = postarNoServidor(nome, dados, tokenResult.token.orEmpty())
+                    } catch (e: java.io.IOException) {
+                        erroRetorno = IllegalStateException(
+                            "Não foi possível conectar ao servidor. Tente de novo em instantes.", e,
+                        )
+                    } catch (e: Exception) {
+                        erroRetorno = e
+                    }
+                    principal.post { callback(dadosRetorno, erroRetorno) }
+                }.start()
             }
             .addOnFailureListener { erro -> callback(null, erroParaUsuario(erro)) }
+    }
+
+    private fun postarNoServidor(nome: String, dados: Map<String, Any>, token: String): Map<String, Any>? {
+        val conexao = java.net.URL("$SERVER_URL/call/$nome").openConnection() as java.net.HttpURLConnection
+        try {
+            conexao.requestMethod = "POST"
+            conexao.connectTimeout = 15_000
+            conexao.readTimeout = 70_000
+            conexao.doOutput = true
+            conexao.setRequestProperty("Content-Type", "application/json")
+            conexao.setRequestProperty("Authorization", "Bearer $token")
+            val corpo = org.json.JSONObject().put("data", org.json.JSONObject(dados)).toString()
+            conexao.outputStream.use { it.write(corpo.toByteArray()) }
+
+            val status = conexao.responseCode
+            val fluxo = if (status in 200..299) conexao.inputStream else conexao.errorStream
+            val texto = fluxo?.bufferedReader()?.use { it.readText() }.orEmpty()
+            val json = runCatching { org.json.JSONObject(texto) }.getOrNull()
+
+            if (status !in 200..299) {
+                val mensagem = json?.optJSONObject("error")?.optString("message").orEmpty()
+                throw IllegalStateException(mensagem.ifBlank { "Erro no servidor ($status)." })
+            }
+            @Suppress("UNCHECKED_CAST")
+            return paraValor(json?.opt("result")) as? Map<String, Any>
+        } finally {
+            conexao.disconnect()
+        }
+    }
+
+    private fun paraValor(valor: Any?): Any? = when (valor) {
+        null, org.json.JSONObject.NULL -> null
+        is org.json.JSONObject -> {
+            val mapa = HashMap<String, Any>()
+            valor.keys().forEach { chave -> paraValor(valor.get(chave))?.let { mapa[chave] = it } }
+            mapa
+        }
+        is org.json.JSONArray -> (0 until valor.length()).map { paraValor(valor.get(it)) }
+        else -> valor
     }
 
     private fun erroParaUsuario(erro: Exception): Exception {
