@@ -506,7 +506,7 @@ object FirebaseRepository {
             }
             .addOnFailureListener {
                 chamarFunction("ensurePlayerProfile", emptyMap()) { _, fallbackError ->
-                    callback(fallbackError?.let(::erroParaUsuario))
+                    callback(fallbackError?.let(::erroParaPerfilServidor))
                 }
             }
     }
@@ -1720,6 +1720,15 @@ object FirebaseRepository {
             )
         }
         return erro
+    }
+
+    private fun erroParaPerfilServidor(erro: Exception): Exception {
+        val erroAmigavel = erroParaUsuario(erro)
+        if (erroAmigavel.localizedMessage != "Erro interno.") return erroAmigavel
+        return IllegalStateException(
+            "O perfil foi carregado, mas a sincronização do servidor falhou. Confira FIREBASE_SERVICE_ACCOUNT e os Logs do Render.",
+            erro,
+        )
     }
 
     private fun toPerfil(snapshot: DocumentSnapshot): PerfilJogador = PerfilJogador(
