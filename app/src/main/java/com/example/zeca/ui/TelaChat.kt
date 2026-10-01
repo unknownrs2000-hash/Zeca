@@ -64,8 +64,10 @@ import androidx.compose.material.icons.automirrored.filled.Forward
 import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.LocalFireDepartment
@@ -83,6 +85,7 @@ import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -190,6 +193,8 @@ fun TelaChat(
     var enviando by rememberSaveable { mutableStateOf(false) }
     var erro by rememberSaveable { mutableStateOf("") }
     var mensagens by remember { mutableStateOf<List<MensagemChat>>(emptyList()) }
+    var leiturasChat by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
+    var mensagemPendenteChat by remember { mutableStateOf<Pair<String, MensagemChat>?>(null) }
     var conversas by remember { mutableStateOf<List<ConversaChat>>(emptyList()) }
     var perfilPublico by remember { mutableStateOf<PerfilPublico?>(null) }
     var carregandoPerfil by remember { mutableStateOf(false) }
@@ -259,6 +264,13 @@ fun TelaChat(
         destinatarioUid.isNotBlank() -> FirebaseRepository.idConversaPrivada(uidAtual, destinatarioUid)
         else -> null
     }
+    var ultimoIdMarcado by remember(chatId) { mutableStateOf("") }
+    val ultimoIdMarcadoAtual by rememberUpdatedState(ultimoIdMarcado)
+    val mensagensParaExibir = remember(chatId, mensagens, mensagemPendenteChat) {
+        val pendente = mensagemPendenteChat?.takeIf { it.first == chatId }?.second
+        (mensagens + listOfNotNull(pendente).filterNot { candidata -> mensagens.any { it.id == candidata.id } })
+            .sortedBy { it.enviadaEmMs }
+    }
     val conversaSelecionada = conversaGrupo ?: conversas.firstOrNull { it.id == chatId }
     var agoraMs by remember { mutableStateOf(System.currentTimeMillis()) }
     val presencasAtivas = presencas.filter {
@@ -297,16 +309,39 @@ fun TelaChat(
         onDispose { registration.remove() }
     }
 
-    DisposableEffect(uidAtual, chatId) {
+    DisposableEffect(uidAtual, chatId, conversaSelecionada?.id) {
         mensagens = emptyList()
+        leiturasChat = emptyMap()
+        ultimoIdMarcado = ""
         if (chatId == null) {
             onDispose { }
         } else {
-            val registration = FirebaseRepository.observarMensagensChat(chatId, uidAtual) { novas, error, _ ->
+            val registration = FirebaseRepository.observarMensagensChat(chatId, uidAtual) { novas, error, fromCache ->
                 mensagens = novas
+                val ultima = novas.lastOrNull()
+                if (error == null && !fromCache && ultima != null && ultima.id != ultimoIdMarcadoAtual) {
+                    ultimoIdMarcado = ultima.id
+                    FirebaseRepository.marcarChatComoLido(chatId, ultima.id)
+                }
                 if (error != null) erro = error.localizedMessage ?: "Não foi possível carregar as mensagens."
             }
-            onDispose { registration.remove() }
+            val leiturasRegistration = if (chatId == "global" || conversaSelecionada != null) {
+                FirebaseRepository.observarLeiturasChat(chatId) { leituras, error ->
+                    leiturasChat = leituras
+                    if (error != null) erro = error.localizedMessage ?: "Não foi possível carregar os vistos."
+                }
+            } else null
+            onDispose {
+                registration.remove()
+                leiturasRegistration?.remove()
+            }
+        }
+    }
+
+    LaunchedEffect(chatId, mensagens, mensagemPendenteChat) {
+        val pendente = mensagemPendenteChat ?: return@LaunchedEffect
+        if (pendente.first == chatId && mensagens.any { it.id == pendente.second.id }) {
+            mensagemPendenteChat = null
         }
     }
 
@@ -370,18 +405,41 @@ fun TelaChat(
         if (texto.isNotEmpty() && !enviando) {
             enviando = true
             erro = ""
+            val requestId = UUID.randomUUID().toString()
+            val idChatEnvio = chatId
+            if (idChatEnvio != null) {
+                mensagemPendenteChat = idChatEnvio to MensagemChat(
+                    id = requestId,
+                    autorUid = uidAtual,
+                    autor = "Você",
+                    texto = texto,
+                    minha = true,
+                    enviadaEmMs = System.currentTimeMillis(),
+                    respostaId = resposta?.id.orEmpty(),
+                    respostaAutor = resposta?.autor.orEmpty(),
+                    respostaTexto = resposta?.texto.orEmpty(),
+                    statusEnvio = "sending",
+                )
+            }
             onEnviar(
                 if (emGrupo || modo == "Global") null else destinatarioUid,
                 grupoUid.takeIf { emGrupo },
                 texto,
-                UUID.randomUUID().toString(),
+                requestId,
                 resposta,
             ) { error ->
                 enviando = false
                 if (error == null) {
+                    mensagemPendenteChat = mensagemPendenteChat?.let { (pendingChatId, pending) ->
+                        if (pending.id == requestId) pendingChatId to pending.copy(
+                            statusEnvio = "sent",
+                            enviadaEmMs = System.currentTimeMillis(),
+                        ) else mensagemPendenteChat
+                    }
                     if (textoOriginal == rascunho) rascunho = ""
                     aoSucesso()
                 } else {
+                    if (mensagemPendenteChat?.second?.id == requestId) mensagemPendenteChat = null
                     erro = error.localizedMessage ?: "Não foi possível enviar a mensagem."
                 }
             }
@@ -564,7 +622,13 @@ fun TelaChat(
     } else {
         key(chatId) {
             TelaConversa(
-                mensagens = mensagens,
+                mensagens = mensagensParaExibir,
+                leiturasChat = leiturasChat,
+                uidsDestinatarios = when {
+                    modo == "Global" -> emptyList()
+                    emGrupo -> conversaGrupo?.participantes.orEmpty().filterNot { it == uidAtual }
+                    else -> listOf(destinatarioUid).filter { it.isNotBlank() }
+                },
                 jogadores = jogadores,
                 onBuscarJogadores = onBuscarJogadores,
                 uidAtual = uidAtual,
@@ -1549,6 +1613,8 @@ private fun OpcoesChat(opcoes: List<String>, selecionada: String, onSelecionar: 
 @Composable
 private fun TelaConversa(
     mensagens: List<MensagemChat>,
+    leiturasChat: Map<String, Long>,
+    uidsDestinatarios: List<String>,
     jogadores: List<JogadorRanking>,
     onBuscarJogadores: (String, (List<JogadorRanking>, Exception?) -> Unit) -> Unit,
     uidAtual: String,
@@ -1788,9 +1854,21 @@ private fun TelaConversa(
                         avatarItensAutor = avatarDoRanking?.avatarItensEquipados.orEmpty(),
                         avatarComoFotoAutor = avatarDoRanking?.avatarComoFotoPerfil == true,
                     )
+                    val visualizada = mensagem.minha
+                        && mensagem.statusEnvio != "sending"
+                        && mensagem.enviadaEmMs > 0
+                        && if (ehGlobal) {
+                            leiturasChat.any { (readerUid, readAt) ->
+                                readerUid != uidAtual && readAt >= mensagem.enviadaEmMs
+                            }
+                        } else {
+                            uidsDestinatarios.isNotEmpty()
+                                && uidsDestinatarios.all { (leiturasChat[it] ?: 0L) >= mensagem.enviadaEmMs }
+                        }
                     BolhaMensagem(
                         mensagem = mensagemComAvatar,
                         mostrarAutor = ehGlobal && !mensagem.minha,
+                        visualizada = visualizada,
                         avatarUrl = mensagemComAvatar.avatarUrlAutor,
                         onPerfil = { onPerfil(mensagem.autorUid) },
                         onMenu = {
@@ -1869,11 +1947,15 @@ private fun TelaConversa(
                 enabled = podeEnviarMensagem && !enviando && !enviandoAudioLocal,
                 modifier = Modifier.size(48.dp),
             ) {
-                Icon(
-                    if (gravandoAudio) Icons.Filled.Stop else Icons.Filled.Mic,
-                    contentDescription = if (gravandoAudio) "Parar e enviar áudio" else "Gravar áudio",
-                    tint = if (gravandoAudio) Color(0xFFFF8790) else Cores.Verde,
-                )
+                if (enviandoAudioLocal) {
+                    CircularProgressIndicator(Modifier.size(20.dp), color = Cores.Verde, strokeWidth = 2.dp)
+                } else {
+                    Icon(
+                        if (gravandoAudio) Icons.Filled.Stop else Icons.Filled.Mic,
+                        contentDescription = if (gravandoAudio) "Parar e enviar áudio" else "Gravar áudio",
+                        tint = if (gravandoAudio) Color(0xFFFF8790) else Cores.Verde,
+                    )
+                }
             }
             Box(Modifier.weight(1f)) {
                 OutlinedTextField(
@@ -1948,11 +2030,15 @@ private fun TelaConversa(
                     },
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(
-                    Icons.AutoMirrored.Filled.Send,
-                    contentDescription = "Enviar",
-                    tint = if (podeEnviar) Color(0xFF07130F) else Color.White.copy(alpha = 0.4f),
-                )
+                if (enviando) {
+                    CircularProgressIndicator(Modifier.size(22.dp), color = Color.White, strokeWidth = 2.dp)
+                } else {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Send,
+                        contentDescription = "Enviar",
+                        tint = if (podeEnviar) Color(0xFF07130F) else Color.White.copy(alpha = 0.4f),
+                    )
+                }
             }
         }
     }
@@ -2085,6 +2171,7 @@ private fun TelaConversa(
 private fun BolhaMensagem(
     mensagem: MensagemChat,
     mostrarAutor: Boolean,
+    visualizada: Boolean,
     avatarUrl: String,
     onPerfil: () -> Unit,
     onMenu: () -> Unit,
@@ -2275,8 +2362,12 @@ private fun BolhaMensagem(
                         }
                     }
                 }
-                if (mensagem.editada || mensagem.enviadaEmMs > 0) {
-                    Row(modifier = Modifier.align(Alignment.End), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                if (mensagem.editada || mensagem.enviadaEmMs > 0 || mensagem.statusEnvio == "sending") {
+                    Row(
+                        modifier = Modifier.align(Alignment.End),
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         if (mensagem.editada) {
                             Text("editada", color = Color.White.copy(alpha = 0.48f), fontSize = 10.sp)
                         }
@@ -2286,6 +2377,21 @@ private fun BolhaMensagem(
                                 color = Color.White.copy(alpha = 0.48f),
                                 fontSize = 10.sp,
                             )
+                        }
+                        if (mensagem.minha) {
+                            when (mensagem.statusEnvio) {
+                                "sending" -> CircularProgressIndicator(
+                                    modifier = Modifier.size(12.dp),
+                                    color = Color.White.copy(alpha = 0.65f),
+                                    strokeWidth = 1.5.dp,
+                                )
+                                else -> Icon(
+                                    imageVector = if (visualizada) Icons.Filled.DoneAll else Icons.Filled.Check,
+                                    contentDescription = if (visualizada) "Visualizada" else "Enviada",
+                                    tint = if (visualizada) Cores.Turquesa else Color.White.copy(alpha = 0.58f),
+                                    modifier = Modifier.size(15.dp),
+                                )
+                            }
                         }
                     }
                 }

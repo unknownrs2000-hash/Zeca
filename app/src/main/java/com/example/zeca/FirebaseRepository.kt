@@ -63,6 +63,7 @@ data class MensagemChat(
     val avatarComoFotoAutor: Boolean = false,
     val audioUrl: String = "",
     val audioDurationMs: Int = 0,
+    val statusEnvio: String = "sent",
 )
 
 data class PresencaChat(
@@ -613,6 +614,28 @@ object FirebaseRepository {
             }.sortedBy { it.enviadaEmMs }
             callback(mensagens, error, snapshot?.metadata?.isFromCache ?: true)
         }
+
+    fun observarLeiturasChat(
+        chatId: String,
+        callback: (Map<String, Long>, Exception?) -> Unit,
+    ): ListenerRegistration = database.collection("chats").document(chatId).collection("readReceipts")
+        .addSnapshotListener { snapshot, error ->
+            val leituras = snapshot?.documents.orEmpty().mapNotNull { document ->
+                document.getTimestamp("lastReadAt")?.toDate()?.time?.let { document.id to it }
+            }.toMap()
+            callback(leituras, error)
+        }
+
+    fun marcarChatComoLido(chatId: String, messageId: String) {
+        val uid = auth.currentUser?.uid ?: return
+        database.collection("chats").document(chatId).collection("readReceipts").document(uid).set(
+            mapOf(
+                "lastReadMessageId" to messageId,
+                "lastReadAt" to com.google.firebase.firestore.FieldValue.serverTimestamp(),
+            ),
+            com.google.firebase.firestore.SetOptions.merge(),
+        )
+    }
 
     fun observarConversasChat(
         uid: String,

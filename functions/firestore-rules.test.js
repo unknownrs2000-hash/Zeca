@@ -236,6 +236,35 @@ test("allows a private message with the authenticated sender metadata", async ()
   ));
 });
 
+test("read receipts can only be written by their owner and read by chat participants", async () => {
+  const senderUid = "receipt-sender";
+  const recipientUid = "receipt-recipient";
+  const outsiderUid = "receipt-outsider";
+  const messageId = "12345678-1234-1234-1234-123456789012";
+  await seedPlayer(senderUid);
+  await seedPlayer(recipientUid);
+  await seedPlayer(outsiderUid);
+  await assertSucceeds(writePrivateMessage(senderUid, recipientUid, messageId));
+
+  const chatId = [senderUid, recipientUid].sort().join("_");
+  const sender = environment.authenticatedContext(senderUid).firestore();
+  const recipient = environment.authenticatedContext(recipientUid).firestore();
+  const outsider = environment.authenticatedContext(outsiderUid).firestore();
+  const receipt = {
+    lastReadMessageId: messageId,
+    lastReadAt: serverTimestamp(),
+  };
+
+  await assertSucceeds(setDoc(doc(recipient, "chats", chatId, "readReceipts", recipientUid), receipt));
+  await assertSucceeds(getDoc(doc(sender, "chats", chatId, "readReceipts", recipientUid)));
+  await assertFails(setDoc(doc(sender, "chats", chatId, "readReceipts", recipientUid), receipt));
+  await assertFails(setDoc(doc(outsider, "chats", chatId, "readReceipts", outsiderUid), receipt));
+  await assertFails(setDoc(doc(recipient, "chats", chatId, "readReceipts", recipientUid), {
+    ...receipt,
+    isAdmin: true,
+  }));
+});
+
 test("denies private-chat metadata that forges the last sender", async () => {
   await seedPlayer("chat-real-sender");
   await seedPlayer("chat-other-user");
