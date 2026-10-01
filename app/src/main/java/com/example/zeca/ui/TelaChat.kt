@@ -242,7 +242,7 @@ fun TelaChat(
     val conversaSelecionada = conversaGrupo ?: conversas.firstOrNull { it.id == chatId }
     var agoraMs by remember { mutableStateOf(System.currentTimeMillis()) }
     val presencasAtivas = presencas.filter {
-        it.online && agoraMs - it.ultimaAtividadeMs in 0..45_000L
+        it.online && agoraMs - it.ultimaAtividadeMs in 0..120_000L
     }
     val digitandoAgora = presencasAtivas.filter { it.uid != uidAtual && it.conversaDigitandoId == chatId }
     val jogandoAgora = presencasAtivas.filter { it.uid != uidAtual && it.jogoAtivo.isNotBlank() }

@@ -1400,7 +1400,7 @@ exports.listTugRooms = onCall(async (request) => {
     const room = document.data();
     return ["waiting", "ready"].includes(room.status)
       && Date.now() - (room.lastUpdatedAtMs || 0) >= TUG_ROOM_IDLE_TTL_MS;
-  });
+  }).slice(0, 1);
   const expiredRoomIds = new Set();
   await Promise.all(staleRooms.map(async (document) => {
     if (await expireIdleTugRoom(document.ref)) expiredRoomIds.add(document.id);

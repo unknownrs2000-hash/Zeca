@@ -197,9 +197,14 @@ fun CassinoApp(appForeground: Boolean, tugInviteRoomId: String, onTugInviteHandl
         if (tugInviteRoomId.isNotBlank()) aba = Aba.Jogos
     }
 
-    DisposableEffect(usuario.uid) {
-        val registration = FirebaseRepository.observarPresencasChat { presencasChat = it }
-        onDispose { registration.remove() }
+    DisposableEffect(usuario.uid, aba) {
+        if (aba == Aba.Chat) {
+            val registration = FirebaseRepository.observarPresencasChat { presencasChat = it }
+            onDispose { registration.remove() }
+        } else {
+            presencasChat = emptyList()
+            onDispose { }
+        }
     }
 
     LaunchedEffect(usuario.uid, appForeground, aba) {
@@ -210,7 +215,7 @@ fun CassinoApp(appForeground: Boolean, tugInviteRoomId: String, onTugInviteHandl
         }
         while (true) {
             FirebaseRepository.atualizarPresencaChat(online = true, jogoAtivo = jogoAtivo)
-            delay(20_000)
+            delay(60_000)
         }
     }
 
@@ -239,7 +244,7 @@ fun CassinoApp(appForeground: Boolean, tugInviteRoomId: String, onTugInviteHandl
                     }
                 }
             }
-            delay(15_000)
+            delay(60_000)
         }
     }
 
