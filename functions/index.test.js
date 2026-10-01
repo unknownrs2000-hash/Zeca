@@ -87,6 +87,23 @@ test("chat audio rejects untrusted URLs before accessing Firestore", async () =>
   );
 });
 
+test("chat audio reports an actionable error for a recording shorter than 500 ms", async () => {
+  const requestId = "123e4567-e89b-42d3-a456-426614174000";
+  await assert.rejects(
+    sendChatMessage({
+      auth: { uid: "player", token: {} },
+      data: {
+        text: "",
+        audioUrl: `https://res.cloudinary.com/vwctfu9u/video/upload/${requestId}.m4a`,
+        audioPublicId: requestId,
+        audioDurationMs: 420,
+        requestId,
+      },
+    }),
+    (error) => error.code === "invalid-argument" && error.message.includes("entre 0,5 e 60 segundos"),
+  );
+});
+
 test("new multiplayer and sports callables reject unauthenticated requests", async () => {
   const unauthenticated = { auth: null, data: {} };
   for (const callable of [
@@ -108,6 +125,14 @@ test("tug rooms and sports bets reject invalid stakes and duplicate or unknown s
   const requestId = "123e4567-e89b-42d3-a456-426614174000";
   await assert.rejects(
     createTugRoom({ auth: { uid, token: {} }, data: { stakeCents: 0, requestId, invitedUids: [], password: "" } }),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    createTugRoom({ auth: { uid, token: {} }, data: { stakeCents: 100, requestId, invitedUids: [], password: "", mode: "3v3" } }),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    pullTugRope({ auth: { uid, token: {} }, data: { roomId: requestId, requestId, pullCount: 9 } }),
     (error) => error.code === "invalid-argument",
   );
   await assert.rejects(

@@ -295,6 +295,12 @@ data class ApostaEsportiva(
     val pernas: List<PernaApostaEsportiva> = emptyList(),
 )
 
+data class MembroSalaCaboGuerra(
+    val uid: String,
+    val nome: String,
+    val time: String,
+)
+
 data class SalaCaboGuerra(
     val id: String,
     val criadorUid: String,
@@ -310,16 +316,41 @@ data class SalaCaboGuerra(
     val vencedorUid: String,
     val atualizadaEmMs: Long,
     val conviteParaMim: Boolean,
+    val modo: String = "1v1",
+    val timeA: List<MembroSalaCaboGuerra> = emptyList(),
+    val timeB: List<MembroSalaCaboGuerra> = emptyList(),
+    val puxoesTimeA: Int = 0,
+    val puxoesTimeB: Int = 0,
+    val versaoConvite: Int = 0,
+    val timeVencedor: String = "",
 )
 
 private fun Map<*, *>.toSalaCaboGuerra(): SalaCaboGuerra? {
     val roomId = this["roomId"] as? String ?: return null
+    val creatorUid = this["creatorUid"] as? String ?: ""
+    val creatorName = this["creatorName"] as? String ?: "Jogador"
+    val opponentUid = this["opponentUid"] as? String ?: ""
+    val opponentName = this["opponentName"] as? String ?: ""
+    val players = (this["players"] as? List<*>)?.mapNotNull { raw ->
+        val player = raw as? Map<*, *> ?: return@mapNotNull null
+        val uid = player["uid"] as? String ?: return@mapNotNull null
+        MembroSalaCaboGuerra(
+            uid = uid,
+            nome = player["name"] as? String ?: "Jogador",
+            time = player["team"] as? String ?: "A",
+        )
+    }.orEmpty().ifEmpty {
+        buildList {
+            if (creatorUid.isNotBlank()) add(MembroSalaCaboGuerra(creatorUid, creatorName, "A"))
+            if (opponentUid.isNotBlank()) add(MembroSalaCaboGuerra(opponentUid, opponentName, "B"))
+        }
+    }
     return SalaCaboGuerra(
         id = roomId,
-        criadorUid = this["creatorUid"] as? String ?: "",
-        criadorNome = this["creatorName"] as? String ?: "Jogador",
-        oponenteUid = this["opponentUid"] as? String ?: "",
-        oponenteNome = this["opponentName"] as? String ?: "",
+        criadorUid = creatorUid,
+        criadorNome = creatorName,
+        oponenteUid = opponentUid,
+        oponenteNome = opponentName,
         convitesUids = (this["invitedUids"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
         apostaCentavos = (this["stakeCents"] as? Number)?.toLong() ?: 0L,
         protegidaPorSenha = this["passwordProtected"] as? Boolean ?: false,
@@ -329,6 +360,15 @@ private fun Map<*, *>.toSalaCaboGuerra(): SalaCaboGuerra? {
         vencedorUid = this["winnerUid"] as? String ?: "",
         atualizadaEmMs = (this["lastUpdatedAtMs"] as? Number)?.toLong() ?: 0L,
         conviteParaMim = this["isInvited"] as? Boolean ?: false,
+        modo = this["mode"] as? String ?: "1v1",
+        timeA = players.filter { it.time == "A" },
+        timeB = players.filter { it.time == "B" },
+        puxoesTimeA = (this["teamAPulls"] as? Number)?.toInt()
+            ?: (this["creatorPulls"] as? Number)?.toInt() ?: 0,
+        puxoesTimeB = (this["teamBPulls"] as? Number)?.toInt()
+            ?: (this["opponentPulls"] as? Number)?.toInt() ?: 0,
+        versaoConvite = (this["inviteVersion"] as? Number)?.toInt() ?: 0,
+        timeVencedor = this["winnerTeam"] as? String ?: "",
     )
 }
 
@@ -1351,12 +1391,19 @@ object FirebaseRepository {
         apostaCentavos: Long,
         convitesUids: List<String>,
         senha: String,
+        modo: String,
         requestId: String,
         callback: (SalaCaboGuerra?, Exception?) -> Unit,
     ) {
         chamarFunction(
             "createTugRoom",
-            mapOf("stakeCents" to apostaCentavos, "invitedUids" to convitesUids, "password" to senha, "requestId" to requestId),
+            mapOf(
+                "stakeCents" to apostaCentavos,
+                "invitedUids" to convitesUids,
+                "password" to senha,
+                "mode" to modo,
+                "requestId" to requestId,
+            ),
         ) { data, error -> callback(data?.toSalaCaboGuerra(), error) }
     }
 
@@ -1395,8 +1442,8 @@ object FirebaseRepository {
         }
     }
 
-    fun puxarCordaCaboGuerra(roomId: String, requestId: String, callback: (SalaCaboGuerra?, Exception?) -> Unit) {
-        chamarFunction("pullTugRope", mapOf("roomId" to roomId, "requestId" to requestId)) { data, error ->
+    fun puxarCordaCaboGuerra(roomId: String, pullCount: Int, requestId: String, callback: (SalaCaboGuerra?, Exception?) -> Unit) {
+        chamarFunction("pullTugRope", mapOf("roomId" to roomId, "pullCount" to pullCount, "requestId" to requestId)) { data, error ->
             callback(data?.toSalaCaboGuerra(), error)
         }
     }

@@ -33,3 +33,49 @@ test("tug match ends when one side gains an eight-pull lead", () => {
   assert.equal(room.status, "settled");
   assert.equal(room.winnerUid, "creator");
 });
+
+test("2v2 teammates contribute to the same team pull count", () => {
+  let room = {
+    status: "active",
+    mode: "2v2",
+    players: [
+      { uid: "a1", team: "A" },
+      { uid: "a2", team: "A" },
+      { uid: "b1", team: "B" },
+      { uid: "b2", team: "B" },
+    ],
+    teamAPulls: 0,
+    teamBPulls: 0,
+    startedAtMs: 1_000,
+    lastPullAtMs: {},
+  };
+  room = { ...room, ...applyTugPull(room, "a1", 1_120) };
+  room = { ...room, ...applyTugPull(room, "a2", 1_120) };
+  assert.equal(room.teamAPulls, 2);
+  room = { ...room, ...applyTugPull(room, "b1", 1_120) };
+  assert.equal(room.teamBPulls, 1);
+});
+
+test("batched taps respect elapsed-time limits and settle at the winning margin", () => {
+  const room = {
+    status: "active",
+    creatorUid: "creator",
+    opponentUid: "opponent",
+    creatorPulls: 0,
+    opponentPulls: 0,
+    startedAtMs: 1_000,
+    lastPullAtMs: {},
+  };
+  assert.throws(() => applyTugPull(room, "creator", 1_120, 2), /pull-too-fast/);
+  const pull = applyTugPull(room, "creator", 1_240, 2);
+  assert.equal(pull.acceptedPulls, 2);
+  let current = { ...room, ...pull };
+  for (let batch = 0; batch < 3; batch += 1) {
+    current = {
+      ...current,
+      ...applyTugPull(current, "creator", 1_480 + batch * 240, 2),
+    };
+  }
+  assert.equal(current.creatorPulls, 8);
+  assert.equal(current.status, "settled");
+});

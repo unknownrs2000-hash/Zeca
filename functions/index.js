@@ -42,7 +42,7 @@ const {
   settleSportsSelection,
   sportsPayoutCents,
 } = require("./sports-logic");
-const { applyTugPull } = require("./tug-logic");
+const { MAX_PULLS_PER_BATCH, applyTugPull } = require("./tug-logic");
 
 const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
 initializeApp(serviceAccount ? { credential: cert(JSON.parse(serviceAccount)) } : {});
@@ -1302,22 +1302,90 @@ exports.cashOutMines = onCall(async (request) => {
   return response;
 });
 
+function tugPlayers(room) {
+  if (Array.isArray(room.players)) return room.players;
+  return [
+    { uid: room.creatorUid, name: room.creatorName || "Jogador", team: "A" },
+    ...(room.opponentUid
+      ? [{ uid: room.opponentUid, name: room.opponentName || "Jogador", team: "B" }]
+      : []),
+  ];
+}
+
+function tugPlayerLimit(room) {
+  return room.mode === "2v2" ? 4 : 2;
+}
+
+const TUG_ROOM_IDLE_TTL_MS = 10 * 60 * 1_000;
+
 function publicTugRoom(room, includeInvites = false) {
+  const players = tugPlayers(room);
   return {
     roomId: room.roomId,
+    mode: room.mode || "1v1",
     creatorUid: room.creatorUid,
     creatorName: room.creatorName || "Jogador",
     opponentUid: room.opponentUid || "",
     opponentName: room.opponentName || "",
     invitedUids: includeInvites && Array.isArray(room.invitedUids) ? room.invitedUids : [],
+    players,
+    playerUids: players.map((player) => player.uid),
     stakeCents: room.stakeCents,
     passwordProtected: Boolean(room.passwordHash),
     status: room.status,
     creatorPulls: room.creatorPulls || 0,
     opponentPulls: room.opponentPulls || 0,
+    teamAPulls: room.teamAPulls ?? room.creatorPulls ?? 0,
+    teamBPulls: room.teamBPulls ?? room.opponentPulls ?? 0,
     winnerUid: room.winnerUid || "",
+    winnerTeam: room.winnerTeam || "",
+    inviteVersion: room.inviteVersion || 0,
     lastUpdatedAtMs: room.lastUpdatedAtMs || 0,
   };
+}
+
+async function expireIdleTugRoom(roomRef) {
+  let expired = false;
+  await database.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(roomRef);
+    if (!snapshot.exists) return;
+    const room = snapshot.data();
+    if (!["waiting", "ready"].includes(room.status)
+        || Date.now() - (room.lastUpdatedAtMs || 0) < TUG_ROOM_IDLE_TTL_MS) return;
+    const players = tugPlayers(room);
+    const snapshots = await Promise.all(players.flatMap((player) => [
+      transaction.get(database.collection("users").doc(player.uid)),
+      transaction.get(database.collection("leaderboard").doc(player.uid)),
+    ]));
+    if (snapshots.some((playerSnapshot) => !playerSnapshot.exists)) return;
+    players.forEach((player, index) => {
+      const userSnapshot = snapshots[index * 2];
+      const rankSnapshot = snapshots[index * 2 + 1];
+      const balanceCents = (userSnapshot.get("balanceCents") || 0) + room.stakeCents;
+      transaction.update(userSnapshot.ref, { balanceCents });
+      transaction.update(rankSnapshot.ref, { balanceCents });
+      transaction.create(userSnapshot.ref.collection("transactions").doc(`tug_expire_${room.roomId}`), {
+        description: "Cabo de guerra · sala inativa, aposta devolvida",
+        deltaCents: room.stakeCents,
+        type: "tug_refund",
+        roomId: room.roomId,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    });
+    transaction.update(roomRef, {
+      status: "cancelled",
+      players: [],
+      participantUids: [],
+      invitedUids: [],
+      inviteOnly: false,
+      passwordHash: "",
+      opponentUid: "",
+      opponentName: "",
+      lastUpdatedAtMs: Date.now(),
+    });
+    expired = true;
+  });
+  return expired;
 }
 
 exports.listTugRooms = onCall(async (request) => {
@@ -1326,14 +1394,27 @@ exports.listTugRooms = onCall(async (request) => {
     database.collection("tugRooms").where("status", "==", "waiting").limit(100).get(),
     database.collection("tugRooms").where("participantUids", "array-contains", uid).limit(20).get(),
   ]);
+  const candidates = new Map([...waitingSnapshot.docs, ...participantSnapshot.docs].map((document) => [document.id, document]));
+  const staleRooms = [...candidates.values()].filter((document) => {
+    const room = document.data();
+    return ["waiting", "ready"].includes(room.status)
+      && Date.now() - (room.lastUpdatedAtMs || 0) >= TUG_ROOM_IDLE_TTL_MS;
+  });
+  const expiredRoomIds = new Set();
+  await Promise.all(staleRooms.map(async (document) => {
+    if (await expireIdleTugRoom(document.ref)) expiredRoomIds.add(document.id);
+  }));
   const visible = new Map();
   for (const document of waitingSnapshot.docs) {
+    if (expiredRoomIds.has(document.id)) continue;
     const room = document.data();
-    if (room.creatorUid === uid || !room.invitedUids?.length || room.invitedUids.includes(uid)) {
+    if (room.creatorUid === uid || room.inviteOnly !== true || room.invitedUids?.includes(uid)) {
       visible.set(document.id, room);
     }
   }
-  for (const document of participantSnapshot.docs) visible.set(document.id, document.data());
+  for (const document of participantSnapshot.docs) {
+    if (!expiredRoomIds.has(document.id)) visible.set(document.id, document.data());
+  }
   return {
     rooms: [...visible.values()]
       .map((room) => ({
@@ -1349,9 +1430,11 @@ exports.createTugRoom = onCall(async (request) => {
   const stakeCents = request.data?.stakeCents;
   const requestId = request.data?.requestId;
   const invitedUids = request.data?.invitedUids;
+  const mode = request.data?.mode || "1v1";
   const password = typeof request.data?.password === "string" ? request.data.password : "";
   if (!validateWager(stakeCents, MAX_TRANSFER_CENTS)
       || typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)
+      || !["1v1", "2v2"].includes(mode)
       || !Array.isArray(invitedUids) || invitedUids.some((targetUid) => typeof targetUid !== "string" || !targetUid || targetUid === uid)
       || invitedUids.length > 20 || new Set(invitedUids).size !== invitedUids.length
       || password.length > 24) {
@@ -1372,7 +1455,7 @@ exports.createTugRoom = onCall(async (request) => {
     ]);
     if (roomSnapshot.exists) {
       if (roomSnapshot.get("creatorUid") !== uid) throw new HttpsError("already-exists", "Identificador de sala já utilizado.");
-      response = { roomId: requestId, status: roomSnapshot.get("status") };
+      response = publicTugRoom(roomSnapshot.data(), true);
       return;
     }
     if (!userSnapshot.exists || !rankSnapshot.exists) throw new HttpsError("failed-precondition", "Perfil ainda não foi criado.");
@@ -1389,21 +1472,30 @@ exports.createTugRoom = onCall(async (request) => {
       roomId: requestId,
       createdAt: FieldValue.serverTimestamp(),
     });
+    const nowMs = Date.now();
+    const creatorName = profile.displayName || "Jogador";
     const room = {
       roomId: requestId,
+      mode,
       creatorUid: uid,
-      creatorName: profile.displayName || "Jogador",
+      creatorName,
       opponentUid: "",
       opponentName: "",
+      players: [{ uid, name: creatorName, team: "A" }],
       participantUids: [uid],
       invitedUids,
+      inviteOnly: invitedUids.length > 0,
+      inviteVersion: invitedUids.length > 0 ? 1 : 0,
+      inviteCooldowns: Object.fromEntries(invitedUids.map((inviteUid) => [inviteUid, nowMs])),
       stakeCents,
       passwordHash: password ? hashTugPassword(password, requestId) : "",
       status: "waiting",
       creatorPulls: 0,
       opponentPulls: 0,
+      teamAPulls: 0,
+      teamBPulls: 0,
       lastPullAtMs: {},
-      lastUpdatedAtMs: Date.now(),
+      lastUpdatedAtMs: nowMs,
       createdAt: FieldValue.serverTimestamp(),
     };
     transaction.create(roomRef, room);
@@ -1426,7 +1518,7 @@ exports.joinTugRoom = onCall(async (request) => {
   const userRef = database.collection("users").doc(uid);
   const rankRef = database.collection("leaderboard").doc(uid);
   const requestRef = userRef.collection("gameRequests").doc(requestId);
-  const historyRef = userRef.collection("transactions").doc(`tug_guest_${roomId}`);
+  const historyRef = userRef.collection("transactions").doc(`tug_guest_${roomId}_${requestId}`);
   let response;
   await database.runTransaction(async (transaction) => {
     const [requestSnapshot, roomSnapshot, userSnapshot, rankSnapshot] = await Promise.all([
@@ -1441,24 +1533,37 @@ exports.joinTugRoom = onCall(async (request) => {
     }
     if (!roomSnapshot.exists) throw new HttpsError("not-found", "Sala não encontrada.");
     const room = roomSnapshot.data();
-    if (room.opponentUid === uid && ["ready", "active"].includes(room.status)) {
+    const players = tugPlayers(room);
+    if (players.some((player) => player.uid === uid) && ["waiting", "ready", "active"].includes(room.status)) {
       response = publicTugRoom(room);
       transaction.create(requestRef, { response, createdAt: FieldValue.serverTimestamp() });
       return;
     }
-    if (room.status !== "waiting" || room.creatorUid === uid) throw new HttpsError("failed-precondition", "Esta sala não está disponível.");
+    if (room.status !== "waiting" || players.some((player) => player.uid === uid)) {
+      throw new HttpsError("failed-precondition", "Esta sala não está disponível.");
+    }
+    if (players.length >= tugPlayerLimit(room)) throw new HttpsError("resource-exhausted", "A sala já está completa.");
     const invitedUids = Array.isArray(room.invitedUids) ? room.invitedUids : [];
-    if (invitedUids.length > 0 && !invitedUids.includes(uid)) throw new HttpsError("permission-denied", "Você não foi convidado para esta sala.");
+    if ((room.inviteOnly === true || invitedUids.length > 0) && !invitedUids.includes(uid)) {
+      throw new HttpsError("permission-denied", "Você não foi convidado para esta sala.");
+    }
     if (room.passwordHash && hashTugPassword(password, roomId) !== room.passwordHash) throw new HttpsError("permission-denied", "Senha da sala incorreta.");
     if (!userSnapshot.exists || !rankSnapshot.exists) throw new HttpsError("failed-precondition", "Perfil ainda não foi criado.");
     const balance = userSnapshot.get("balanceCents") || 0;
     if (balance < room.stakeCents) throw new HttpsError("failed-precondition", "Saldo insuficiente para entrar nesta sala.");
     const user = userSnapshot.data();
+    const teamACount = players.filter((player) => player.team === "A").length;
+    const teamBCount = players.filter((player) => player.team === "B").length;
+    const team = room.mode === "2v2" && teamACount <= teamBCount ? "A" : "B";
+    const updatedPlayers = [...players, { uid, name: user.displayName || "Jogador", team }];
+    const opponent = updatedPlayers.find((player) => player.team === "B");
     const updatedRoom = {
-      status: "ready",
-      opponentUid: uid,
-      opponentName: user.displayName || "Jogador",
-      participantUids: [room.creatorUid, uid],
+      status: updatedPlayers.length >= tugPlayerLimit(room) ? "ready" : "waiting",
+      players: updatedPlayers,
+      opponentUid: opponent?.uid || "",
+      opponentName: opponent?.name || "",
+      participantUids: updatedPlayers.map((player) => player.uid),
+      invitedUids: invitedUids.filter((inviteUid) => inviteUid !== uid),
       lastUpdatedAtMs: Date.now(),
     };
     transaction.update(userRef, { balanceCents: balance - room.stakeCents });
@@ -1485,8 +1590,8 @@ exports.manageTugRoom = onCall(async (request) => {
   const targetUid = request.data?.targetUid || "";
   const newStakeCents = request.data?.stakeCents;
   const newPassword = typeof request.data?.password === "string" ? request.data.password : "";
-  if (typeof roomId !== "string" || !/^[a-f0-9-]{36}$/i.test(roomId)
-      || !["setStake", "setPassword", "addInvite", "removeInvite", "kick"].includes(action)
+    if (typeof roomId !== "string" || !/^[a-f0-9-]{36}$/i.test(roomId)
+      || !["setStake", "setPassword", "addInvite", "removeInvite", "kick", "cancel", "dissolve", "leave"].includes(action)
       || typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)
       || (["addInvite", "removeInvite", "kick"].includes(action) && !targetUid)
       || (action === "setStake" && !validateWager(newStakeCents, MAX_TRANSFER_CENTS))
@@ -1511,15 +1616,61 @@ exports.manageTugRoom = onCall(async (request) => {
     }
     if (!roomSnapshot.exists) throw new HttpsError("not-found", "Sala não encontrada.");
     const room = roomSnapshot.data();
-    if (room.creatorUid !== uid) throw new HttpsError("permission-denied", "Somente o criador pode alterar esta sala.");
+    const players = tugPlayers(room);
+    const isCreator = room.creatorUid === uid;
+    if (action === "leave") {
+      if (isCreator) throw new HttpsError("failed-precondition", "O criador deve dissolver a sala para devolver todas as apostas.");
+      if (!players.some((player) => player.uid === uid)) throw new HttpsError("permission-denied", "Você não está nesta sala.");
+    } else if (!isCreator) {
+      throw new HttpsError("permission-denied", "Somente o criador pode alterar esta sala.");
+    }
     if (!actorSnapshot.exists || !actorRankSnapshot.exists) throw new HttpsError("failed-precondition", "Perfil ainda não foi criado.");
-    let refundSnapshot;
-    let refundRankSnapshot;
-    if (action === "kick" && room.opponentUid === targetUid && room.status === "ready") {
-      [refundSnapshot, refundRankSnapshot] = await Promise.all([
-        transaction.get(database.collection("users").doc(targetUid)),
-        transaction.get(database.collection("leaderboard").doc(targetUid)),
-      ]);
+    let refundPlayers = [];
+    let stakePlayers = [];
+    if (["kick", "leave", "cancel", "dissolve"].includes(action)) {
+      if (!["waiting", "ready"].includes(room.status)) {
+        throw new HttpsError("failed-precondition", "A sala só pode ser encerrada antes de começar a partida.");
+      }
+      if (action === "kick") {
+        if (targetUid === room.creatorUid || !players.some((player) => player.uid === targetUid)) {
+          throw new HttpsError("failed-precondition", "Esse jogador não está nesta sala.");
+        }
+        refundPlayers = players.filter((player) => player.uid === targetUid);
+      } else if (action === "leave") {
+        refundPlayers = players.filter((player) => player.uid === uid);
+      } else {
+        refundPlayers = players;
+      }
+      const refundSnapshots = await Promise.all(refundPlayers.flatMap((player) => [
+        transaction.get(database.collection("users").doc(player.uid)),
+        transaction.get(database.collection("leaderboard").doc(player.uid)),
+      ]));
+      if (refundSnapshots.some((snapshot) => !snapshot.exists)) {
+        throw new HttpsError("not-found", "Não foi possível localizar todas as contas para reembolso.");
+      }
+      refundPlayers = refundPlayers.map((player, index) => ({
+        ...player,
+        userSnapshot: refundSnapshots[index * 2],
+        rankSnapshot: refundSnapshots[index * 2 + 1],
+      }));
+    }
+    if (action === "setStake") {
+      const stakeSnapshots = await Promise.all(players.flatMap((player) => [
+        transaction.get(database.collection("users").doc(player.uid)),
+        transaction.get(database.collection("leaderboard").doc(player.uid)),
+      ]));
+      if (stakeSnapshots.some((snapshot) => !snapshot.exists)) {
+        throw new HttpsError("not-found", "Não foi possível localizar todas as contas para ajustar a aposta.");
+      }
+      const difference = newStakeCents - room.stakeCents;
+      stakePlayers = players.map((player, index) => ({
+        ...player,
+        userSnapshot: stakeSnapshots[index * 2],
+        rankSnapshot: stakeSnapshots[index * 2 + 1],
+      }));
+      if (difference > 0 && stakePlayers.some((player) => (player.userSnapshot.get("balanceCents") || 0) < difference)) {
+        throw new HttpsError("failed-precondition", "Um dos jogadores não tem saldo suficiente para aumentar a aposta.");
+      }
     }
     if (action === "setStake" || action === "setPassword" || action === "addInvite") {
       if (room.status !== "waiting") throw new HttpsError("failed-precondition", "A sala só pode ser configurada enquanto aguarda jogadores.");
@@ -1527,17 +1678,19 @@ exports.manageTugRoom = onCall(async (request) => {
     const update = { lastUpdatedAtMs: Date.now() };
     if (action === "setStake") {
       const difference = newStakeCents - room.stakeCents;
-      const balance = actorSnapshot.get("balanceCents") || 0;
-      if (difference > 0 && balance < difference) throw new HttpsError("failed-precondition", "Saldo insuficiente para aumentar a aposta.");
-      transaction.update(actorRef, { balanceCents: balance - difference });
-      transaction.update(actorRankRef, { balanceCents: balance - difference });
-      transaction.create(actorRef.collection("transactions").doc(`tug_adjust_${requestId}`), {
-        description: `Cabo de guerra · ajuste da aposta da sala`,
-        deltaCents: -difference,
-        type: "tug_wager_adjustment",
-        roomId,
-        createdAt: FieldValue.serverTimestamp(),
-      });
+      for (const player of stakePlayers) {
+        const balance = player.userSnapshot.get("balanceCents") || 0;
+        const uidKey = createHash("sha256").update(player.uid).digest("hex").slice(0, 12);
+        transaction.update(player.userSnapshot.ref, { balanceCents: balance - difference });
+        transaction.update(player.rankSnapshot.ref, { balanceCents: balance - difference });
+        transaction.create(player.userSnapshot.ref.collection("transactions").doc(`tug_adjust_${requestId}_${uidKey}`), {
+          description: "Cabo de guerra · ajuste da aposta da sala",
+          deltaCents: -difference,
+          type: "tug_wager_adjustment",
+          roomId,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+      }
       update.stakeCents = newStakeCents;
     } else if (action === "setPassword") {
       update.passwordHash = hashTugPassword(newPassword, roomId);
@@ -1546,29 +1699,76 @@ exports.manageTugRoom = onCall(async (request) => {
       const target = await transaction.get(database.collection("users").doc(targetUid));
       if (!target.exists) throw new HttpsError("not-found", "Convidado não encontrado.");
       const invites = Array.isArray(room.invitedUids) ? [...room.invitedUids] : [];
+      const nowMs = Date.now();
+      const lastInviteAtMs = room.inviteCooldowns?.[targetUid] || 0;
+      const cooldownRemainingMs = 30_000 - (nowMs - lastInviteAtMs);
+      if (cooldownRemainingMs > 0) {
+        throw new HttpsError("resource-exhausted", `Aguarde ${Math.ceil(cooldownRemainingMs / 1_000)} s para reenviar este convite.`);
+      }
       if (!invites.includes(targetUid)) invites.push(targetUid);
       if (invites.length > 20) throw new HttpsError("resource-exhausted", "A sala pode ter até 20 convites.");
       update.invitedUids = invites;
+      update.inviteOnly = true;
+      update.inviteCooldowns = { ...(room.inviteCooldowns || {}), [targetUid]: nowMs };
+      update.inviteVersion = (room.inviteVersion || 0) + 1;
     } else if (action === "removeInvite") {
       if (room.status !== "waiting") throw new HttpsError("failed-precondition", "Não é possível alterar convites depois que a partida começa.");
       update.invitedUids = (room.invitedUids || []).filter((inviteUid) => inviteUid !== targetUid);
+    } else if (["cancel", "dissolve", "leave"].includes(action)) {
+      if ((action === "cancel" || action === "dissolve") && !isCreator) {
+        throw new HttpsError("permission-denied", "Somente o criador pode dissolver a sala.");
+      }
+      for (const player of refundPlayers) {
+        const refundedBalance = (player.userSnapshot.get("balanceCents") || 0) + room.stakeCents;
+        transaction.update(player.userSnapshot.ref, { balanceCents: refundedBalance });
+        transaction.update(player.rankSnapshot.ref, { balanceCents: refundedBalance });
+        const uidKey = createHash("sha256").update(player.uid).digest("hex").slice(0, 12);
+        transaction.create(player.userSnapshot.ref.collection("transactions").doc(`tug_refund_${roomId}_${requestId}_${uidKey}`), {
+          description: action === "leave" ? "Cabo de guerra · saída da sala, aposta devolvida" : "Cabo de guerra · sala dissolvida, aposta devolvida",
+          deltaCents: room.stakeCents,
+          type: "tug_refund",
+          roomId,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+      }
+      if (action === "leave") {
+        const remainingPlayers = players.filter((player) => player.uid !== uid);
+        const opponent = remainingPlayers.find((player) => player.team === "B");
+        update.players = remainingPlayers;
+        update.participantUids = remainingPlayers.map((player) => player.uid);
+        update.opponentUid = opponent?.uid || "";
+        update.opponentName = opponent?.name || "";
+        update.status = "waiting";
+      } else {
+        update.status = "cancelled";
+        update.invitedUids = [];
+        update.inviteOnly = false;
+        update.participantUids = [];
+        update.players = [];
+        update.opponentUid = "";
+        update.opponentName = "";
+        update.passwordHash = "";
+      }
     } else if (action === "kick") {
-      if (room.status !== "ready" || room.opponentUid !== targetUid) throw new HttpsError("failed-precondition", "Esse jogador não está aguardando nesta sala.");
-      if (!refundSnapshot?.exists || !refundRankSnapshot?.exists) throw new HttpsError("not-found", "Conta do jogador não encontrada.");
-      const refundedBalance = (refundSnapshot.get("balanceCents") || 0) + room.stakeCents;
-      transaction.update(refundSnapshot.ref, { balanceCents: refundedBalance });
-      transaction.update(refundRankSnapshot.ref, { balanceCents: refundedBalance });
-      transaction.create(refundSnapshot.ref.collection("transactions").doc(`tug_refund_${roomId}`), {
-        description: "Cabo de guerra · reembolso ao sair da sala",
+      const kicked = refundPlayers[0];
+      const refundedBalance = (kicked.userSnapshot.get("balanceCents") || 0) + room.stakeCents;
+      transaction.update(kicked.userSnapshot.ref, { balanceCents: refundedBalance });
+      transaction.update(kicked.rankSnapshot.ref, { balanceCents: refundedBalance });
+      const kickedUidKey = createHash("sha256").update(kicked.uid).digest("hex").slice(0, 12);
+      transaction.create(kicked.userSnapshot.ref.collection("transactions").doc(`tug_refund_${roomId}_${requestId}_${kickedUidKey}`), {
+        description: "Cabo de guerra · remoção da sala, aposta devolvida",
         deltaCents: room.stakeCents,
         type: "tug_refund",
         roomId,
         createdAt: FieldValue.serverTimestamp(),
       });
+      const remainingPlayers = players.filter((player) => player.uid !== targetUid);
+      const opponent = remainingPlayers.find((player) => player.team === "B");
       update.status = "waiting";
-      update.opponentUid = "";
-      update.opponentName = "";
-      update.participantUids = [uid];
+      update.players = remainingPlayers;
+      update.participantUids = remainingPlayers.map((player) => player.uid);
+      update.opponentUid = opponent?.uid || "";
+      update.opponentName = opponent?.name || "";
     }
     transaction.update(roomRef, update);
     response = { ok: true, room: publicTugRoom({ ...room, ...update }, true) };
@@ -1594,8 +1794,18 @@ exports.startTugRoom = onCall(async (request) => {
       response = publicTugRoom(room);
       return;
     }
-    if (room.status !== "ready" || !room.opponentUid) throw new HttpsError("failed-precondition", "A sala ainda não tem dois jogadores.");
-    const update = { status: "active", startedAt: FieldValue.serverTimestamp(), lastUpdatedAtMs: Date.now() };
+    const players = tugPlayers(room);
+    if (room.status !== "ready" || players.length !== tugPlayerLimit(room)) {
+      throw new HttpsError("failed-precondition", "A sala ainda não está completa.");
+    }
+    const startedAtMs = Date.now();
+    const update = {
+      status: "active",
+      startedAt: FieldValue.serverTimestamp(),
+      startedAtMs,
+      lastPullAtMs: Object.fromEntries(players.map((player) => [player.uid, startedAtMs])),
+      lastUpdatedAtMs: startedAtMs,
+    };
     transaction.update(roomRef, update);
     response = publicTugRoom({ ...room, ...update });
   });
@@ -1606,16 +1816,21 @@ exports.pullTugRope = onCall(async (request) => {
   const uid = authenticatedUid(request);
   const roomId = request.data?.roomId;
   const requestId = request.data?.requestId;
+    const pullCount = request.data?.pullCount ?? 1;
   if (typeof roomId !== "string" || !/^[a-f0-9-]{36}$/i.test(roomId)
-      || typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)) {
+      || typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)
+      || !Number.isInteger(pullCount) || pullCount < 1 || pullCount > MAX_PULLS_PER_BATCH) {
     throw new HttpsError("invalid-argument", "Partida ou identificador inválido.");
   }
   const roomRef = database.collection("tugRooms").doc(roomId);
   const roomSnapshot = await roomRef.get();
   if (!roomSnapshot.exists) throw new HttpsError("not-found", "Sala não encontrada.");
   const roomBefore = roomSnapshot.data();
-  const playerUids = [roomBefore.creatorUid, roomBefore.opponentUid];
-  if (!playerUids.includes(uid) || !roomBefore.opponentUid) throw new HttpsError("permission-denied", "Você não está nesta partida.");
+  const playersBefore = tugPlayers(roomBefore);
+  const playerUids = playersBefore.map((player) => player.uid);
+  if (!playerUids.includes(uid) || playerUids.length !== tugPlayerLimit(roomBefore)) {
+    throw new HttpsError("permission-denied", "Você não está nesta partida completa.");
+  }
   const userRefs = playerUids.map((playerUid) => database.collection("users").doc(playerUid));
   const rankRefs = playerUids.map((playerUid) => database.collection("leaderboard").doc(playerUid));
   const requestRef = database.collection("users").doc(uid).collection("gameRequests").doc(requestId);
@@ -1634,10 +1849,11 @@ exports.pullTugRope = onCall(async (request) => {
     if (!currentRoom.exists) throw new HttpsError("not-found", "Sala não encontrada.");
     let pull;
     try {
-      pull = applyTugPull(currentRoom.data(), uid, Date.now());
+      pull = applyTugPull(currentRoom.data(), uid, Date.now(), pullCount);
     } catch (error) {
       if (error.message === "pull-too-fast") throw new HttpsError("resource-exhausted", "Puxe novamente em um instante.");
       if (error.message === "not-a-player") throw new HttpsError("permission-denied", "Você não está nesta partida.");
+      if (error.message === "invalid-pull-count") throw new HttpsError("invalid-argument", "Quantidade de toques inválida.");
       throw new HttpsError("failed-precondition", "A partida não está ativa.");
     }
     const room = currentRoom.data();
@@ -1647,23 +1863,26 @@ exports.pullTugRope = onCall(async (request) => {
       transaction.create(requestRef, { response, createdAt: FieldValue.serverTimestamp() });
       return;
     }
-    const profiles = accountSnapshots.slice(0, 2);
-    const ranks = accountSnapshots.slice(2, 4);
+    const playerCount = playerUids.length;
+    const profiles = accountSnapshots.slice(0, playerCount);
+    const ranks = accountSnapshots.slice(playerCount, playerCount * 2);
     if (profiles.some((snapshot) => !snapshot.exists) || ranks.some((snapshot) => !snapshot.exists)) {
       throw new HttpsError("failed-precondition", "Uma conta da partida não está disponível.");
     }
     const nowMs = Date.now();
-    const payoutCents = room.stakeCents * 2;
-    const winnerIndex = playerUids.indexOf(pull.winnerUid);
+    const players = tugPlayers({ ...room, ...pull });
+    const payoutPerWinnerCents = room.stakeCents * 2;
+    const winnerCount = players.filter((player) => player.team === pull.winnerTeam).length;
+    const payoutCents = payoutPerWinnerCents * winnerCount;
     const settledProfiles = profiles.map((snapshot, index) => {
       const profile = snapshot.data();
-      const won = index === winnerIndex;
+      const won = players[index].team === pull.winnerTeam;
       const gamesPlayed = (profile.gamesPlayed || 0) + 1;
       const progression = levelProgress(gamesPlayed);
       const missions = advanceMissionProgress(profile, nowMs);
       const profitCents = won ? room.stakeCents : -room.stakeCents;
       const balanceCents = (profile.balanceCents || 0)
-        + (won ? payoutCents : 0)
+        + (won ? payoutPerWinnerCents : 0)
         + progression.rewardCents
         + missions.totalRewardCents;
       if (!Number.isSafeInteger(balanceCents)) throw new HttpsError("failed-precondition", "Saldo resultante inválido.");
@@ -1682,7 +1901,7 @@ exports.pullTugRope = onCall(async (request) => {
       transaction.update(rankRefs[index], { balanceCents: settlement.balanceCents, level: settlement.progression.level });
       transaction.create(userRefs[index].collection("transactions").doc(`tug_settlement_${roomId}`), {
         description: settlement.won ? "Cabo de guerra · vitória" : "Cabo de guerra · derrota",
-        deltaCents: settlement.won ? payoutCents : 0,
+        deltaCents: settlement.won ? payoutPerWinnerCents : 0,
         type: "tug_settlement",
         roomId,
         createdAt: FieldValue.serverTimestamp(),
@@ -1690,7 +1909,17 @@ exports.pullTugRope = onCall(async (request) => {
       registrarPremioNivel(transaction, userRefs[index], `${roomId}_${playerUids[index]}`, settlement.progression);
       registrarPremiosMissao(transaction, userRefs[index], settlement.missions);
     });
-    const finalRoom = { ...room, ...pull, status: "settled", winnerUid: pull.winnerUid, payoutCents, settledAt: FieldValue.serverTimestamp(), lastUpdatedAtMs: nowMs };
+    const finalRoom = {
+      ...room,
+      ...pull,
+      status: "settled",
+      winnerUid: pull.winnerUid,
+      winnerTeam: pull.winnerTeam,
+      payoutCents,
+      payoutPerWinnerCents,
+      settledAt: FieldValue.serverTimestamp(),
+      lastUpdatedAtMs: nowMs,
+    };
     transaction.update(roomRef, finalRoom);
     response = publicTugRoom(finalRoom);
     transaction.create(requestRef, { response, createdAt: FieldValue.serverTimestamp() });
@@ -3102,15 +3331,22 @@ exports.sendChatMessage = onCall(async (request) => {
   if (text.length > 500 || (text.length < 1 && !hasAudio)) {
     throw new HttpsError("invalid-argument", "A mensagem deve ter entre 1 e 500 caracteres.");
   }
-  if (hasAudio && (audioPublicId !== requestId
-      || !Number.isInteger(audioDurationMs) || audioDurationMs < 500 || audioDurationMs > 60_000
-      || !audioUrl.startsWith(`https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/video/upload/`)
-      || !audioUrl.endsWith(`/${requestId}.m4a`))
-      || (!hasAudio && (audioPublicId || audioDurationMs != null))) {
-    throw new HttpsError("invalid-argument", "Áudio ou duração inválidos.");
-  }
   if (typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)) {
     throw new HttpsError("invalid-argument", "Identificador da mensagem inválido.");
+  }
+  if (hasAudio) {
+    if (audioPublicId !== requestId) {
+      throw new HttpsError("invalid-argument", "O identificador do arquivo de áudio não corresponde à mensagem.");
+    }
+    if (!Number.isSafeInteger(audioDurationMs) || audioDurationMs < 500 || audioDurationMs > 60_000) {
+      throw new HttpsError("invalid-argument", "A gravação precisa ter entre 0,5 e 60 segundos. Tente gravar por mais tempo.");
+    }
+    if (!audioUrl.startsWith(`https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/video/upload/`)
+        || !audioUrl.endsWith(`/${requestId}.m4a`)) {
+      throw new HttpsError("invalid-argument", "A URL do upload não corresponde ao formato de áudio esperado.");
+    }
+  } else if (audioPublicId || audioDurationMs != null) {
+    throw new HttpsError("invalid-argument", "Dados de áudio foram enviados sem um arquivo.");
   }
   if (recipientUid !== null && (typeof recipientUid !== "string" || recipientUid === uid)) {
     throw new HttpsError("invalid-argument", "Destinatário inválido.");

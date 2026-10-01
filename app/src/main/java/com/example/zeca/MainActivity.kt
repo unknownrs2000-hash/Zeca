@@ -169,10 +169,10 @@ private fun AppAutenticado(usuario: FirebaseUser) {
             FirebaseRepository.listarSalasCaboGuerra { rooms, error ->
                 if (error == null) {
                     rooms.filter { it.conviteParaMim && it.status == "waiting" }.forEach { room ->
-                        if (convitesCaboNotificados.add(room.id)) {
+                        if (convitesCaboNotificados.add("${room.id}:${room.versaoConvite}")) {
                             notificar(
                                 NotificacaoApp(
-                                    id = "tug-invite:${room.id}",
+                                    id = "tug-invite:${room.id}:${room.versaoConvite}",
                                     titulo = "Convite para Cabo de Guerra",
                                     detalhe = "${room.criadorNome} convidou você · aposta ${formatarValorNotificacao(room.apostaCentavos)}",
                                     aba = Aba.Jogos,
@@ -371,8 +371,8 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                                 FirebaseRepository.liquidarApostasEsportivas(concluir)
                             },
                             onCarregarSalasCaboGuerra = { concluir -> FirebaseRepository.listarSalasCaboGuerra(concluir) },
-                            onCriarSalaCaboGuerra = { aposta, convites, senha, requestId, concluir ->
-                                FirebaseRepository.criarSalaCaboGuerra(aposta, convites, senha, requestId, concluir)
+                            onCriarSalaCaboGuerra = { aposta, convites, senha, modo, requestId, concluir ->
+                                FirebaseRepository.criarSalaCaboGuerra(aposta, convites, senha, modo, requestId, concluir)
                             },
                             onEntrarSalaCaboGuerra = { roomId, senha, requestId, concluir ->
                                 FirebaseRepository.entrarSalaCaboGuerra(roomId, senha, requestId, concluir)
@@ -381,8 +381,8 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                                 FirebaseRepository.gerenciarSalaCaboGuerra(roomId, acao, requestId, targetUid, aposta, senha, concluir)
                             },
                             onIniciarSalaCaboGuerra = { roomId, concluir -> FirebaseRepository.iniciarSalaCaboGuerra(roomId, concluir) },
-                            onPuxarCordaCaboGuerra = { roomId, requestId, concluir ->
-                                FirebaseRepository.puxarCordaCaboGuerra(roomId, requestId, concluir)
+                            onPuxarCordaCaboGuerra = { roomId, count, requestId, concluir ->
+                                FirebaseRepository.puxarCordaCaboGuerra(roomId, count, requestId, concluir)
                             },
                             onIniciarMinas = { aposta, minas, requestId, concluir ->
                                 FirebaseRepository.iniciarMinas(aposta, minas, requestId, concluir)
