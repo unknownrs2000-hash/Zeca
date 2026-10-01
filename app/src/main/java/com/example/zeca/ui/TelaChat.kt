@@ -83,6 +83,8 @@ import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -564,8 +566,10 @@ fun TelaChat(
             TelaConversa(
                 mensagens = mensagens,
                 jogadores = jogadores,
+                onBuscarJogadores = onBuscarJogadores,
                 uidAtual = uidAtual,
                 chavePixAtual = chavePixAtual,
+                podeMencionarTodos = modo == "Global" || emGrupo,
                 podeCriarCobranca = modo == "Privado" && destinatarioUid.isNotBlank() && !emGrupo,
                 onEnviarCobranca = { texto, aoSucesso -> enviarTextoChat(texto, null, aoSucesso) },
                 onEnviarAudio = { arquivo, duracaoMs, requestId, callback ->
@@ -1191,6 +1195,17 @@ private fun filtrarJogadoresChat(jogadores: List<JogadorRanking>, busca: String)
     }
 }
 
+private fun tokenMencaoAtivo(texto: String): String? {
+    val inicio = texto.lastIndexOfAny(charArrayOf(' ', '\n', '\r', '\t')) + 1
+    val token = texto.substring(inicio)
+    return token.takeIf { it.startsWith("@") && !it.any(Char::isWhitespace) }?.removePrefix("@")
+}
+
+private fun completarTokenMencao(texto: String, username: String): String {
+    val token = tokenMencaoAtivo(texto) ?: return texto
+    return texto.dropLast(token.length + 1) + "@$username "
+}
+
 private fun diasFoguinhoAtivos(conversa: ConversaChat): Int {
     val hoje = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
         timeZone = java.util.TimeZone.getTimeZone("UTC")
@@ -1535,8 +1550,10 @@ private fun OpcoesChat(opcoes: List<String>, selecionada: String, onSelecionar: 
 private fun TelaConversa(
     mensagens: List<MensagemChat>,
     jogadores: List<JogadorRanking>,
+    onBuscarJogadores: (String, (List<JogadorRanking>, Exception?) -> Unit) -> Unit,
     uidAtual: String,
     chavePixAtual: String,
+    podeMencionarTodos: Boolean,
     podeCriarCobranca: Boolean,
     onEnviarCobranca: (String, () -> Unit) -> Unit,
     onEnviarAudio: (File, Int, String, (Exception?) -> Unit) -> Unit,
@@ -1573,6 +1590,8 @@ private fun TelaConversa(
     var gravandoAudio by remember { mutableStateOf(false) }
     var enviandoAudioLocal by remember { mutableStateOf(false) }
     var erroAudio by rememberSaveable { mutableStateOf("") }
+    var jogadoresBuscaMencao by remember { mutableStateOf<List<JogadorRanking>>(emptyList()) }
+    var mencoesDispensadas by remember { mutableStateOf(false) }
     var gravadorAudio by remember { mutableStateOf<MediaRecorder?>(null) }
     var arquivoAudioTemporario by remember { mutableStateOf<File?>(null) }
     var inicioGravacaoMs by remember { mutableStateOf(0L) }
@@ -1591,6 +1610,37 @@ private fun TelaConversa(
     }
     val imagemCobranca = remember(conteudoCobranca) {
         conteudoCobranca?.let(::criarQrCodeChat)
+    }
+    val tokenMencao = remember(rascunho) { tokenMencaoAtivo(rascunho) }
+    val tokenMencaoAtual by rememberUpdatedState(tokenMencao)
+    val buscarJogadoresAtual by rememberUpdatedState(onBuscarJogadores)
+    val sugestoesMencao = remember(tokenMencao, jogadores, jogadoresBuscaMencao, uidAtual) {
+        val termo = tokenMencao.orEmpty()
+        (jogadoresBuscaMencao + jogadores)
+            .distinctBy { it.uid }
+            .filter { it.uid != uidAtual && it.username.isNotBlank() }
+            .filter {
+                termo.isBlank()
+                    || it.username.startsWith(termo, ignoreCase = true)
+                    || it.apelido.contains(termo, ignoreCase = true)
+            }
+            .take(5)
+    }
+    val mostrarMencaoTodos = podeMencionarTodos
+        && tokenMencao != null
+        && "todos".startsWith(tokenMencao, ignoreCase = true)
+
+    LaunchedEffect(tokenMencao) {
+        mencoesDispensadas = false
+        jogadoresBuscaMencao = emptyList()
+        val termo = tokenMencao?.trim().orEmpty()
+        if (termo.isBlank()) return@LaunchedEffect
+        delay(250)
+        buscarJogadoresAtual(termo) { encontrados, _ ->
+            if (tokenMencaoAtual?.equals(termo, ignoreCase = true) == true) {
+                jogadoresBuscaMencao = encontrados
+            }
+        }
     }
 
     fun iniciarGravacaoAudio() {
@@ -1825,21 +1875,57 @@ private fun TelaConversa(
                     tint = if (gravandoAudio) Color(0xFFFF8790) else Cores.Verde,
                 )
             }
-            OutlinedTextField(
-                value = rascunho,
-                onValueChange = onRascunhoChange,
-                modifier = Modifier
-                    .weight(1f)
-                    .focusRequester(campoFoco),
-                enabled = podeEnviarMensagem,
-                placeholder = { Text(if (podeEnviarMensagem) "Mensagem" else "Só o criador pode enviar") },
-                shape = RoundedCornerShape(26.dp),
-                maxLines = 4,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Text,
-                    capitalization = KeyboardCapitalization.Sentences,
-                ),
-            )
+            Box(Modifier.weight(1f)) {
+                OutlinedTextField(
+                    value = rascunho,
+                    onValueChange = onRascunhoChange,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(campoFoco),
+                    enabled = podeEnviarMensagem,
+                    placeholder = { Text(if (podeEnviarMensagem) "Mensagem" else "Só o criador pode enviar") },
+                    shape = RoundedCornerShape(26.dp),
+                    maxLines = 4,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Text,
+                        capitalization = KeyboardCapitalization.Sentences,
+                    ),
+                )
+                DropdownMenu(
+                    expanded = !mencoesDispensadas
+                        && tokenMencao != null
+                        && (mostrarMencaoTodos || sugestoesMencao.isNotEmpty()),
+                    onDismissRequest = { mencoesDispensadas = true },
+                    modifier = Modifier.heightIn(max = 280.dp),
+                ) {
+                    if (mostrarMencaoTodos) {
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text("@todos", color = Color.White, fontWeight = FontWeight.Bold)
+                                    Text("Mencionar todos", color = Color.White.copy(alpha = 0.62f), fontSize = 12.sp)
+                                }
+                            },
+                            onClick = {
+                                onRascunhoChange(completarTokenMencao(rascunho, "todos"))
+                            },
+                        )
+                    }
+                    sugestoesMencao.forEach { jogador ->
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text(jogador.apelido, color = Color.White, fontWeight = FontWeight.SemiBold)
+                                    Text("@${jogador.username}", color = Cores.Turquesa, fontSize = 12.sp)
+                                }
+                            },
+                            onClick = {
+                                onRascunhoChange(completarTokenMencao(rascunho, jogador.username))
+                            },
+                        )
+                    }
+                }
+            }
             Box(
                 modifier = Modifier
                     .size(56.dp)
