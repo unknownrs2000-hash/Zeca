@@ -116,7 +116,12 @@ fun TelaAdmin(
     var itemSelecionado by rememberSaveable { mutableStateOf("frame_aurora") }
     var menuInventarioAberto by remember { mutableStateOf(false) }
     var confirmarExclusao by remember { mutableStateOf(false) }
+    var excluindoUsuario by remember { mutableStateOf(false) }
+    var erroExclusao by remember { mutableStateOf("") }
     var uidConfirmacao by rememberSaveable { mutableStateOf("") }
+    var requestIdExclusao by rememberSaveable { mutableStateOf("") }
+    var extratoExpandido by remember(selecionado?.uid) { mutableStateOf(false) }
+    var extratoOculto by remember(selecionado?.uid) { mutableStateOf(false) }
     val valorAjusteCentavos = parseSaldoAdmin(valorAjuste)
     val contexto = LocalContext.current
 
@@ -300,11 +305,52 @@ fun TelaAdmin(
                     Text("${info.partidas} partidas · ${info.vitorias} vitórias", color = Color.White.copy(alpha = 0.65f), fontSize = 11.sp)
                 }
 
-                Text("Extrato · 50 últimas movimentações", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                if (info.movimentacoes.isEmpty()) {
-                    Text("Nenhuma movimentação registrada.", color = Color.White.copy(alpha = 0.55f), fontSize = 11.sp)
-                } else {
-                    info.movimentacoes.forEach { movement -> MovimentoAdminLinha(movement) }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color.White.copy(alpha = 0.045f))
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Extrato", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text(
+                                "${info.movimentacoes.size} movimentações recentes",
+                                color = Color.White.copy(alpha = 0.5f),
+                                fontSize = 10.sp,
+                            )
+                        }
+                        TextButton(onClick = { extratoOculto = !extratoOculto }) {
+                            Text(if (extratoOculto) "Mostrar" else "Esconder", color = Cores.Turquesa, fontSize = 11.sp)
+                        }
+                    }
+                    if (!extratoOculto) {
+                        val entradas = info.movimentacoes.sumOf { it.deltaCentavos.coerceAtLeast(0L) }
+                        val saidas = info.movimentacoes.sumOf { it.deltaCentavos.coerceAtMost(0L) }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ResumoExtratoAdmin("Entradas", formatarSaldoAdmin(entradas), Cores.Verde, Modifier.weight(1f))
+                            ResumoExtratoAdmin("Saídas", formatarSaldoAdmin(saidas), Color(0xFFFF7C83), Modifier.weight(1f))
+                        }
+                        if (info.movimentacoes.isEmpty()) {
+                            Text("Nenhuma movimentação registrada.", color = Color.White.copy(alpha = 0.55f), fontSize = 11.sp)
+                        } else {
+                            val limiteExtrato = if (extratoExpandido) info.movimentacoes.size else 5
+                            info.movimentacoes.take(limiteExtrato).forEach { movement -> MovimentoAdminLinha(movement) }
+                            if (info.movimentacoes.size > 5) {
+                                TextButton(
+                                    onClick = { extratoExpandido = !extratoExpandido },
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(
+                                        if (extratoExpandido) "Mostrar menos" else "Mostrar mais (${info.movimentacoes.size - 5})",
+                                        color = Cores.Turquesa,
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
                 Text("Inventário · ${info.inventario.size} itens", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
@@ -422,7 +468,12 @@ fun TelaAdmin(
                         colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.15f)),
                     ) { Text(if (user.bloqueado) "Desbloquear" else "Bloquear", color = Color.White) }
                     Button(
-                        onClick = { confirmarExclusao = true; uidConfirmacao = "" },
+                        onClick = {
+                            confirmarExclusao = true
+                            uidConfirmacao = ""
+                            erroExclusao = ""
+                            requestIdExclusao = UUID.randomUUID().toString()
+                        },
                         enabled = !carregando,
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB73C52)),
                     ) { Text("Excluir conta", color = Color.White) }
@@ -475,42 +526,84 @@ fun TelaAdmin(
     if (confirmarExclusao && selecionado != null) {
         val user = selecionado!!
         AlertDialog(
-            onDismissRequest = { confirmarExclusao = false },
+            onDismissRequest = { if (!excluindoUsuario) confirmarExclusao = false },
             title = { Text("Excluir conta permanentemente?") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Apaga perfil, autenticação, saldo virtual, conversas diretas, mensagens e históricos de transferência compartilhados. Esta ação não pode ser desfeita.")
                     Text("Digite o UID da conta para confirmar:", fontSize = 12.sp)
-                    OutlinedTextField(value = uidConfirmacao, onValueChange = { uidConfirmacao = it }, singleLine = true)
+                    OutlinedTextField(
+                        value = uidConfirmacao,
+                        onValueChange = { uidConfirmacao = it; erroExclusao = "" },
+                        enabled = !excluindoUsuario,
+                        singleLine = true,
+                    )
                     if (uidConfirmacao != user.uid) {
                         Text("O UID deve ser idêntico ao da conta selecionada.", color = Cores.Laranja, fontSize = 10.sp)
                     }
-                    OutlinedTextField(value = motivoAcao, onValueChange = { motivoAcao = it.take(200) }, label = { Text("Motivo da exclusão") }, singleLine = true)
+                    OutlinedTextField(
+                        value = motivoAcao,
+                        onValueChange = { motivoAcao = it.take(200); erroExclusao = "" },
+                        enabled = !excluindoUsuario,
+                        label = { Text("Motivo da exclusão") },
+                        singleLine = true,
+                    )
                     if (motivoAcao.trim().length < 8) {
                         Text("Informe o motivo da exclusão (mínimo 8 caracteres).", color = Cores.Laranja, fontSize = 10.sp)
+                    }
+                    if (erroExclusao.isNotBlank()) {
+                        Text(erroExclusao, color = Color(0xFFFF8790), fontSize = 12.sp)
                     }
                 }
             },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        confirmarExclusao = false
+                        excluindoUsuario = true
                         carregando = true
-                        onExcluirUsuario(user.uid, uidConfirmacao, motivoAcao.trim(), UUID.randomUUID().toString()) { error ->
+                        erroExclusao = ""
+                        onExcluirUsuario(user.uid, uidConfirmacao, motivoAcao.trim(), requestIdExclusao) { error ->
+                            excluindoUsuario = false
                             carregando = false
-                            mensagem = error?.localizedMessage ?: "Conta excluída."
                             if (error == null) {
+                                confirmarExclusao = false
+                                mensagem = "Conta excluída."
+                                requestIdExclusao = ""
                                 detalhes = null
                                 selecionado = null
                                 usuarios = usuarios.filterNot { it.uid == user.uid }
+                            } else {
+                                erroExclusao = error.localizedMessage ?: "Não foi possível excluir a conta."
                             }
                         }
                     },
-                    enabled = uidConfirmacao == user.uid && motivoAcao.trim().length >= 8,
-                ) { Text("Excluir") }
+                    enabled = !excluindoUsuario && uidConfirmacao == user.uid && motivoAcao.trim().length >= 8,
+                ) { Text(if (excluindoUsuario) "Excluindo..." else "Excluir") }
             },
-            dismissButton = { TextButton(onClick = { confirmarExclusao = false }) { Text("Cancelar") } },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        confirmarExclusao = false
+                        requestIdExclusao = ""
+                    },
+                    enabled = !excluindoUsuario,
+                ) { Text("Cancelar") }
+            },
         )
+    }
+}
+
+@Composable
+private fun ResumoExtratoAdmin(rotulo: String, valor: String, cor: Color, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color.Black.copy(alpha = 0.16f))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        Text(rotulo, color = Color.White.copy(alpha = 0.5f), fontSize = 9.sp)
+        Text(valor, color = cor, fontSize = 11.sp, fontWeight = FontWeight.Bold)
     }
 }
 
