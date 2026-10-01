@@ -265,6 +265,33 @@ test("read receipts can only be written by their owner and read by chat particip
   }));
 });
 
+test("Jokenpô queues and matches are private and server-written", async () => {
+  const playerOne = "jokenpo-player-one";
+  const playerTwo = "jokenpo-player-two";
+  const outsiderUid = "jokenpo-outsider";
+  const matchId = "12345678-1234-1234-1234-123456789012";
+  await seedPlayer(playerOne);
+  await seedPlayer(playerTwo);
+  await seedPlayer(outsiderUid);
+  await environment.withSecurityRulesDisabled(async (context) => {
+    const database = context.firestore();
+    await database.doc(`jokenpoQueue/${playerOne}`).set({ uid: playerOne, status: "waiting" });
+    await database.doc(`jokenpoMatches/${matchId}`).set({ playerUids: [playerOne, playerTwo], status: "playing" });
+  });
+
+  const playerOneDb = environment.authenticatedContext(playerOne).firestore();
+  const playerTwoDb = environment.authenticatedContext(playerTwo).firestore();
+  const outsiderDb = environment.authenticatedContext(outsiderUid).firestore();
+  await assertSucceeds(getDoc(doc(playerOneDb, "jokenpoQueue", playerOne)));
+  await assertFails(getDoc(doc(playerTwoDb, "jokenpoQueue", playerOne)));
+  await assertSucceeds(getDoc(doc(playerTwoDb, "jokenpoMatches", matchId)));
+  await assertFails(getDoc(doc(outsiderDb, "jokenpoMatches", matchId)));
+  await assertFails(setDoc(doc(playerOneDb, "jokenpoQueue", playerOne), { uid: playerOne, status: "matched" }));
+  await assertFails(setDoc(doc(playerOneDb, "jokenpoMatches", matchId), { playerUids: [playerOne, playerTwo], status: "completed" }));
+  await assertFails(getDoc(doc(playerOneDb, "jokenpoMatches", matchId, "moves", playerOne)));
+  await assertFails(setDoc(doc(playerOneDb, "jokenpoMatches", matchId, "moves", playerOne), { choice: "rock" }));
+});
+
 test("denies private-chat metadata that forges the last sender", async () => {
   await seedPlayer("chat-real-sender");
   await seedPlayer("chat-other-user");

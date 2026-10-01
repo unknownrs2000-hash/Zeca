@@ -426,6 +426,17 @@ service cloud.firestore {
       }
     }
 
+    match /jokenpoQueue/{userId} {
+      allow get: if activeUser() && request.auth.uid == userId;
+      allow list, write: if false;
+    }
+
+    match /jokenpoMatches/{matchId} {
+      allow get: if activeUser()
+        && request.auth.uid in resource.data.get('playerUids', []);
+      allow list, write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

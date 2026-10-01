@@ -31,6 +31,7 @@ data class PerfilJogador(
     val molduraEquipada: String,
     val avatarItensEquipados: List<String> = emptyList(),
     val avatarComoFotoPerfil: Boolean = false,
+    val tituloEquipado: String = "",
 )
 
 data class JogadorRanking(
@@ -135,6 +136,7 @@ data class PerfilPublico(
     val molduraEquipada: String,
     val avatarItensEquipados: List<String> = emptyList(),
     val avatarComoFotoPerfil: Boolean = false,
+    val tituloEquipado: String = "",
 )
 
 data class ResultadoTransferencia(
@@ -337,6 +339,22 @@ data class SalaCaboGuerra(
     val versaoConvite: Int = 0,
     val timeVencedor: String = "",
     val puxoesAceitos: Int = 0,
+)
+
+data class PartidaJokenpo(
+    val id: String,
+    val status: String,
+    val jogadorUids: List<String>,
+    val nomesJogadores: Map<String, String>,
+    val escolhas: Map<String, String>,
+    val vencedorUid: String,
+    val resultado: String,
+)
+
+data class ResultadoJokenpo(
+    val status: String,
+    val vencedorUid: String,
+    val resultado: String,
 )
 
 private fun Map<*, *>.toSalaCaboGuerra(): SalaCaboGuerra? {
@@ -974,6 +992,92 @@ object FirebaseRepository {
         ) { _, error -> callback(error) }
     }
 
+    fun equiparTitulo(itemId: String?, callback: (Exception?) -> Unit) {
+        chamarFunction("equipTitle", mapOf("itemId" to (itemId ?: ""))) { _, error -> callback(error) }
+    }
+
+    fun buscarAdversarioJokenpo(
+        requestId: String,
+        callback: (String, String, Exception?) -> Unit,
+    ) {
+        chamarFunction("queueJokenpoMatch", mapOf("requestId" to requestId)) { data, error ->
+            callback(data?.get("status") as? String ?: "", data?.get("matchId") as? String ?: "", error)
+        }
+    }
+
+    fun cancelarFilaJokenpo(callback: (Exception?) -> Unit) {
+        chamarFunction("cancelJokenpoQueue", emptyMap()) { _, error -> callback(error) }
+    }
+
+    fun observarFilaJokenpo(callback: (String, String, Boolean) -> Unit): ListenerRegistration {
+        val uid = auth.currentUser?.uid ?: throw IllegalStateException("Entre na sua conta para buscar uma partida.")
+        return database.collection("jokenpoQueue").document(uid).addSnapshotListener { snapshot, _ ->
+            callback(
+                snapshot?.getString("status") ?: "",
+                snapshot?.getString("matchId") ?: "",
+                snapshot?.getBoolean("hasPlayed") == true,
+            )
+        }
+    }
+
+    fun observarPartidaJokenpo(
+        matchId: String,
+        callback: (PartidaJokenpo?, Exception?) -> Unit,
+    ): ListenerRegistration = database.collection("jokenpoMatches").document(matchId)
+        .addSnapshotListener { snapshot, error ->
+            val match = snapshot?.takeIf { it.exists() }?.let { document ->
+                val names = (document.get("playerNames") as? Map<*, *>)
+                    ?.entries
+                    ?.mapNotNull { (uid, name) ->
+                        val playerUid = uid as? String ?: return@mapNotNull null
+                        val playerName = name as? String ?: return@mapNotNull null
+                        playerUid to playerName
+                    }
+                    ?.toMap()
+                    .orEmpty()
+                val choices = (document.get("choices") as? Map<*, *>)
+                    ?.entries
+                    ?.mapNotNull { (uid, choice) ->
+                        val playerUid = uid as? String ?: return@mapNotNull null
+                        val playerChoice = choice as? String ?: return@mapNotNull null
+                        playerUid to playerChoice
+                    }
+                    ?.toMap()
+                    .orEmpty()
+                PartidaJokenpo(
+                    id = document.id,
+                    status = document.getString("status") ?: "",
+                    jogadorUids = (document.get("playerUids") as? List<*>)?.filterIsInstance<String>().orEmpty(),
+                    nomesJogadores = names,
+                    escolhas = if (document.getString("status") == "completed") choices else emptyMap(),
+                    vencedorUid = document.getString("winnerUid") ?: "",
+                    resultado = document.getString("resultText") ?: "",
+                )
+            }
+            callback(match, error)
+        }
+
+    fun jogarJokenpo(
+        matchId: String,
+        escolha: String,
+        requestId: String,
+        callback: (ResultadoJokenpo?, Exception?) -> Unit,
+    ) {
+        chamarFunction(
+            "submitJokenpoChoice",
+            mapOf("matchId" to matchId, "choice" to escolha, "requestId" to requestId),
+        ) { data, error ->
+            val result = data?.let {
+                ResultadoJokenpo(
+                    status = it["status"] as? String ?: "",
+                    vencedorUid = it["winnerUid"] as? String ?: "",
+                    resultado = it["resultText"] as? String ?: "",
+                )
+            }
+            callback(result, error)
+        }
+    }
+
     fun enviarFotoPerfil(uri: Uri, contentResolver: ContentResolver, callback: (String?, Exception?) -> Unit) {
         val uid = auth.currentUser?.uid
         if (uid == null) {
@@ -1120,6 +1224,7 @@ object FirebaseRepository {
                     molduraEquipada = it["equippedFrame"] as? String ?: "",
                     avatarItensEquipados = (it["equippedAvatarItems"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
                     avatarComoFotoPerfil = it["avatarAsProfilePhoto"] as? Boolean ?: false,
+                    tituloEquipado = it["equippedTitle"] as? String ?: "",
                 )
             }
             callback(perfil, erro)
@@ -1832,6 +1937,7 @@ object FirebaseRepository {
         molduraEquipada = snapshot.getString("equippedFrame") ?: "",
         avatarItensEquipados = (snapshot.get("equippedAvatarItems") as? List<*>)?.filterIsInstance<String>().orEmpty(),
         avatarComoFotoPerfil = snapshot.getBoolean("avatarAsProfilePhoto") == true,
+        tituloEquipado = snapshot.getString("equippedTitle") ?: "",
     )
 
     private fun toJogadorRanking(snapshot: DocumentSnapshot): JogadorRanking? {

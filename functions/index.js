@@ -27,6 +27,7 @@ const {
   rockPaperScissorsResult,
   parityDiceResult,
   rouletteResult,
+  resolveRockPaperScissors,
   scratchCardResult,
   settleBlackjack,
   spinSlots,
@@ -61,6 +62,7 @@ const MAX_TRANSFER_CENTS = 1_000_000;
 const GAME_COOLDOWN_MS = 250;
 const CHAT_COOLDOWN_MS = 300;
 const DEFAULT_MINES_RTP_BPS = 9_800;
+const JOKENPO_QUEUE_TTL_MS = 90_000;
 const CLOUDINARY_CLOUD_NAME = "vwctfu9u";
 const COSMETICS = {
   frame_aurora: { name: "Moldura Aurora", priceCents: 1_299 },
@@ -338,6 +340,7 @@ exports.ensurePlayerProfile = onCall(async (request) => {
       avatarUrl: existing.avatarUrl || authUser.photoURL || "",
       avatarAsProfilePhoto: existing.avatarAsProfilePhoto === true,
       equippedAvatarItems: Array.isArray(existing.equippedAvatarItems) ? existing.equippedAvatarItems : [],
+      equippedTitle: typeof existing.equippedTitle === "string" ? existing.equippedTitle : "",
       username,
       profileSetupComplete: existing.profileSetupComplete === true && username !== "",
       pixKey: existing.pixKey || "",
@@ -755,6 +758,189 @@ exports.playGame = onCall(async (request) => {
     transaction.create(requestRef, { response, createdAt: FieldValue.serverTimestamp() });
   });
 
+  return response;
+});
+
+exports.queueJokenpoMatch = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const requestId = request.data?.requestId;
+  if (typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)) {
+    throw new HttpsError("invalid-argument", "Identificador de busca inválido.");
+  }
+
+  const queueRef = database.collection("jokenpoQueue").doc(uid);
+  const userRef = database.collection("users").doc(uid);
+  const waitingQuery = database.collection("jokenpoQueue").where("status", "==", "waiting").limit(25);
+  let response;
+  await database.runTransaction(async (transaction) => {
+    const [queueSnapshot, userSnapshot] = await Promise.all([
+      transaction.get(queueRef),
+      transaction.get(userRef),
+    ]);
+    if (!userSnapshot.exists || userSnapshot.get("isBlocked") === true) {
+      throw new HttpsError("failed-precondition", "Perfil indisponível para partidas.");
+    }
+
+    if (queueSnapshot.exists && queueSnapshot.get("status") === "matched") {
+      const currentMatchId = queueSnapshot.get("matchId");
+      const currentMatch = typeof currentMatchId === "string"
+        ? await transaction.get(database.collection("jokenpoMatches").doc(currentMatchId))
+        : null;
+      if (currentMatch?.exists && currentMatch.get("status") === "playing") {
+        response = { status: "matched", matchId: currentMatchId };
+        return;
+      }
+    }
+
+    const waitingSnapshot = await transaction.get(waitingQuery);
+    const nowMs = Date.now();
+    const staleQueueRefs = [];
+    let opponentQueue = null;
+    let opponentProfile = null;
+    const candidates = [...waitingSnapshot.docs]
+      .filter((document) => document.id !== uid)
+      .sort((left, right) => (left.get("createdAtMs") || 0) - (right.get("createdAtMs") || 0));
+    for (const candidate of candidates) {
+      const ageMs = nowMs - (candidate.get("createdAtMs") || 0);
+      if (ageMs < 0 || ageMs > JOKENPO_QUEUE_TTL_MS) {
+        staleQueueRefs.push(candidate.ref);
+        continue;
+      }
+      const profile = await transaction.get(database.collection("users").doc(candidate.id));
+      if (!profile.exists || profile.get("isBlocked") === true) {
+        staleQueueRefs.push(candidate.ref);
+        continue;
+      }
+      opponentQueue = candidate;
+      opponentProfile = profile;
+      break;
+    }
+
+    staleQueueRefs.forEach((ref) => transaction.delete(ref));
+    if (opponentQueue == null || opponentProfile == null) {
+      transaction.set(queueRef, {
+        uid,
+        status: "waiting",
+        gameId: "jokenpo",
+        requestId,
+        createdAtMs: nowMs,
+        hasPlayed: false,
+      });
+      response = { status: "waiting", matchId: "" };
+      return;
+    }
+
+    const matchId = randomUUID();
+    const matchRef = database.collection("jokenpoMatches").doc(matchId);
+    const playerUids = [uid, opponentQueue.id].sort();
+    const playerNames = {
+      [uid]: safeName(userSnapshot.get("displayName"), "Jogador"),
+      [opponentQueue.id]: safeName(opponentProfile.get("displayName"), "Jogador"),
+    };
+    transaction.create(matchRef, {
+      gameId: "jokenpo",
+      playerUids,
+      playerNames,
+      status: "playing",
+      winnerUid: "",
+      resultText: "",
+      createdAtMs: nowMs,
+    });
+    transaction.set(queueRef, { uid, status: "matched", matchId, hasPlayed: false, updatedAtMs: nowMs });
+    transaction.update(opponentQueue.ref, { status: "matched", matchId, hasPlayed: false, updatedAtMs: nowMs });
+    response = { status: "matched", matchId };
+  });
+  return response;
+});
+
+exports.cancelJokenpoQueue = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const queueRef = database.collection("jokenpoQueue").doc(uid);
+  let cancelled = false;
+  await database.runTransaction(async (transaction) => {
+    const queueSnapshot = await transaction.get(queueRef);
+    if (!queueSnapshot.exists) return;
+    if (queueSnapshot.get("status") === "matched") {
+      throw new HttpsError("failed-precondition", "A partida já encontrou um adversário.");
+    }
+    transaction.delete(queueRef);
+    cancelled = true;
+  });
+  return { ok: true, cancelled };
+});
+
+exports.submitJokenpoChoice = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const matchId = request.data?.matchId;
+  const choice = request.data?.choice;
+  const requestId = request.data?.requestId;
+  if (typeof matchId !== "string" || !/^[a-f0-9-]{36}$/i.test(matchId)
+      || typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)
+      || !["rock", "paper", "scissors"].includes(choice)) {
+    throw new HttpsError("invalid-argument", "Partida, jogada ou identificador inválido.");
+  }
+
+  const matchRef = database.collection("jokenpoMatches").doc(matchId);
+  const queueRef = database.collection("jokenpoQueue").doc(uid);
+  const movesRef = matchRef.collection("moves");
+  const ownMoveRef = movesRef.doc(uid);
+  const requestRef = database.collection("users").doc(uid).collection("gameRequests").doc(requestId);
+  let response;
+  await database.runTransaction(async (transaction) => {
+    const [previousRequest, matchSnapshot, queueSnapshot, ownMoveSnapshot] = await Promise.all([
+      transaction.get(requestRef),
+      transaction.get(matchRef),
+      transaction.get(queueRef),
+      transaction.get(ownMoveRef),
+    ]);
+    if (previousRequest.exists) {
+      response = previousRequest.get("response");
+      return;
+    }
+    if (!matchSnapshot.exists) throw new HttpsError("not-found", "Partida não encontrada.");
+    const match = matchSnapshot.data();
+    const playerUids = Array.isArray(match.playerUids) ? match.playerUids : [];
+    if (!playerUids.includes(uid)) throw new HttpsError("permission-denied", "Você não participa desta partida.");
+    if (match.status !== "playing") throw new HttpsError("failed-precondition", "A partida já terminou.");
+    if (!queueSnapshot.exists || queueSnapshot.get("matchId") !== matchId) {
+      throw new HttpsError("failed-precondition", "Sua fila de partida não está ativa.");
+    }
+    if (queueSnapshot.get("hasPlayed") === true || ownMoveSnapshot.exists) {
+      throw new HttpsError("already-exists", "Sua jogada já foi enviada.");
+    }
+    const opponentUid = playerUids.find((playerUid) => playerUid !== uid);
+    if (!opponentUid) throw new HttpsError("failed-precondition", "A partida não tem dois jogadores.");
+    const opponentMoveRef = movesRef.doc(opponentUid);
+    const opponentMoveSnapshot = await transaction.get(opponentMoveRef);
+    transaction.create(ownMoveRef, { uid, choice, createdAtMs: Date.now() });
+    transaction.update(queueRef, { hasPlayed: true, updatedAtMs: Date.now() });
+
+    response = { status: "playing", winnerUid: "", resultText: "Aguardando o adversário escolher." };
+    if (opponentMoveSnapshot.exists) {
+      const choices = {
+        [uid]: choice,
+        [opponentUid]: opponentMoveSnapshot.get("choice"),
+      };
+      const orderedChoices = playerUids.map((playerUid) => choices[playerUid]);
+      const result = resolveRockPaperScissors(orderedChoices[0], orderedChoices[1]);
+      const winnerUid = result.outcome === "draw"
+        ? ""
+        : result.winnerChoice === orderedChoices[0] ? playerUids[0] : playerUids[1];
+      const labels = { rock: "Pedra", paper: "Papel", scissors: "Tesoura" };
+      const resultText = result.outcome === "draw"
+        ? `Empate · ${labels[orderedChoices[0]]} contra ${labels[orderedChoices[1]]}`
+        : `${labels[orderedChoices[0]]} contra ${labels[orderedChoices[1]]}`;
+      transaction.update(matchRef, {
+        choices,
+        status: "completed",
+        winnerUid,
+        resultText,
+        updatedAtMs: Date.now(),
+      });
+      response = { status: "completed", winnerUid, resultText };
+    }
+    transaction.create(requestRef, { response, createdAt: FieldValue.serverTimestamp() });
+  });
   return response;
 });
 
@@ -2542,6 +2728,32 @@ exports.equipFrame = onCall(async (request) => {
   return { ok: true, equippedFrame: itemId };
 });
 
+exports.equipTitle = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const itemId = request.data?.itemId || "";
+  if (typeof itemId !== "string" || itemId.length > 64
+      || (itemId && (!itemId.startsWith("title_") || !COSMETICS[itemId]))) {
+    throw new HttpsError("invalid-argument", "Título inválido.");
+  }
+
+  const userRef = database.collection("users").doc(uid);
+  await database.runTransaction(async (transaction) => {
+    const userSnapshot = await transaction.get(userRef);
+    if (!userSnapshot.exists) {
+      throw new HttpsError("failed-precondition", "Perfil ainda não foi criado.");
+    }
+    if (itemId) {
+      const inventory = Array.isArray(userSnapshot.get("inventory")) ? userSnapshot.get("inventory") : [];
+      if (!itemId.startsWith("title_") || !COSMETICS[itemId] || !inventory.includes(itemId)) {
+        throw new HttpsError("failed-precondition", "Você não possui este título.");
+      }
+    }
+    transaction.update(userRef, { equippedTitle: itemId });
+  });
+
+  return { ok: true, equippedTitle: itemId };
+});
+
 exports.equipAvatarItem = onCall(async (request) => {
   const uid = authenticatedUid(request);
   const slot = request.data?.slot;
@@ -2615,6 +2827,7 @@ exports.getPlayerProfile = onCall(async (request) => {
     pixKey: typeof profile.pixKey === "string" ? profile.pixKey : "",
     pixKeyType: typeof profile.pixKeyType === "string" ? profile.pixKeyType : "",
     equippedFrame: typeof profile.equippedFrame === "string" ? profile.equippedFrame : "",
+    equippedTitle: typeof profile.equippedTitle === "string" ? profile.equippedTitle : "",
   };
 });
 
@@ -2811,6 +3024,7 @@ exports.adminUpdateUserInventory = onCall(async (request) => {
     let equippedAvatarItems;
     if (action === "remove") {
       if (userSnapshot.get("equippedFrame") === itemId) userUpdate.equippedFrame = "";
+      if (userSnapshot.get("equippedTitle") === itemId) userUpdate.equippedTitle = "";
       const currentEquipped = Array.isArray(userSnapshot.get("equippedAvatarItems"))
         ? userSnapshot.get("equippedAvatarItems")
         : [];

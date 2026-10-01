@@ -394,6 +394,19 @@ internal fun TelaPerfilJogador(
                 Text(jogador.apelido, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Black)
                 if (jogador.username.isNotBlank()) Text("@${jogador.username}", color = Cores.Turquesa, fontSize = 13.sp)
                 Text("Nível ${perfil?.nivel ?: jogador.nivel}", color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp)
+                perfil?.let { jogadorPerfil ->
+                    Text(
+                        "Moldura · ${catalogoLoja.firstOrNull { it.id == jogadorPerfil.molduraEquipada }?.nome ?: "Padrão"}",
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 12.sp,
+                    )
+                    Text(
+                        "Título · ${catalogoLoja.firstOrNull { it.id == jogadorPerfil.tituloEquipado }?.nome ?: "Nenhum"}",
+                        color = Cores.Verde,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
             }
 
             when {
@@ -448,7 +461,12 @@ internal fun TelaPerfilJogador(
                         }
                     }
                     SecaoJogador("Coleção") {
-                        ItensColecao(perfil.inventario, molduraEquipada = perfil.molduraEquipada)
+                        ItensColecao(
+                            perfil.inventario,
+                            molduraEquipada = perfil.molduraEquipada,
+                            tituloEquipado = perfil.tituloEquipado,
+                            avatarItensEquipados = perfil.avatarItensEquipados,
+                        )
                     }
                     if (onConversar != null) {
                         Button(onClick = onConversar, modifier = Modifier.fillMaxWidth()) { Text("Enviar mensagem") }

@@ -60,8 +60,11 @@ import com.example.zeca.SalaCaboGuerra
 import com.example.zeca.JogadorRanking
 import com.example.zeca.ResultadoCrash
 import com.example.zeca.ResultadoJogo
+import com.example.zeca.PartidaJokenpo
+import com.example.zeca.ResultadoJokenpo
 import com.example.zeca.SessaoCrash
 import com.example.zeca.ui.theme.Cores
+import com.google.firebase.firestore.ListenerRegistration
 import kotlinx.coroutines.delay
 import java.util.Locale
 import java.util.UUID
@@ -121,6 +124,11 @@ fun TelaJogos(
     onApostarEsportiva: (List<PernaApostaEsportiva>, Long, String, (Exception?) -> Unit) -> Unit,
     onLiquidarApostasEsportivas: ((Int?, Exception?) -> Unit) -> Unit,
     onCarregarSalasCaboGuerra: ((List<SalaCaboGuerra>, Exception?) -> Unit) -> Unit,
+    onObservarFilaJokenpo: ((String, String, Boolean) -> Unit) -> ListenerRegistration,
+    onObservarPartidaJokenpo: (String, (PartidaJokenpo?, Exception?) -> Unit) -> ListenerRegistration,
+    onBuscarAdversarioJokenpo: (String, (String, String, Exception?) -> Unit) -> Unit,
+    onCancelarFilaJokenpo: ((Exception?) -> Unit) -> Unit,
+    onJogarJokenpo: (String, String, String, (ResultadoJokenpo?, Exception?) -> Unit) -> Unit,
     onCriarSalaCaboGuerra: (Long, List<String>, String, String, String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
     onEntrarSalaCaboGuerra: (String, String, String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
     onGerenciarSalaCaboGuerra: (String, String, String, String, Long, String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
@@ -284,7 +292,11 @@ fun TelaJogos(
                             if (categoriaJogos != categoria) {
                                 categoriaJogos = categoria
                                 grupoSolo = "Novos"
-                                jogo = if (categoria == "Solo") miniJogosSolo.first().nome else "Cabo de guerra"
+                                jogo = when (categoria) {
+                                    "Solo" -> miniJogosSolo.first().nome
+                                    "1v1" -> "Jokenpô online"
+                                    else -> "Cabo de guerra"
+                                }
                                 mensagem = ""
                                 lucroUltimo = 0L
                                 resultado = "Escolha um jogo para começar"
@@ -321,7 +333,11 @@ fun TelaJogos(
                     }
                 }
             }
-            val jogosVisiveis = if (categoriaJogos == "Solo") jogosSoloPorGrupo[grupoSolo].orEmpty() else listOf("Cabo de guerra")
+            val jogosVisiveis = when (categoriaJogos) {
+                "Solo" -> jogosSoloPorGrupo[grupoSolo].orEmpty()
+                "1v1" -> listOf("Jokenpô online", "Cabo de guerra")
+                else -> listOf("Cabo de guerra")
+            }
             Text(
                 if (categoriaJogos == "Solo") "${jogosVisiveis.size} jogos · $grupoSolo" else "Salas multiplayer · ${categoriaJogos}",
                 color = Color.White.copy(alpha = 0.5f),
@@ -338,7 +354,7 @@ fun TelaJogos(
                 lucroUltimo = 0L
                 resultado = "Escolha um jogo para começar"
             }
-            if (jogo !in listOf("Apostas esportivas", "Cabo de guerra")) {
+            if (jogo !in listOf("Apostas esportivas", "Cabo de guerra", "Jokenpô online")) {
                 OutlinedTextField(
                     value = apostaTexto,
                     onValueChange = { apostaTexto = it; mensagem = "" },
@@ -608,6 +624,14 @@ fun TelaJogos(
                     onCarregarApostas = onCarregarApostasEsportivas,
                     onApostar = onApostarEsportiva,
                     onLiquidar = onLiquidarApostasEsportivas,
+                )
+                "Jokenpô online" -> JogoJokenpoOnline(
+                    uidAtual = uidAtual,
+                    onObservarFila = onObservarFilaJokenpo,
+                    onObservarPartida = onObservarPartidaJokenpo,
+                    onBuscarAdversario = onBuscarAdversarioJokenpo,
+                    onCancelarFila = onCancelarFilaJokenpo,
+                    onJogar = onJogarJokenpo,
                 )
                 "Cabo de guerra" -> TelaCaboGuerra(
                     uidAtual = uidAtual,
@@ -1217,6 +1241,7 @@ private fun simboloJogo(nome: String): String = when (nome) {
     "Número secreto" -> "#"
     "Faixa premiada" -> "⌁"
     "Cabo de guerra" -> "⇄"
+    "Jokenpô online" -> "✂"
     else -> "•"
 }
 
@@ -1235,6 +1260,7 @@ private fun corDestaqueJogo(nome: String): Color = when (nome) {
     "Número secreto" -> Color(0xFFFFD166)
     "Faixa premiada" -> Color(0xFFB6D875)
     "Cabo de guerra" -> Color(0xFFFF987B)
+    "Jokenpô online" -> Color(0xFF43D9C0)
     else -> Cores.Turquesa
 }
 

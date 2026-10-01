@@ -164,6 +164,18 @@ function rockPaperScissorsResult(selection, wagerCents, secureRandomInt = random
   };
 }
 
+function resolveRockPaperScissors(firstChoice, secondChoice) {
+  const choices = ["rock", "paper", "scissors"];
+  if (!choices.includes(firstChoice) || !choices.includes(secondChoice)) {
+    throw new RangeError("Invalid rock-paper-scissors choice.");
+  }
+  if (firstChoice === secondChoice) return { winnerChoice: "", outcome: "draw" };
+  const firstWins = (firstChoice === "rock" && secondChoice === "scissors")
+    || (firstChoice === "paper" && secondChoice === "rock")
+    || (firstChoice === "scissors" && secondChoice === "paper");
+  return { winnerChoice: firstWins ? firstChoice : secondChoice, outcome: "win" };
+}
+
 function higherLowerResult(selection, wagerCents, secureRandomInt = randomInt) {
   if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER) || !["higher", "lower"].includes(selection)) {
     throw new RangeError("Invalid higher-lower wager.");
@@ -400,6 +412,7 @@ module.exports = {
   colorWheelResult,
   diceSumResult,
   rangePickResult,
+  resolveRockPaperScissors,
   rockPaperScissorsResult,
   rouletteResult,
   scratchCardResult,

@@ -19,6 +19,7 @@ const {
   colorWheelResult,
   diceSumResult,
   rangePickResult,
+  resolveRockPaperScissors,
   rockPaperScissorsResult,
   settleBlackjack,
   minesCashoutPayout,
@@ -144,6 +145,14 @@ test("rock-paper-scissors settles wins, draws, and invalid selections", () => {
   assert.equal(rockPaperScissorsResult("rock", 1_000, () => 0).payoutCents, 1_000);
   assert.equal(rockPaperScissorsResult("scissors", 1_000, () => 0).payoutCents, 0);
   assert.throws(() => rockPaperScissorsResult("lizard", 1_000, () => 0), RangeError);
+});
+
+test("online rock-paper-scissors resolves server-submitted choices deterministically", () => {
+  assert.deepEqual(resolveRockPaperScissors("rock", "scissors"), { winnerChoice: "rock", outcome: "win" });
+  assert.deepEqual(resolveRockPaperScissors("paper", "rock"), { winnerChoice: "paper", outcome: "win" });
+  assert.deepEqual(resolveRockPaperScissors("scissors", "paper"), { winnerChoice: "scissors", outcome: "win" });
+  assert.deepEqual(resolveRockPaperScissors("rock", "rock"), { winnerChoice: "", outcome: "draw" });
+  assert.throws(() => resolveRockPaperScissors("lizard", "paper"), RangeError);
 });
 
 test("higher-lower cards push on ties and pay only correct predictions", () => {

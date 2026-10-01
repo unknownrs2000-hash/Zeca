@@ -839,10 +839,12 @@ fun TelaPerfil(
     avatarComoFotoPerfil: Boolean,
     inventario: List<String>,
     molduraEquipada: String,
+    tituloEquipado: String = "",
     onEscolherMoldura: (String, (String?) -> Unit) -> Unit,
     onEnviarFoto: (Uri, (String?, String?) -> Unit) -> Unit,
     onSalvarPerfil: (String, String, String, Boolean, (String?) -> Unit) -> Unit,
     onEquiparItemAvatar: (String, String?, (String?) -> Unit) -> Unit,
+    onEquiparTitulo: (String?, (String?) -> Unit) -> Unit = { _, concluir -> concluir(null) },
     onAbrirLoja: () -> Unit,
     onSair: () -> Unit,
 ) {
@@ -874,12 +876,31 @@ fun TelaPerfil(
 
     TelaBase("Perfil", "Seu espaço no Zeca.") {
         GlassCard {
-            AvatarComMoldura(
-                apelidoEditavel.take(1).uppercase(), molduraEquipada, 92.dp,
-                photoUrl = avatarUrlEditavel,
-                avatarItems = avatarItensEquipados,
-                avatarAsProfilePhoto = avatarComoFotoEditavel,
-            )
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                AvatarComMoldura(
+                    apelidoEditavel.take(1).uppercase(), molduraEquipada, 124.dp,
+                    photoUrl = avatarUrlEditavel,
+                    avatarItems = avatarItensEquipados,
+                    avatarAsProfilePhoto = avatarComoFotoEditavel,
+                )
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text("SUA IDENTIDADE", color = Cores.Verde, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Text(apelidoEditavel, color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Black, maxLines = 2)
+                    Text("@${usernameEditavel}", color = Cores.Turquesa, fontSize = 12.sp)
+                    Text(
+                        "Moldura · ${catalogoLoja.firstOrNull { it.id == molduraEquipada }?.nome ?: "Padrão"}",
+                        color = Color.White.copy(alpha = 0.72f),
+                        fontSize = 11.sp,
+                        maxLines = 2,
+                    )
+                    Text(
+                        "Título · ${catalogoLoja.firstOrNull { it.id == tituloEquipado }?.nome ?: "Nenhum"}",
+                        color = Color.White.copy(alpha = 0.72f),
+                        fontSize = 11.sp,
+                        maxLines = 2,
+                    )
+                }
+            }
             Button(
                 onClick = { seletorFoto.launch("image/*") },
                 enabled = !enviandoFoto,
@@ -948,6 +969,7 @@ fun TelaPerfil(
             ItensColecao(
                 inventario,
                 molduraEquipada = molduraEquipada,
+                tituloEquipado = tituloEquipado,
                 avatarItensEquipados = avatarItensEquipados,
                 onEscolherMoldura = { itemId ->
                     mensagemMoldura = ""
@@ -956,6 +978,12 @@ fun TelaPerfil(
                 onEquiparItemAvatar = { slot, itemId ->
                     mensagemMoldura = ""
                     onEquiparItemAvatar(slot, itemId) { erro -> if (erro != null) mensagemMoldura = erro }
+                },
+                onEquiparTitulo = { itemId ->
+                    mensagemMoldura = ""
+                    onEquiparTitulo(itemId) { erro ->
+                        mensagemMoldura = erro ?: if (itemId == null) "Título removido." else "Título equipado."
+                    }
                 },
             )
             if (mensagemMoldura.isNotBlank()) Text(mensagemMoldura, color = Cores.Laranja, fontSize = 12.sp)
@@ -975,10 +1003,12 @@ fun TelaLoja(
     avatarItensEquipados: List<String>,
     avatarComoFotoPerfil: Boolean,
     molduraEquipada: String,
+    tituloEquipado: String = "",
     onVoltar: () -> Unit,
     onComprar: (String, (String?) -> Unit) -> Unit,
     onEquiparAvatar: (String, String?, (String?) -> Unit) -> Unit,
     onEquiparMoldura: (String, (String?) -> Unit) -> Unit,
+    onEquiparTitulo: (String?, (String?) -> Unit) -> Unit = { _, concluir -> concluir(null) },
 ) {
     val produtos = catalogoLoja
     var categoria by rememberSaveable { mutableStateOf("Avatar") }
@@ -997,7 +1027,7 @@ fun TelaLoja(
                 AvatarComMoldura(
                     apelido.take(1).uppercase(),
                     molduraEquipada,
-                    70.dp,
+                    100.dp,
                     photoUrl = "",
                     avatarItems = avatarItensEquipados,
                     avatarAsProfilePhoto = true,
@@ -1007,6 +1037,8 @@ fun TelaLoja(
                     Text(apelido, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
                     Text("@${username}", color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp)
                     Text("${avatarItensEquipados.size} peças vestidas", color = Cores.Turquesa, fontSize = 11.sp)
+                    Text("Moldura · ${catalogoLoja.firstOrNull { it.id == molduraEquipada }?.nome ?: "Padrão"}", color = Color.White.copy(alpha = 0.72f), fontSize = 10.sp, maxLines = 1)
+                    Text("Título · ${catalogoLoja.firstOrNull { it.id == tituloEquipado }?.nome ?: "Nenhum"}", color = Color.White.copy(alpha = 0.72f), fontSize = 10.sp, maxLines = 1)
                 }
             }
             TextButton(onClick = onVoltar, modifier = Modifier.fillMaxWidth()) {
@@ -1138,6 +1170,33 @@ fun TelaLoja(
                             )
                         }
                     }
+                    if (produto.id.startsWith("title_") && comprado) {
+                        val tituloEmUso = produto.id == tituloEquipado
+                        TextButton(
+                            onClick = {
+                                itemComMensagem = produto.id
+                                mensagem = ""
+                                mensagemErro = false
+                                itemEmUso = produto.id
+                                onEquiparTitulo(if (tituloEmUso) null else produto.id) { erro ->
+                                    itemEmUso = ""
+                                    mensagemErro = erro != null
+                                    mensagem = erro ?: if (tituloEmUso) "Título removido." else "Título equipado."
+                                }
+                            },
+                            enabled = itemEmUso.isBlank() && itemEmCompra.isBlank(),
+                        ) {
+                            Text(
+                                when {
+                                    itemEmUso == produto.id -> "Salvando..."
+                                    tituloEmUso -> "Em uso"
+                                    else -> "Usar"
+                                },
+                                color = if (tituloEmUso) produto.cor else Color.White,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                    }
                     Button(
                         onClick = {
                             itemComMensagem = produto.id
@@ -1215,6 +1274,12 @@ fun TelaLoja(
                     "${avatarItensEquipados.size} peças vestidas",
                     color = Cores.Turquesa,
                     fontSize = 13.sp,
+                )
+                Text(
+                    "${catalogoLoja.firstOrNull { it.id == molduraEquipada }?.nome ?: "Moldura padrão"} · ${catalogoLoja.firstOrNull { it.id == tituloEquipado }?.nome ?: "Sem título"}",
+                    color = Color.White.copy(alpha = 0.72f),
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center,
                 )
                 TextButton(onClick = { mostrarPreviaAvatar = false }) {
                     Text("Fechar", color = Cores.Turquesa)
@@ -1515,9 +1580,11 @@ internal fun AvatarPersonagem(inicial: String, itens: List<String>, tamanho: Dp,
 internal fun ItensColecao(
     ids: List<String>,
     molduraEquipada: String = "",
+    tituloEquipado: String = "",
     onEscolherMoldura: ((String) -> Unit)? = null,
     avatarItensEquipados: List<String> = emptyList(),
     onEquiparItemAvatar: ((String, String?) -> Unit)? = null,
+    onEquiparTitulo: ((String?) -> Unit)? = null,
 ) {
     val itens = ids.mapNotNull { id -> catalogoLoja.firstOrNull { it.id == id } }
     var categoriasAbertas by rememberSaveable { mutableStateOf(listOf("Avatar")) }
@@ -1550,6 +1617,7 @@ internal fun ItensColecao(
                 val ehMoldura = item.id.startsWith("frame_")
                 val ehItemAvatar = item.avatarSlot.isNotBlank()
                 val emUso = ehMoldura && item.id == molduraEquipada
+                val tituloEmUso = item.id.startsWith("title_") && item.id == tituloEquipado
                 val avatarEmUso = ehItemAvatar && item.id in avatarItensEquipados
                 Row(
                     modifier = Modifier
@@ -1599,6 +1667,24 @@ internal fun ItensColecao(
                         }
                     } else if (avatarEmUso) {
                         Text("Vestindo", color = item.cor, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                    if (item.id.startsWith("title_") && onEquiparTitulo != null) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (tituloEmUso) Color.White.copy(alpha = 0.16f) else Color.White)
+                                .clickable { onEquiparTitulo(if (tituloEmUso) null else item.id) }
+                                .padding(horizontal = 12.dp, vertical = 7.dp),
+                        ) {
+                            Text(
+                                if (tituloEmUso) "Em uso" else "Usar",
+                                color = if (tituloEmUso) Color.White else Color(0xFF111418),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                    } else if (tituloEmUso) {
+                        Text("Em uso", color = item.cor, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                 }
                 }

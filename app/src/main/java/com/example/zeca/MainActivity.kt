@@ -465,6 +465,13 @@ fun CassinoApp(
                                 FirebaseRepository.liquidarApostasEsportivas(concluir)
                             },
                             onCarregarSalasCaboGuerra = { concluir -> FirebaseRepository.listarSalasCaboGuerra(concluir) },
+                            onObservarFilaJokenpo = { callback -> FirebaseRepository.observarFilaJokenpo(callback) },
+                            onObservarPartidaJokenpo = { matchId, callback -> FirebaseRepository.observarPartidaJokenpo(matchId, callback) },
+                            onBuscarAdversarioJokenpo = { requestId, concluir -> FirebaseRepository.buscarAdversarioJokenpo(requestId, concluir) },
+                            onCancelarFilaJokenpo = { concluir -> FirebaseRepository.cancelarFilaJokenpo(concluir) },
+                            onJogarJokenpo = { matchId, escolha, requestId, concluir ->
+                                FirebaseRepository.jogarJokenpo(matchId, escolha, requestId, concluir)
+                            },
                             onCriarSalaCaboGuerra = { aposta, convites, senha, modo, requestId, concluir ->
                                 FirebaseRepository.criarSalaCaboGuerra(aposta, convites, senha, modo, requestId, concluir)
                             },
@@ -666,6 +673,7 @@ fun CassinoApp(
                                 avatarItensEquipados = jogador.avatarItensEquipados,
                                 avatarComoFotoPerfil = jogador.avatarComoFotoPerfil,
                                 molduraEquipada = jogador.molduraEquipada,
+                                tituloEquipado = jogador.tituloEquipado,
                                 onVoltar = { mostrarLoja = false },
                                 onComprar = { itemId, concluir ->
                                     FirebaseRepository.comprarCosmetico(itemId, concluir)
@@ -675,6 +683,9 @@ fun CassinoApp(
                                 },
                                 onEquiparMoldura = { itemId, concluir ->
                                     FirebaseRepository.equiparMoldura(itemId) { error -> concluir(error?.localizedMessage) }
+                                },
+                                onEquiparTitulo = { itemId, concluir ->
+                                    FirebaseRepository.equiparTitulo(itemId) { error -> concluir(error?.localizedMessage) }
                                 },
                             )
                         } else {
@@ -691,6 +702,7 @@ fun CassinoApp(
                                 avatarComoFotoPerfil = jogador.avatarComoFotoPerfil,
                                 inventario = jogador.inventario,
                                 molduraEquipada = jogador.molduraEquipada,
+                                tituloEquipado = jogador.tituloEquipado,
                                 onEscolherMoldura = { itemId, concluir ->
                                     FirebaseRepository.equiparMoldura(itemId) { error -> concluir(error?.localizedMessage) }
                                 },
@@ -704,6 +716,9 @@ fun CassinoApp(
                                 },
                                 onEquiparItemAvatar = { slot, itemId, concluir ->
                                     FirebaseRepository.equiparItemAvatar(slot, itemId) { error -> concluir(error?.localizedMessage) }
+                                },
+                                onEquiparTitulo = { itemId, concluir ->
+                                    FirebaseRepository.equiparTitulo(itemId) { error -> concluir(error?.localizedMessage) }
                                 },
                                 onAbrirLoja = { mostrarLoja = true },
                                 onSair = { FirebaseRepository.sair() },

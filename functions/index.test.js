@@ -9,17 +9,21 @@ const {
   adminUpdateGameSettings,
   adminUpdateUserInventory,
   createTugRoom,
+  cancelJokenpoQueue,
   dissolveChatGroup,
+  equipTitle,
   joinTugRoom,
   listFootballMatches,
   listTugRooms,
   manageTugRoom,
+  queueJokenpoMatch,
   placeSportsBet,
   pullTugRope,
   settleMySportsBets,
   sendChatMessage,
   signChatAudioUpload,
   startMines,
+  submitJokenpoChoice,
 } = require("./index");
 
 test("admin callables reject unauthenticated and non-admin requests", async () => {
@@ -61,6 +65,25 @@ test("Mines rejects invalid mine counts before starting a transaction", async ()
   );
 });
 
+test("Jokenpô matchmaking validates request IDs and choices before Firestore access", async () => {
+  const player = { auth: { uid: "player", token: {} }, data: {} };
+  await assert.rejects(
+    queueJokenpoMatch(player),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    submitJokenpoChoice({
+      ...player,
+      data: {
+        matchId: "123e4567-e89b-42d3-a456-426614174000",
+        choice: "lizard",
+        requestId: "123e4567-e89b-42d3-a456-426614174001",
+      },
+    }),
+    (error) => error.code === "invalid-argument",
+  );
+});
+
 test("audio upload signing and chat sending require authentication", async () => {
   await assert.rejects(
     signChatAudioUpload({ auth: null, data: {} }),
@@ -71,7 +94,6 @@ test("audio upload signing and chat sending require authentication", async () =>
     (error) => error.code === "unauthenticated",
   );
 });
-
 test("chat audio rejects untrusted URLs before accessing Firestore", async () => {
   await assert.rejects(
     sendChatMessage({
@@ -109,6 +131,9 @@ test("new multiplayer and sports callables reject unauthenticated requests", asy
   const unauthenticated = { auth: null, data: {} };
   for (const callable of [
     createTugRoom,
+    queueJokenpoMatch,
+    cancelJokenpoQueue,
+    submitJokenpoChoice,
     dissolveChatGroup,
     joinTugRoom,
     listFootballMatches,
@@ -166,4 +191,14 @@ test("tug rooms and sports bets reject invalid stakes and duplicate or unknown s
     listFootballMatches({ auth: { uid, token: {} }, data: { date: "not-a-date" } }),
     (error) => error.code === "invalid-argument",
   );
+});
+
+test("title equipping requires authentication and rejects non-title catalog items before Firestore", async () => {
+  await assert.rejects(equipTitle({ auth: null, data: { itemId: "title_lucky" } }), (error) => error.code === "unauthenticated");
+  for (const itemId of ["frame_aurora", "unknown_title"]) {
+    await assert.rejects(
+      equipTitle({ auth: { uid: "player", token: {} }, data: { itemId } }),
+      (error) => error.code === "invalid-argument",
+    );
+  }
 });
