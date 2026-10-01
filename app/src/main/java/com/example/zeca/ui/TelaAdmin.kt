@@ -90,6 +90,7 @@ private val itensInventarioAdmin = listOf(
 @Composable
 fun TelaAdmin(
     onCarregarUsuarios: (String, (List<UsuarioAdmin>, String, Exception?) -> Unit) -> Unit,
+    onCarregarAvatarPublico: (String, (UsuarioAdmin?) -> Unit) -> Unit,
     onCarregarDetalhes: (String, (DetalhesAdmin?, Exception?) -> Unit) -> Unit,
     onCarregarConfiguracao: ((ConfiguracaoMinas?, Exception?) -> Unit) -> Unit,
     onAtualizarConfiguracao: (ConfiguracaoMinas, String, String, (Exception?) -> Unit) -> Unit,
@@ -122,6 +123,7 @@ fun TelaAdmin(
     var requestIdExclusao by rememberSaveable { mutableStateOf("") }
     var extratoExpandido by remember(selecionado?.uid) { mutableStateOf(false) }
     var extratoOculto by remember(selecionado?.uid) { mutableStateOf(false) }
+    val avataresConsultados = remember { mutableSetOf<String>() }
     val valorAjusteCentavos = parseSaldoAdmin(valorAjuste)
     val contexto = LocalContext.current
 
@@ -141,6 +143,32 @@ fun TelaAdmin(
                 maximoMinasTexto = settings.maximoMinas.toString()
             } else if (error != null) {
                 mensagem = error.localizedMessage.orEmpty()
+            }
+        }
+    }
+
+    LaunchedEffect(usuarios.map { it.uid }) {
+        usuarios.forEach { user ->
+            val semAvatar = user.avatarUrl.isBlank()
+                && user.avatarItensEquipados.isEmpty()
+                && !user.avatarComoFotoPerfil
+            if (semAvatar && avataresConsultados.add(user.uid)) {
+                onCarregarAvatarPublico(user.uid) { visual ->
+                    if (visual != null) {
+                        fun combinarAvatar(atual: UsuarioAdmin) = atual.copy(
+                            username = atual.username.ifBlank { visual.username },
+                            avatarUrl = visual.avatarUrl,
+                            avatarComoFotoPerfil = visual.avatarComoFotoPerfil,
+                            avatarItensEquipados = visual.avatarItensEquipados,
+                        )
+                        usuarios = usuarios.map { atual ->
+                            if (atual.uid == user.uid) combinarAvatar(atual) else atual
+                        }
+                        selecionado = selecionado?.takeIf { it.uid == user.uid }?.let(::combinarAvatar) ?: selecionado
+                        detalhes = detalhes?.takeIf { it.usuario.uid == user.uid }
+                            ?.let { it.copy(usuario = combinarAvatar(it.usuario)) } ?: detalhes
+                    }
+                }
             }
         }
     }
@@ -287,8 +315,20 @@ fun TelaAdmin(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    AvatarComMoldura(
+                        inicial = user.nome.trim().take(1).uppercase(),
+                        moldura = user.molduraEquipada,
+                        tamanho = 48.dp,
+                        photoUrl = user.avatarUrl,
+                        avatarItems = user.avatarItensEquipados,
+                        avatarAsProfilePhoto = user.avatarComoFotoPerfil,
+                    )
+                    Spacer(Modifier.padding(horizontal = 4.dp))
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(user.nome, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                        if (user.username.isNotBlank()) {
+                            Text("@${user.username}", color = Cores.Turquesa, fontSize = 11.sp)
+                        }
                         Text(user.email, color = Color.White.copy(alpha = 0.62f), fontSize = 11.sp)
                     }
                     IconButton(onClick = {
@@ -499,8 +539,34 @@ fun TelaAdmin(
                     .padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {
-                Text("${user.nome}${if (user.bloqueado) " · bloqueada" else ""}", color = Color.White, fontWeight = FontWeight.Bold)
-                Text("${user.email} · ${formatarSaldoAdmin(user.saldoCentavos)}", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                ) {
+                    AvatarComMoldura(
+                        inicial = user.nome.trim().take(1).uppercase(),
+                        moldura = user.molduraEquipada,
+                        tamanho = 42.dp,
+                        photoUrl = user.avatarUrl,
+                        avatarItems = user.avatarItensEquipados,
+                        avatarAsProfilePhoto = user.avatarComoFotoPerfil,
+                    )
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            "${user.nome}${if (user.bloqueado) " · bloqueada" else ""}",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                        )
+                        Text(
+                            if (user.username.isNotBlank()) "@${user.username}" else user.email,
+                            color = if (user.username.isNotBlank()) Cores.Turquesa else Color.White.copy(alpha = 0.7f),
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                        )
+                        Text(formatarSaldoAdmin(user.saldoCentavos), color = Color.White.copy(alpha = 0.58f), fontSize = 10.sp)
+                    }
+                }
                 Text(user.uid, color = Color.White.copy(alpha = 0.44f), fontSize = 9.sp)
             }
         }

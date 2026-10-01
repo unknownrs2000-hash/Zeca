@@ -214,6 +214,10 @@ data class UsuarioAdmin(
     val email: String,
     val saldoCentavos: Long,
     val bloqueado: Boolean,
+    val avatarUrl: String = "",
+    val avatarComoFotoPerfil: Boolean = false,
+    val avatarItensEquipados: List<String> = emptyList(),
+    val molduraEquipada: String = "",
 )
 
 data class MovimentoAdmin(
@@ -1248,10 +1252,39 @@ object FirebaseRepository {
                     email = user["email"] as? String ?: "",
                     saldoCentavos = (user["balanceCents"] as? Number)?.toLong() ?: 0L,
                     bloqueado = user["isBlocked"] as? Boolean ?: false,
+                    avatarUrl = user["avatarUrl"] as? String ?: "",
+                    avatarComoFotoPerfil = user["avatarAsProfilePhoto"] as? Boolean ?: false,
+                    avatarItensEquipados = (user["equippedAvatarItems"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
+                    molduraEquipada = user["equippedFrame"] as? String ?: "",
                 )
             }.orEmpty()
             callback(users, data?.get("nextCursor") as? String ?: "", error)
         }
+    }
+
+    fun buscarResumoVisualLeaderboard(uid: String, callback: (UsuarioAdmin?) -> Unit) {
+        database.collection("leaderboard").document(uid).get()
+            .addOnSuccessListener { snapshot ->
+                if (!snapshot.exists()) {
+                    callback(null)
+                    return@addOnSuccessListener
+                }
+                callback(
+                    UsuarioAdmin(
+                        uid = uid,
+                        nome = snapshot.getString("displayName") ?: "Jogador",
+                        username = snapshot.getString("username") ?: "",
+                        email = "",
+                        saldoCentavos = snapshot.getLong("balanceCents") ?: 0L,
+                        bloqueado = false,
+                        avatarUrl = snapshot.getString("avatarUrl") ?: "",
+                        avatarComoFotoPerfil = snapshot.getBoolean("avatarAsProfilePhoto") == true,
+                        avatarItensEquipados = (snapshot.get("equippedAvatarItems") as? List<*>)
+                            ?.filterIsInstance<String>().orEmpty(),
+                    ),
+                )
+            }
+            .addOnFailureListener { callback(null) }
     }
 
     fun carregarDetalhesAdmin(uid: String, callback: (DetalhesAdmin?, Exception?) -> Unit) {
@@ -1265,6 +1298,10 @@ object FirebaseRepository {
                     email = user["email"] as? String ?: "",
                     saldoCentavos = (user["balanceCents"] as? Number)?.toLong() ?: 0L,
                     bloqueado = user["isBlocked"] as? Boolean ?: false,
+                    avatarUrl = user["avatarUrl"] as? String ?: "",
+                    avatarComoFotoPerfil = user["avatarAsProfilePhoto"] as? Boolean ?: false,
+                    avatarItensEquipados = (user["equippedAvatarItems"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
+                    molduraEquipada = user["equippedFrame"] as? String ?: "",
                 )
                 val transactions = (data["transactions"] as? List<*>)?.mapNotNull { raw ->
                     val transaction = raw as? Map<*, *> ?: return@mapNotNull null

@@ -628,6 +628,9 @@ fun CassinoApp(
                                 onCarregarUsuarios = { cursor, concluir ->
                                     FirebaseRepository.listarUsuariosAdmin(cursor, concluir)
                                 },
+                                onCarregarAvatarPublico = { uid, concluir ->
+                                    FirebaseRepository.buscarResumoVisualLeaderboard(uid, concluir)
+                                },
                                 onCarregarDetalhes = { uid, concluir ->
                                     FirebaseRepository.carregarDetalhesAdmin(uid, concluir)
                                 },
