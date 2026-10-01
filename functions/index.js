@@ -103,6 +103,34 @@ async function deleteMatchingDocuments(query) {
   }
 }
 
+async function deleteUserTransfers(targetUid) {
+  const transfers = database.collection("transfers");
+  const [sent, received] = await Promise.all([
+    transfers.where("senderUid", "==", targetUid).get(),
+    transfers.where("recipientUid", "==", targetUid).get(),
+  ]);
+  const transferDocuments = [...new Map(
+    [...sent.docs, ...received.docs].map((document) => [document.id, document]),
+  ).values()];
+
+  for (let offset = 0; offset < transferDocuments.length; offset += 150) {
+    const batch = database.batch();
+    for (const transferDocument of transferDocuments.slice(offset, offset + 150)) {
+      const transfer = transferDocument.data();
+      batch.delete(
+        database.collection("users").doc(transfer.senderUid)
+          .collection("transactions").doc(transferDocument.id),
+      );
+      batch.delete(
+        database.collection("users").doc(transfer.recipientUid)
+          .collection("transactions").doc(transferDocument.id),
+      );
+      batch.delete(transferDocument.ref);
+    }
+    await batch.commit();
+  }
+}
+
 function timestampMillis(value) {
   return value && typeof value.toMillis === "function" ? value.toMillis() : null;
 }
@@ -2980,13 +3008,13 @@ exports.adminDeleteUser = onCall(async (request) => {
       update.streakParticipantsToday = chat.streakParticipantsToday.filter((participantUid) => participantUid !== targetUid);
     }
     await chatDocument.ref.update(update);
+    await deleteMatchingDocuments(
+      chatDocument.ref.collection("messages").where("senderUid", "==", targetUid),
+    );
   }
 
+  await deleteUserTransfers(targetUid);
   await Promise.all([
-    deleteMatchingDocuments(database.collectionGroup("messages").where("senderUid", "==", targetUid)),
-    deleteMatchingDocuments(database.collectionGroup("transactions").where("counterpartyUid", "==", targetUid)),
-    deleteMatchingDocuments(database.collection("transfers").where("senderUid", "==", targetUid)),
-    deleteMatchingDocuments(database.collection("transfers").where("recipientUid", "==", targetUid)),
     deleteMatchingDocuments(database.collection("usernames").where("uid", "==", targetUid)),
     deleteMatchingDocuments(database.collection("pixKeys").where("uid", "==", targetUid)),
   ]);
