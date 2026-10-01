@@ -217,10 +217,11 @@ async function footballDataGet(endpoint, params = {}) {
   if (response.status === 429) {
     throw new HttpsError("resource-exhausted", "Limite de consultas do football-data.org atingido. Tente novamente mais tarde.");
   }
+  const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new HttpsError("failed-precondition", `football-data.org respondeu com erro ${response.status}.`);
+    const detail = typeof payload?.message === "string" ? `: ${payload.message.slice(0, 180)}` : ".";
+    throw new HttpsError("failed-precondition", `football-data.org respondeu com erro ${response.status}${detail}`);
   }
-  const payload = await response.json();
   if (payload.errorCode || payload.message) {
     throw new HttpsError("failed-precondition", "football-data.org recusou a consulta. Verifique token, competições autorizadas e cota.");
   }
@@ -706,7 +707,7 @@ exports.listFootballMatches = onCall(async (request) => {
   }
   const [fixturesPayload, historyPayload] = await Promise.all([
     footballDataGet("matches", { dateFrom: date, dateTo: date }),
-    footballDataGet("matches", { dateFrom: dateUtcOffset(date, -120), dateTo: date, limit: 500 }),
+    footballDataGet("matches", { dateFrom: dateUtcOffset(date, -9), dateTo: date }),
   ]);
   const history = parseFootballDataMatches(historyPayload);
   const fixtures = parseFootballDataMatches(fixturesPayload)
@@ -784,7 +785,7 @@ exports.placeSportsBet = onCall(async (request) => {
   const date = new Date().toISOString().slice(0, 10);
   const [fixturesPayload, historyPayload] = await Promise.all([
     footballDataGet("matches", { dateFrom: date, dateTo: date }),
-    footballDataGet("matches", { dateFrom: dateUtcOffset(date, -120), dateTo: date, limit: 500 }),
+    footballDataGet("matches", { dateFrom: dateUtcOffset(date, -9), dateTo: date }),
   ]);
   const fixtures = parseFootballDataMatches(fixturesPayload);
   const history = parseFootballDataMatches(historyPayload);
@@ -896,8 +897,10 @@ exports.settleMySportsBets = onCall(async (request) => {
   const playedLegs = allLegs.filter((leg) => Number.isFinite(leg.kickoffMs) && leg.kickoffMs <= Date.now());
   if (playedLegs.length === 0) return { settledCount };
   const dateTo = new Date().toISOString().slice(0, 10);
-  const dateFrom = new Date(Math.min(...playedLegs.map((leg) => leg.kickoffMs))).toISOString().slice(0, 10);
-  const fixturesPayload = await footballDataGet("matches", { dateFrom, dateTo, limit: 500 });
+  const earliestKickoffMs = Math.min(...playedLegs.map((leg) => leg.kickoffMs));
+  const earliestAllowedMs = Date.parse(`${dateTo}T00:00:00Z`) - 9 * 86_400_000;
+  const dateFrom = new Date(Math.max(earliestKickoffMs, earliestAllowedMs)).toISOString().slice(0, 10);
+  const fixturesPayload = await footballDataGet("matches", { dateFrom, dateTo });
   const fixtures = parseFootballDataMatches(fixturesPayload);
   const normalizeTeam = (name) => String(name || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .toLowerCase().replace(/[^a-z0-9]/g, "");
