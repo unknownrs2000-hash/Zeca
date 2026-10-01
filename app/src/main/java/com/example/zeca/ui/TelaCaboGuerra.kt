@@ -61,6 +61,7 @@ import java.util.UUID
 @Composable
 fun TelaCaboGuerra(
     uidAtual: String,
+    modoInicial: String,
     saldoCentavos: Long,
     jogadores: List<JogadorRanking>,
     roomInviteId: String,
@@ -77,7 +78,7 @@ fun TelaCaboGuerra(
     var stakeTexto by rememberSaveable { mutableStateOf("10,00") }
     var senhaSala by rememberSaveable { mutableStateOf("") }
     var senhaEntrada by rememberSaveable { mutableStateOf("") }
-    var modoSala by rememberSaveable { mutableStateOf("1v1") }
+    var modoSala by rememberSaveable { mutableStateOf(modoInicial) }
     var salaParaEntrar by remember { mutableStateOf<SalaCaboGuerra?>(null) }
     var carregando by remember { mutableStateOf(false) }
     var erro by remember { mutableStateOf("") }
@@ -90,6 +91,10 @@ fun TelaCaboGuerra(
     val jogadoresDisponiveis = jogadores.filter { it.uid != uidAtual }
     val haptic = LocalHapticFeedback.current
     val contexto = LocalContext.current
+
+    LaunchedEffect(modoInicial) {
+        modoSala = if (modoInicial == "2v2") "2v2" else "1v1"
+    }
 
     fun atualizarSalas() {
         onCarregarSalas { rooms, error ->

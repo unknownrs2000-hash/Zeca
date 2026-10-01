@@ -15,8 +15,16 @@ const {
   createMinefield,
   diceGuessResult,
   footballShotResult,
+  higherLowerResult,
   isBlackjack,
+  luckyDoorsResult,
+  luckyNumberResult,
   minesCashoutPayout,
+  cardPairResult,
+  colorWheelResult,
+  diceSumResult,
+  rangePickResult,
+  rockPaperScissorsResult,
   parityDiceResult,
   rouletteResult,
   scratchCardResult,
@@ -67,15 +75,23 @@ const COSMETICS = {
   title_donizete: { name: "Título: Donizete", priceCents: 1_000_000 },
   title_erasmo: { name: "Título: Erasmo", priceCents: 1_500_000 },
   title_milena: { name: "Título: Milena", priceCents: 1_100_000 },
-    avatar_hair_wave: { name: "Cabelo Ondulado", priceCents: 999, slot: "hair" },
-    avatar_hair_curls: { name: "Cachos", priceCents: 1_299, slot: "hair" },
-    avatar_hair_silver: { name: "Cor Prateada", priceCents: 899, slot: "hairColor" },
-    avatar_skin_sun: { name: "Tom Solar", priceCents: 699, slot: "skin" },
-    avatar_skin_cocoa: { name: "Tom Cacau", priceCents: 699, slot: "skin" },
-    avatar_top_hoodie: { name: "Moletom Neon", priceCents: 1_299, slot: "outfit" },
-    avatar_top_jacket: { name: "Jaqueta Aurora", priceCents: 1_499, slot: "outfit" },
-    avatar_glasses_round: { name: "Óculos Redondos", priceCents: 799, slot: "accessory" },
-    avatar_crown_neon: { name: "Coroa Neon", priceCents: 1_999, slot: "accessory" },
+  avatar_hair_wave: { name: "Cabelo Ondulado", priceCents: 999, slot: "hair" },
+  avatar_hair_curls: { name: "Cachos", priceCents: 1_299, slot: "hair" },
+  avatar_hair_silver: { name: "Cor Prateada", priceCents: 899, slot: "hairColor" },
+  avatar_skin_sun: { name: "Tom Solar", priceCents: 699, slot: "skin" },
+  avatar_skin_cocoa: { name: "Tom Cacau", priceCents: 699, slot: "skin" },
+  avatar_top_hoodie: { name: "Moletom Neon", priceCents: 1_299, slot: "outfit" },
+  avatar_top_jacket: { name: "Jaqueta Aurora", priceCents: 1_499, slot: "outfit" },
+  avatar_glasses_round: { name: "Óculos Redondos", priceCents: 799, slot: "accessory" },
+  avatar_crown_neon: { name: "Coroa Neon", priceCents: 1_999, slot: "accessory" },
+  avatar_hair_afro: { name: "Afro Lunar", priceCents: 1_599, slot: "hair" },
+  avatar_hair_blue: { name: "Tinta Azul", priceCents: 1_099, slot: "hairColor" },
+  avatar_skin_olive: { name: "Tom Oliva", priceCents: 799, slot: "skin" },
+  avatar_top_sport: { name: "Jaqueta Esportiva", priceCents: 1_599, slot: "outfit" },
+  avatar_top_space: { name: "Traje Estelar", priceCents: 1_899, slot: "outfit" },
+  avatar_glasses_square: { name: "Óculos Quadrados", priceCents: 899, slot: "accessory" },
+  avatar_earrings_star: { name: "Brincos Estrela", priceCents: 799, slot: "earrings" },
+  avatar_cap_mint: { name: "Boné Menta", priceCents: 1_099, slot: "headwear" },
 };
 
 function authenticatedUid(request) {
@@ -595,7 +611,10 @@ exports.playGame = onCall(async (request) => {
   if (!validateWager(amountCents, MAX_TRANSFER_CENTS)) {
     throw new HttpsError("invalid-argument", "Valor da aposta inválido.");
   }
-  if (!new Set(["slots", "roulette", "coin", "dice", "parity", "scratch", "football"]).has(game)
+  if (!new Set([
+    "slots", "roulette", "coin", "dice", "parity", "scratch", "football",
+    "rps", "higherLower", "luckyNumber", "luckyDoors", "diceSum", "cardPair", "colorWheel", "rangePick",
+  ]).has(game)
       || typeof requestId !== "string"
       || !/^[a-f0-9-]{36}$/i.test(requestId)) {
     throw new HttpsError("invalid-argument", "Jogo ou identificador inválido.");
@@ -651,6 +670,14 @@ exports.playGame = onCall(async (request) => {
         else if (game === "dice") result = diceGuessResult(request.data?.selection, amountCents);
         else if (game === "parity") result = parityDiceResult(request.data?.selection, amountCents);
         else if (game === "football") result = footballShotResult(request.data?.selection, amountCents);
+        else if (game === "rps") result = rockPaperScissorsResult(request.data?.selection, amountCents);
+        else if (game === "higherLower") result = higherLowerResult(request.data?.selection, amountCents);
+        else if (game === "luckyNumber") result = luckyNumberResult(request.data?.selection, amountCents);
+        else if (game === "luckyDoors") result = luckyDoorsResult(request.data?.selection, amountCents);
+        else if (game === "diceSum") result = diceSumResult(request.data?.selection, amountCents);
+        else if (game === "cardPair") result = cardPairResult(request.data?.selection, amountCents);
+        else if (game === "colorWheel") result = colorWheelResult(request.data?.selection, amountCents);
+        else if (game === "rangePick") result = rangePickResult(request.data?.selection, amountCents);
         else result = scratchCardResult(amountCents);
         returnedCents = result.payoutCents;
       } catch {
@@ -677,6 +704,14 @@ exports.playGame = onCall(async (request) => {
       parity: "Par ou ímpar",
       scratch: "Raspadinha",
       football: "Futebol",
+      rps: "Pedra, papel e tesoura",
+      higherLower: "Maior ou menor",
+      luckyNumber: "Número secreto",
+      luckyDoors: "Portas da sorte",
+      diceSum: "Soma dos dados",
+      cardPair: "Duas cartas",
+      colorWheel: "Roda colorida",
+      rangePick: "Faixa premiada",
     };
     const description = game === "slots"
       ? `Slots · ${result.reels.join(" ")}`

@@ -77,7 +77,7 @@ test("daily and weekly missions progress on settled games and reward once", () =
     profile = { ...profile, ...progress.profileFields };
   }
   const dailyCompletion = advanceMissionProgress(profile, start);
-  assert.equal(dailyCompletion.totalRewardCents, 1_000);
+  assert.equal(dailyCompletion.totalRewardCents, 4_000);
   assert.equal(dailyCompletion.progress.daily.completed, true);
   profile = { ...profile, ...dailyCompletion.profileFields };
   assert.equal(advanceMissionProgress(profile, start).totalRewardCents, 0);
@@ -87,13 +87,13 @@ test("daily and weekly missions progress on settled games and reward once", () =
     profile = { ...profile, ...progress.profileFields };
   }
   const weeklyCompletion = advanceMissionProgress(profile, start);
-  assert.equal(weeklyCompletion.totalRewardCents, 5_000);
+  assert.equal(weeklyCompletion.totalRewardCents, 20_000);
   assert.equal(weeklyCompletion.progress.weekly.completed, true);
   assert.deepEqual(getMissionProgress(profile, start + 7 * 24 * 60 * 60 * 1_000).daily, {
     period: "2026-10-07",
     progress: 0,
     target: 5,
-    rewardCents: 1_000,
+    rewardCents: 4_000,
     completed: false,
   });
 });
@@ -102,9 +102,9 @@ test("sports daily mission rewards one settled multiple per UTC day", () => {
   const now = Date.UTC(2026, 8, 30, 12);
   const first = advanceSportsMissionProgress({}, now);
   assert.equal(first.progress.completed, true);
-  assert.equal(first.totalRewardCents, 2_000);
+  assert.equal(first.totalRewardCents, 8_000);
   const profile = { ...first.profileFields };
   const repeated = advanceSportsMissionProgress(profile, now);
   assert.equal(repeated.totalRewardCents, 0);
-  assert.equal(advanceSportsMissionProgress(profile, now + 86_400_000).totalRewardCents, 2_000);
+  assert.equal(advanceSportsMissionProgress(profile, now + 86_400_000).totalRewardCents, 8_000);
 });

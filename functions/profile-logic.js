@@ -31,10 +31,10 @@ function levelProgress(gamesPlayed) {
 }
 
 const DAILY_MISSION_TARGET = 5;
-const DAILY_MISSION_REWARD_CENTS = 1_000;
-const DAILY_SPORTS_MISSION_REWARD_CENTS = 2_000;
+const DAILY_MISSION_REWARD_CENTS = 4_000;
+const DAILY_SPORTS_MISSION_REWARD_CENTS = 8_000;
 const WEEKLY_MISSION_TARGET = 25;
-const WEEKLY_MISSION_REWARD_CENTS = 5_000;
+const WEEKLY_MISSION_REWARD_CENTS = 20_000;
 
 function isoWeekKey(date) {
   const thursday = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));

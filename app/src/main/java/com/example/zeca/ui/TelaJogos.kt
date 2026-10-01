@@ -67,6 +67,43 @@ import java.util.Locale
 import java.util.UUID
 import kotlin.math.exp
 
+private data class EscolhaMiniJogo(val rotulo: String, val valor: String)
+
+private data class MiniJogoSolo(
+    val nome: String,
+    val id: String,
+    val regras: String,
+    val opcoes: List<EscolhaMiniJogo>,
+)
+
+private val miniJogosSolo = listOf(
+    MiniJogoSolo("Pedra, papel e tesoura", "rps", "Vença a mão do servidor; empate devolve a aposta. Vitória paga 1,85x.", listOf(
+        EscolhaMiniJogo("Pedra", "rock"), EscolhaMiniJogo("Papel", "paper"), EscolhaMiniJogo("Tesoura", "scissors"),
+    )),
+    MiniJogoSolo("Maior ou menor", "higherLower", "Adivinhe se a segunda carta será maior ou menor. Empate devolve a aposta; acerto paga 1,90x.", listOf(
+        EscolhaMiniJogo("Maior", "higher"), EscolhaMiniJogo("Menor", "lower"),
+    )),
+    MiniJogoSolo("Número secreto", "luckyNumber", "Escolha um número de 0 a 9. Acerto paga 9,50x.", (0..9).map { EscolhaMiniJogo(it.toString(), it.toString()) }),
+    MiniJogoSolo("Portas da sorte", "luckyDoors", "Uma das quatro portas esconde o prêmio. Acerto paga 3,80x.", (1..4).map { EscolhaMiniJogo("Porta $it", it.toString()) }),
+    MiniJogoSolo("Soma dos dados", "diceSum", "Escolha 2–6 ou 8–12. Se sair 7, a aposta volta; acerto paga 1,88x.", listOf(
+        EscolhaMiniJogo("2–6", "low"), EscolhaMiniJogo("8–12", "high"),
+    )),
+    MiniJogoSolo("Duas cartas", "cardPair", "Preveja se duas cartas serão iguais. Par paga 12,35x; diferentes pagam 1,02x.", listOf(
+        EscolhaMiniJogo("Par", "match"), EscolhaMiniJogo("Diferentes", "different"),
+    )),
+    MiniJogoSolo("Roda colorida", "colorWheel", "Vermelho e preto pagam 2,11x; dourado paga 9,50x.", listOf(
+        EscolhaMiniJogo("Vermelho", "red"), EscolhaMiniJogo("Preto", "black"), EscolhaMiniJogo("Dourado", "gold"),
+    )),
+    MiniJogoSolo("Faixa premiada", "rangePick", "Escolha 0–3, 4–5 ou 6–9. As faixas externas pagam 2,38x; centro paga 4,75x.", listOf(
+        EscolhaMiniJogo("Baixa · 0–3", "low"), EscolhaMiniJogo("Central · 4–5", "middle"), EscolhaMiniJogo("Alta · 6–9", "high"),
+    )),
+)
+
+private val jogosSolo = listOf(
+    "Slots", "Roleta", "Crash", "Blackjack", "Cara ou coroa", "Dado", "Par ou ímpar", "Minas",
+    "Raspadinha", "Futebol", "Apostas esportivas",
+) + miniJogosSolo.map { it.nome }
+
 @Composable
 fun TelaJogos(
     saldoCentavos: Long,
@@ -97,6 +134,8 @@ fun TelaJogos(
     onAcaoBlackjack: (String, String, String, (EstadoBlackjack?, Exception?) -> Unit) -> Unit,
 ) {
     var jogo by rememberSaveable { mutableStateOf("Slots") }
+    var categoriaJogos by rememberSaveable { mutableStateOf("Solo") }
+    var selecaoMinijogo by rememberSaveable { mutableStateOf("") }
     var apostaTexto by rememberSaveable { mutableStateOf("10,00") }
     var tipoRoleta by rememberSaveable { mutableStateOf("Cor") }
     var selecaoRoleta by rememberSaveable { mutableStateOf("Vermelho") }
@@ -125,7 +164,10 @@ fun TelaJogos(
     val historicoRoleta = remember { mutableStateListOf<Int>() }
 
     LaunchedEffect(roomInviteId) {
-        if (roomInviteId.isNotBlank()) jogo = "Cabo de guerra"
+        if (roomInviteId.isNotBlank()) {
+            categoriaJogos = "1v1"
+            jogo = "Cabo de guerra"
+        }
     }
 
     val apostaCentavos = parseValorCentavos(apostaTexto)
@@ -227,11 +269,33 @@ fun TelaJogos(
         }
 
         JogosPainel {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("Solo", "1v1", "2v2").forEach { categoria ->
+                    Button(
+                        onClick = {
+                            if (categoriaJogos != categoria) {
+                                categoriaJogos = categoria
+                                jogo = if (categoria == "Solo") "Slots" else "Cabo de guerra"
+                                mensagem = ""
+                                lucroUltimo = 0L
+                                resultado = "Escolha um jogo para começar"
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (categoriaJogos == categoria) Color.White.copy(alpha = 0.9f) else Color.White.copy(alpha = 0.1f),
+                        ),
+                    ) {
+                        Text(categoria, color = if (categoriaJogos == categoria) Color(0xFF111418) else Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
             SeletorJogos(
-                listOf("Slots", "Roleta", "Crash", "Blackjack", "Cara ou coroa", "Dado", "Par ou ímpar", "Minas", "Raspadinha", "Futebol", "Apostas esportivas", "Cabo de guerra"),
+                if (categoriaJogos == "Solo") jogosSolo else listOf("Cabo de guerra"),
                 jogo,
             ) {
                 jogo = it
+                selecaoMinijogo = miniJogosSolo.firstOrNull { miniGame -> miniGame.nome == it }?.opcoes?.firstOrNull()?.valor.orEmpty()
                 mensagem = ""
                 lucroUltimo = 0L
                 resultado = "Escolha um jogo para começar"
@@ -509,6 +573,7 @@ fun TelaJogos(
                 )
                 "Cabo de guerra" -> TelaCaboGuerra(
                     uidAtual = uidAtual,
+                    modoInicial = categoriaJogos,
                     saldoCentavos = saldoCentavos,
                     jogadores = jogadores,
                     roomInviteId = roomInviteId,
@@ -521,33 +586,36 @@ fun TelaJogos(
                     onPuxarCorda = onPuxarCordaCaboGuerra,
                 )
                 else -> {
+                    val miniGame = miniJogosSolo.firstOrNull { it.nome == jogo }
+                    val escolhaMiniJogo = miniGame?.opcoes?.firstOrNull { it.valor == selecaoMinijogo }
+                        ?: miniGame?.opcoes?.firstOrNull()
                     val opcoes = when (jogo) {
                         "Cara ou coroa" -> listOf("Cara", "Coroa")
                         "Dado" -> listOf("1", "2", "3", "4", "5", "6")
                         "Par ou ímpar" -> listOf("Par", "Ímpar")
                         "Futebol" -> listOf("Esquerda", "Centro", "Direita")
-                        else -> emptyList()
+                        else -> miniGame?.opcoes?.map { it.rotulo }.orEmpty()
                     }
                     val selecionada = when (jogo) {
                         "Cara ou coroa" -> ladoMoeda
                         "Dado" -> numeroDado
                         "Par ou ímpar" -> paridadeDado
                         "Futebol" -> cantoFutebol
-                        else -> ""
+                        else -> escolhaMiniJogo?.rotulo.orEmpty()
                     }
                     val regras = when (jogo) {
                         "Cara ou coroa" -> "Escolha um lado. Acerto paga 1,90x."
                         "Dado" -> "Adivinhe o resultado de 1 a 6. Acerto paga 5,50x."
                         "Par ou ímpar" -> "Escolha a paridade do dado. Acerto paga 1,90x."
                         "Futebol" -> "Escolha um canto. Se o goleiro pular para outro lado, é gol e paga 1,40x."
-                        else -> "Três estrelas pagam 20x, sinos 4x e cerejas 2x."
+                        else -> miniGame?.regras ?: "Três estrelas pagam 20x, sinos 4x e cerejas 2x."
                     }
                     val gameId = when (jogo) {
                         "Cara ou coroa" -> "coin"
                         "Dado" -> "dice"
                         "Par ou ímpar" -> "parity"
                         "Futebol" -> "football"
-                        else -> "scratch"
+                        else -> miniGame?.id ?: "scratch"
                     }
                     val selecaoServidor = when (jogo) {
                         "Cara ou coroa" -> if (ladoMoeda == "Cara") "heads" else "tails"
@@ -558,7 +626,7 @@ fun TelaJogos(
                             "Direita" -> "right"
                             else -> "center"
                         }
-                        else -> ""
+                        else -> escolhaMiniJogo?.valor.orEmpty()
                     }
                     MiniGameCard(
                         nome = jogo,
@@ -571,6 +639,7 @@ fun TelaJogos(
                                 "Dado" -> numeroDado = escolha
                                 "Par ou ímpar" -> paridadeDado = escolha
                                 "Futebol" -> cantoFutebol = escolha
+                                else -> selecaoMinijogo = miniGame?.opcoes?.firstOrNull { it.rotulo == escolha }?.valor.orEmpty()
                             }
                             resultado = "Escolha um jogo para começar"
                             lucroUltimo = 0L
@@ -1047,7 +1116,7 @@ private fun DadoVisual(numero: Int, carregando: Boolean, pulso: Float) {
 @Composable
 internal fun SeletorJogos(opcoes: List<String>, selecionada: String, onSelecionar: (String) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        opcoes.chunked(2).forEach { linha ->
+        opcoes.chunked(3).forEach { linha ->
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 linha.forEach { opcao ->
                     Button(
@@ -1057,7 +1126,7 @@ internal fun SeletorJogos(opcoes: List<String>, selecionada: String, onSeleciona
                             containerColor = if (opcao == selecionada) Color.White.copy(alpha = 0.9f) else Color.White.copy(alpha = 0.1f),
                         ),
                     ) {
-                        Text(opcao, color = if (opcao == selecionada) Color(0xFF111418) else Color.White, fontSize = 12.sp, maxLines = 1)
+                        Text(opcao, color = if (opcao == selecionada) Color(0xFF111418) else Color.White, fontSize = 10.sp, maxLines = 2)
                     }
                 }
                 if (linha.size == 1) Spacer(Modifier.weight(1f))

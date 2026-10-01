@@ -85,6 +85,14 @@ private val itensInventarioAdmin = listOf(
     ItemInventarioAdmin("avatar_top_jacket", "Jaqueta Aurora"),
     ItemInventarioAdmin("avatar_glasses_round", "Óculos Redondos"),
     ItemInventarioAdmin("avatar_crown_neon", "Coroa Neon"),
+    ItemInventarioAdmin("avatar_hair_afro", "Afro Lunar"),
+    ItemInventarioAdmin("avatar_hair_blue", "Tinta Azul"),
+    ItemInventarioAdmin("avatar_skin_olive", "Tom Oliva"),
+    ItemInventarioAdmin("avatar_top_sport", "Jaqueta Esportiva"),
+    ItemInventarioAdmin("avatar_top_space", "Traje Estelar"),
+    ItemInventarioAdmin("avatar_glasses_square", "Óculos Quadrados"),
+    ItemInventarioAdmin("avatar_earrings_star", "Brincos Estrela"),
+    ItemInventarioAdmin("avatar_cap_mint", "Boné Menta"),
 )
 
 @Composable

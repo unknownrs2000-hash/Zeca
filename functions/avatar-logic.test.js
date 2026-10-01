@@ -22,3 +22,18 @@ test("an avatar slot can be cleared without affecting other clothing", () => {
     ["avatar_hair_wave", "avatar_top_jacket"],
   );
 });
+
+test("new avatar cosmetics equip into independent slots and replace only matching items", () => {
+  assert.deepEqual(
+    equipAvatarItem(
+      ["avatar_glasses_round", "avatar_cap_mint"],
+      ["avatar_glasses_round", "avatar_glasses_square", "avatar_cap_mint"],
+      "avatar_glasses_square",
+    ),
+    ["avatar_cap_mint", "avatar_glasses_square"],
+  );
+  assert.deepEqual(
+    unequipAvatarSlot(["avatar_hair_afro", "avatar_earrings_star", "avatar_top_space"], "earrings"),
+    ["avatar_hair_afro", "avatar_top_space"],
+  );
+});

@@ -11,7 +11,15 @@ const {
   createMinefield,
   diceGuessResult,
   footballShotResult,
+  higherLowerResult,
+  luckyDoorsResult,
+  luckyNumberResult,
   rouletteResult,
+  cardPairResult,
+  colorWheelResult,
+  diceSumResult,
+  rangePickResult,
+  rockPaperScissorsResult,
   settleBlackjack,
   minesCashoutPayout,
   parityDiceResult,
@@ -129,4 +137,60 @@ test("football shots score past the server-selected goalkeeper and pay 1.40x", (
   assert.equal(saved.won, false);
   assert.equal(saved.payoutCents, 0);
   assert.throws(() => footballShotResult("top", 1_000, () => 0), RangeError);
+});
+
+test("rock-paper-scissors settles wins, draws, and invalid selections", () => {
+  assert.equal(rockPaperScissorsResult("paper", 1_000, () => 0).payoutCents, 1_850);
+  assert.equal(rockPaperScissorsResult("rock", 1_000, () => 0).payoutCents, 1_000);
+  assert.equal(rockPaperScissorsResult("scissors", 1_000, () => 0).payoutCents, 0);
+  assert.throws(() => rockPaperScissorsResult("lizard", 1_000, () => 0), RangeError);
+});
+
+test("higher-lower cards push on ties and pay only correct predictions", () => {
+  const higherSequence = [4, 8];
+  assert.equal(higherLowerResult("higher", 1_000, () => higherSequence.shift()).payoutCents, 1_900);
+  assert.equal(higherLowerResult("lower", 1_000, () => 4).payoutCents, 1_000);
+  const lowerSequence = [8, 2];
+  assert.equal(higherLowerResult("higher", 1_000, () => lowerSequence.shift()).payoutCents, 0);
+  assert.throws(() => higherLowerResult("same", 1_000, () => 0), RangeError);
+});
+
+test("lucky number and doors enforce choices and fixed server payouts", () => {
+  assert.equal(luckyNumberResult("5", 1_000, () => 5).payoutCents, 9_500);
+  assert.equal(luckyNumberResult("4", 1_000, () => 5).payoutCents, 0);
+  assert.equal(luckyDoorsResult("3", 1_000, () => 2).payoutCents, 3_800);
+  assert.equal(luckyDoorsResult("1", 1_000, () => 2).payoutCents, 0);
+  assert.throws(() => luckyDoorsResult("5", 1_000, () => 0), RangeError);
+});
+
+test("dice sums refund ties and settle high or low picks", () => {
+  assert.equal(diceSumResult("high", 1_000, (max) => max - 1).payoutCents, 1_880);
+  const tieSequence = [2, 3];
+  assert.equal(diceSumResult("low", 1_000, () => tieSequence.shift()).payoutCents, 1_000);
+  assert.equal(diceSumResult("high", 1_000, () => 2).payoutCents, 0);
+  assert.throws(() => diceSumResult("middle", 1_000, () => 0), RangeError);
+});
+
+test("card pairs support match and different predictions", () => {
+  assert.equal(cardPairResult("match", 1_000, () => 0).payoutCents, 12_350);
+  const differentSequence = [0, 1];
+  assert.equal(cardPairResult("different", 1_000, () => differentSequence.shift()).payoutCents, 1_020);
+  const nonMatchingSequence = [0, 1];
+  assert.equal(cardPairResult("match", 1_000, () => nonMatchingSequence.shift()).payoutCents, 0);
+  assert.throws(() => cardPairResult("similar", 1_000, () => 0), RangeError);
+});
+
+test("color wheel uses weighted server outcomes and fixed payouts", () => {
+  assert.equal(colorWheelResult("gold", 1_000, () => 99).payoutCents, 9_500);
+  assert.equal(colorWheelResult("red", 1_000, () => 0).payoutCents, 2_110);
+  assert.equal(colorWheelResult("black", 1_000, () => 45).payoutCents, 2_110);
+  assert.throws(() => colorWheelResult("blue", 1_000, () => 0), RangeError);
+});
+
+test("range picks pay according to the selected range probability", () => {
+  assert.equal(rangePickResult("low", 1_000, () => 0).payoutCents, 2_380);
+  assert.equal(rangePickResult("middle", 1_000, () => 4).payoutCents, 4_750);
+  assert.equal(rangePickResult("high", 1_000, () => 9).payoutCents, 2_380);
+  assert.equal(rangePickResult("high", 1_000, () => 0).payoutCents, 0);
+  assert.throws(() => rangePickResult("other", 1_000, () => 0), RangeError);
 });

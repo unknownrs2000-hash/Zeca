@@ -10,6 +10,14 @@ const AVATAR_ITEM_SLOTS = Object.freeze({
   avatar_top_jacket: "outfit",
   avatar_glasses_round: "accessory",
   avatar_crown_neon: "accessory",
+  avatar_hair_afro: "hair",
+  avatar_hair_blue: "hairColor",
+  avatar_skin_olive: "skin",
+  avatar_top_sport: "outfit",
+  avatar_top_space: "outfit",
+  avatar_glasses_square: "accessory",
+  avatar_earrings_star: "earrings",
+  avatar_cap_mint: "headwear",
 });
 
 function equipAvatarItem(equippedItems, inventory, itemId) {

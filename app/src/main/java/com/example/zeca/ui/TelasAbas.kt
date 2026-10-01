@@ -45,6 +45,8 @@ import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
@@ -996,9 +998,9 @@ fun TelaLoja(
                     apelido.take(1).uppercase(),
                     molduraEquipada,
                     70.dp,
-                    photoUrl = avatarUrl,
+                    photoUrl = "",
                     avatarItems = avatarItensEquipados,
-                    avatarAsProfilePhoto = avatarComoFotoPerfil,
+                    avatarAsProfilePhoto = true,
                 )
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text("SEU AVATAR", color = Cores.Verde, fontSize = 10.sp, fontWeight = FontWeight.Bold)
@@ -1335,6 +1337,14 @@ internal val catalogoLoja = listOf(
     Produto("avatar_top_jacket", "Jaqueta Aurora", "Jaqueta em tons de pôr do sol.", 1_499L, Color(0xFFFF7A59), "◈", "outfit"),
     Produto("avatar_glasses_round", "Óculos Redondos", "Armação divertida para completar o rosto.", 799L, Color(0xFF6FE7E1), "◎", "accessory"),
     Produto("avatar_crown_neon", "Coroa Neon", "Uma coroa luminosa para chegar chegando.", 1_999L, Color(0xFFFFD166), "♛", "accessory"),
+    Produto("avatar_hair_afro", "Afro Lunar", "Um visual volumoso com cachos definidos.", 1_599L, Color(0xFF7B5138), "✿", "hair"),
+    Produto("avatar_hair_blue", "Tinta Azul", "Cabelo azul intenso para mudar o visual.", 1_099L, Color(0xFF4C9DFF), "✦", "hairColor"),
+    Produto("avatar_skin_olive", "Tom Oliva", "Um tom de pele oliva para personalizar o avatar.", 799L, Color(0xFFB8895D), "●", "skin"),
+    Produto("avatar_top_sport", "Jaqueta Esportiva", "Uma jaqueta esportiva com faixas claras.", 1_599L, Color(0xFF4387D7), "▰", "outfit"),
+    Produto("avatar_top_space", "Traje Estelar", "Uma roupa noturna com detalhes de estrelas.", 1_899L, Color(0xFF6652A5), "✧", "outfit"),
+    Produto("avatar_glasses_square", "Óculos Quadrados", "Armação geométrica em turquesa.", 899L, Color(0xFF6FE7E1), "▣", "accessory"),
+    Produto("avatar_earrings_star", "Brincos Estrela", "Pequenas estrelas douradas nas orelhas.", 799L, Color(0xFFFFD166), "✦", "earrings"),
+    Produto("avatar_cap_mint", "Boné Menta", "Um boné verde-menta para completar o conjunto.", 1_099L, Color(0xFF56D6B0), "◒", "headwear"),
 )
 
 internal fun coresMoldura(id: String): List<Color>? = when (id) {
@@ -1383,16 +1393,22 @@ internal fun AvatarComMoldura(
 @Composable
 internal fun AvatarPersonagem(inicial: String, itens: List<String>, tamanho: Dp, modifier: Modifier = Modifier) {
     val pele = when {
+        "avatar_skin_olive" in itens -> Color(0xFFB8895D)
         "avatar_skin_cocoa" in itens -> Color(0xFF8D5B43)
         "avatar_skin_sun" in itens -> Color(0xFFD99B70)
         else -> Color(0xFFE9B18A)
     }
-    val cabelo = if ("avatar_hair_silver" in itens) Color(0xFFC8D3DC) else when {
+    val cabelo = when {
+        "avatar_hair_blue" in itens -> Color(0xFF4C9DFF)
+        "avatar_hair_silver" in itens -> Color(0xFFC8D3DC)
         "avatar_hair_curls" in itens -> Color(0xFF4E352F)
         "avatar_hair_wave" in itens -> Color(0xFF805B42)
+        "avatar_hair_afro" in itens -> Color(0xFF7B5138)
         else -> Color(0xFF352923)
     }
     val roupa = when {
+        "avatar_top_space" in itens -> Color(0xFF42366E)
+        "avatar_top_sport" in itens -> Color(0xFF3476C2)
         "avatar_top_jacket" in itens -> Color(0xFFFF7A59)
         "avatar_top_hoodie" in itens -> Color(0xFF21B9AC)
         else -> Color(0xFF317B70)
@@ -1419,6 +1435,28 @@ internal fun AvatarPersonagem(inicial: String, itens: List<String>, tamanho: Dp,
                 .clip(RoundedCornerShape(topStart = tamanho * 0.32f, topEnd = tamanho * 0.32f, bottomEnd = tamanho * 0.1f))
                 .background(cabelo),
         )
+        if ("avatar_hair_afro" in itens) {
+            Row(
+                modifier = Modifier.align(Alignment.TopCenter).offset(y = tamanho * 0.12f),
+                horizontalArrangement = Arrangement.spacedBy(tamanho * 0.005f),
+            ) {
+                repeat(5) { Box(Modifier.size(tamanho * 0.14f).clip(CircleShape).background(cabelo)) }
+            }
+        }
+        if ("avatar_cap_mint" in itens) {
+            Box(
+                Modifier.align(Alignment.TopCenter).offset(y = tamanho * 0.075f)
+                    .size(tamanho * 0.42f, tamanho * 0.16f)
+                    .clip(RoundedCornerShape(topStart = tamanho * 0.18f, topEnd = tamanho * 0.18f))
+                    .background(Color(0xFF56D6B0)),
+            )
+            Box(
+                Modifier.align(Alignment.TopCenter).offset(x = tamanho * 0.08f, y = tamanho * 0.22f)
+                    .size(tamanho * 0.34f, tamanho * 0.055f)
+                    .clip(CircleShape)
+                    .background(Color(0xFF3AAE8D)),
+            )
+        }
         Row(
             modifier = Modifier.align(Alignment.Center).offset(y = tamanho * 0.035f),
             horizontalArrangement = Arrangement.spacedBy(tamanho * 0.12f),
@@ -1433,7 +1471,30 @@ internal fun AvatarPersonagem(inicial: String, itens: List<String>, tamanho: Dp,
                 .clip(CircleShape)
                 .background(Color(0xFFAC5D59)),
         )
-        if ("avatar_glasses_round" in itens) {
+        if ("avatar_top_sport" in itens) {
+            Box(
+                Modifier.align(Alignment.BottomCenter).offset(y = -tamanho * 0.15f)
+                    .size(tamanho * 0.045f, tamanho * 0.27f)
+                    .background(Color(0xFFEAF4FF)),
+            )
+        }
+        if ("avatar_top_space" in itens) {
+            Text("✦", modifier = Modifier.align(Alignment.BottomCenter).offset(x = -tamanho * 0.13f, y = -tamanho * 0.18f), color = Color(0xFFFFD166), fontSize = (tamanho.value * 0.13f).sp)
+            Text("✦", modifier = Modifier.align(Alignment.BottomCenter).offset(x = tamanho * 0.13f, y = -tamanho * 0.28f), color = Color(0xFFFFD166), fontSize = (tamanho.value * 0.10f).sp)
+        }
+        if ("avatar_earrings_star" in itens) {
+            Text("✦", modifier = Modifier.align(Alignment.CenterStart).offset(x = tamanho * 0.16f, y = tamanho * 0.07f), color = Color(0xFFFFD166), fontSize = (tamanho.value * 0.14f).sp)
+            Text("✦", modifier = Modifier.align(Alignment.CenterEnd).offset(x = -tamanho * 0.16f, y = tamanho * 0.07f), color = Color(0xFFFFD166), fontSize = (tamanho.value * 0.14f).sp)
+        }
+        if ("avatar_glasses_square" in itens) {
+            Row(
+                modifier = Modifier.align(Alignment.Center).offset(y = tamanho * 0.045f),
+                horizontalArrangement = Arrangement.spacedBy(tamanho * 0.035f),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                repeat(2) { Box(Modifier.size(tamanho * 0.18f).border(1.5.dp, Cores.Turquesa, RoundedCornerShape(4.dp))) }
+            }
+        } else if ("avatar_glasses_round" in itens) {
             Row(
                 modifier = Modifier.align(Alignment.Center).offset(y = tamanho * 0.045f),
                 horizontalArrangement = Arrangement.spacedBy(tamanho * 0.035f),
@@ -1459,11 +1520,33 @@ internal fun ItensColecao(
     onEquiparItemAvatar: ((String, String?) -> Unit)? = null,
 ) {
     val itens = ids.mapNotNull { id -> catalogoLoja.firstOrNull { it.id == id } }
+    var categoriasAbertas by rememberSaveable { mutableStateOf(listOf("Avatar")) }
     if (itens.isEmpty()) {
         Text("Nenhum item na coleção ainda.", color = Color.White.copy(alpha = 0.65f), fontSize = 13.sp)
     } else {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            itens.forEach { item ->
+            val grupos = listOf(
+                "Avatar" to itens.filter { it.avatarSlot.isNotBlank() },
+                "Molduras" to itens.filter { it.id.startsWith("frame_") },
+                "Títulos" to itens.filter { it.id.startsWith("title_") },
+            ).filter { it.second.isNotEmpty() }
+            grupos.forEach { (categoria, itensCategoria) ->
+                val expandida = categoria in categoriasAbertas
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        categoriasAbertas = if (expandida) categoriasAbertas - categoria else categoriasAbertas + categoria
+                    }.padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(categoria, modifier = Modifier.weight(1f), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text("${itensCategoria.size}", color = Color.White.copy(alpha = 0.58f), fontSize = 12.sp)
+                    Icon(
+                        if (expandida) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                        contentDescription = if (expandida) "Recolher $categoria" else "Expandir $categoria",
+                        tint = Cores.Turquesa,
+                    )
+                }
+                if (expandida) itensCategoria.forEach { item ->
                 val ehMoldura = item.id.startsWith("frame_")
                 val ehItemAvatar = item.avatarSlot.isNotBlank()
                 val emUso = ehMoldura && item.id == molduraEquipada
@@ -1517,6 +1600,7 @@ internal fun ItensColecao(
                     } else if (avatarEmUso) {
                         Text("Vestindo", color = item.cor, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
+                }
                 }
             }
         }

@@ -141,6 +141,155 @@ function footballShotResult(selection, wagerCents, secureRandomInt = randomInt) 
   };
 }
 
+function rockPaperScissorsResult(selection, wagerCents, secureRandomInt = randomInt) {
+  const choices = ["rock", "paper", "scissors"];
+  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER) || !choices.includes(selection)) {
+    throw new RangeError("Invalid rock-paper-scissors wager.");
+  }
+  const opponent = choices[secureRandomInt(choices.length)];
+  const tied = selection === opponent;
+  const won = !tied && (
+    (selection === "rock" && opponent === "scissors")
+    || (selection === "paper" && opponent === "rock")
+    || (selection === "scissors" && opponent === "paper")
+  );
+  const multiplier = won ? 185 : tied ? 100 : 0;
+  const labels = { rock: "Pedra", paper: "Papel", scissors: "Tesoura" };
+  return {
+    displayText: `${labels[selection]} × ${labels[opponent]} · ${won ? "Vitória" : tied ? "Empate" : "Derrota"}`,
+    opponent,
+    won,
+    payoutCents: won ? Math.floor(wagerCents * multiplier / 100) : tied ? wagerCents : 0,
+    multiplier,
+  };
+}
+
+function higherLowerResult(selection, wagerCents, secureRandomInt = randomInt) {
+  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER) || !["higher", "lower"].includes(selection)) {
+    throw new RangeError("Invalid higher-lower wager.");
+  }
+  const first = secureRandomInt(13) + 1;
+  const second = secureRandomInt(13) + 1;
+  const tied = first === second;
+  const won = !tied && (selection === "higher" ? second > first : second < first);
+  const multiplier = won ? 190 : tied ? 100 : 0;
+  return {
+    displayText: `Carta ${first} → ${second} · ${won ? "Acertou" : tied ? "Empate" : "Errou"}`,
+    first,
+    second,
+    won,
+    payoutCents: won ? Math.floor(wagerCents * multiplier / 100) : tied ? wagerCents : 0,
+    multiplier,
+  };
+}
+
+function luckyNumberResult(selection, wagerCents, secureRandomInt = randomInt) {
+  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER) || !/^[0-9]$/.test(String(selection))) {
+    throw new RangeError("Invalid lucky-number wager.");
+  }
+  const number = secureRandomInt(10);
+  const won = number === Number(selection);
+  return {
+    displayText: `Saiu ${number} · ${won ? "Número certo" : "Não foi desta vez"}`,
+    number,
+    won,
+    payoutCents: won ? Math.floor(wagerCents * 950 / 100) : 0,
+    multiplier: won ? 950 : 0,
+  };
+}
+
+function luckyDoorsResult(selection, wagerCents, secureRandomInt = randomInt) {
+  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER) || !/^[1-4]$/.test(String(selection))) {
+    throw new RangeError("Invalid lucky-doors wager.");
+  }
+  const winningDoor = secureRandomInt(4) + 1;
+  const won = winningDoor === Number(selection);
+  return {
+    displayText: `A porta premiada era ${winningDoor} · ${won ? "Encontrou o prêmio" : "Porta vazia"}`,
+    winningDoor,
+    won,
+    payoutCents: won ? Math.floor(wagerCents * 380 / 100) : 0,
+    multiplier: won ? 380 : 0,
+  };
+}
+
+function diceSumResult(selection, wagerCents, secureRandomInt = randomInt) {
+  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER) || !["low", "high"].includes(selection)) {
+    throw new RangeError("Invalid dice-sum wager.");
+  }
+  const first = secureRandomInt(6) + 1;
+  const second = secureRandomInt(6) + 1;
+  const sum = first + second;
+  const tied = sum === 7;
+  const won = !tied && (selection === "low" ? sum < 7 : sum > 7);
+  const multiplier = won ? 188 : tied ? 100 : 0;
+  return {
+    displayText: `Dados ${first} + ${second} = ${sum} · ${won ? "Acertou" : tied ? "Empate" : "Errou"}`,
+    first,
+    second,
+    sum,
+    won,
+    payoutCents: won ? Math.floor(wagerCents * multiplier / 100) : tied ? wagerCents : 0,
+    multiplier,
+  };
+}
+
+function cardPairResult(selection, wagerCents, secureRandomInt = randomInt) {
+  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER) || !["match", "different"].includes(selection)) {
+    throw new RangeError("Invalid card-pair wager.");
+  }
+  const first = secureRandomInt(13) + 1;
+  const second = secureRandomInt(13) + 1;
+  const matched = first === second;
+  const won = selection === "match" ? matched : !matched;
+  const multiplier = selection === "match" ? 1_235 : 102;
+  return {
+    displayText: `Cartas ${first} e ${second} · ${won ? "Previsão certa" : "Previsão errada"}`,
+    first,
+    second,
+    won,
+    payoutCents: won ? Math.floor(wagerCents * multiplier / 100) : 0,
+    multiplier: won ? multiplier : 0,
+  };
+}
+
+function colorWheelResult(selection, wagerCents, secureRandomInt = randomInt) {
+  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER) || !["red", "black", "gold"].includes(selection)) {
+    throw new RangeError("Invalid color-wheel wager.");
+  }
+  const draw = secureRandomInt(100);
+  const color = draw < 45 ? "red" : draw < 90 ? "black" : "gold";
+  const won = color === selection;
+  const multiplier = color === "gold" ? 950 : 211;
+  const labels = { red: "Vermelho", black: "Preto", gold: "Dourado" };
+  return {
+    displayText: `A roda parou em ${labels[color]} · ${won ? "Acertou" : "Errou"}`,
+    color,
+    won,
+    payoutCents: won ? Math.floor(wagerCents * multiplier / 100) : 0,
+    multiplier: won ? multiplier : 0,
+  };
+}
+
+function rangePickResult(selection, wagerCents, secureRandomInt = randomInt) {
+  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER) || !["low", "middle", "high"].includes(selection)) {
+    throw new RangeError("Invalid range-pick wager.");
+  }
+  const number = secureRandomInt(10);
+  const range = number <= 3 ? "low" : number <= 5 ? "middle" : "high";
+  const won = range === selection;
+  const multiplier = range === "middle" ? 475 : 238;
+  const labels = { low: "Baixa", middle: "Central", high: "Alta" };
+  return {
+    displayText: `Saiu ${number} · Faixa ${labels[range]} · ${won ? "Acertou" : "Errou"}`,
+    number,
+    range,
+    won,
+    payoutCents: won ? Math.floor(wagerCents * multiplier / 100) : 0,
+    multiplier: won ? multiplier : 0,
+  };
+}
+
 function rouletteResult(betType, selection, number, wagerCents) {
   if (!Number.isInteger(number) || number < 0 || number > 36) {
     throw new RangeError("Roulette number must be between 0 and 36.");
@@ -241,9 +390,17 @@ module.exports = {
   createShuffledDeck,
   diceGuessResult,
   footballShotResult,
+  higherLowerResult,
   isBlackjack,
+  luckyDoorsResult,
+  luckyNumberResult,
   minesCashoutPayout,
   parityDiceResult,
+  cardPairResult,
+  colorWheelResult,
+  diceSumResult,
+  rangePickResult,
+  rockPaperScissorsResult,
   rouletteResult,
   scratchCardResult,
   settleBlackjack,
