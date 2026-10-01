@@ -73,6 +73,8 @@ fun TelaJogos(
     partidas: Int,
     uidAtual: String,
     jogadores: List<JogadorRanking>,
+    roomInviteId: String,
+    onRoomInviteHandled: () -> Unit,
     onCarregarConfiguracaoMinas: ((ConfiguracaoMinas?, Exception?) -> Unit) -> Unit,
     onCarregarMinasAtiva: ((EstadoMinas?, Exception?) -> Unit) -> Unit,
     onCarregarPartidasEsportivas: ((List<PartidaEsportiva>, Exception?) -> Unit) -> Unit,
@@ -121,6 +123,10 @@ fun TelaJogos(
     var estadoBlackjack by remember { mutableStateOf<EstadoBlackjack?>(null) }
     var estadoMinas by remember { mutableStateOf<EstadoMinas?>(null) }
     val historicoRoleta = remember { mutableStateListOf<Int>() }
+
+    LaunchedEffect(roomInviteId) {
+        if (roomInviteId.isNotBlank()) jogo = "Cabo de guerra"
+    }
 
     val apostaCentavos = parseValorCentavos(apostaTexto)
     val apostaValida = apostaCentavos != null && apostaCentavos in 100..1_000_000 && apostaCentavos <= saldoCentavos
@@ -230,25 +236,27 @@ fun TelaJogos(
                 lucroUltimo = 0L
                 resultado = "Escolha um jogo para começar"
             }
-            OutlinedTextField(
-                value = apostaTexto,
-                onValueChange = { apostaTexto = it; mensagem = "" },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Aposta") },
-                prefix = { Text("R$ ") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            )
-            ChipsAposta(
-                saldoCentavos = saldoCentavos,
-                apostaCentavos = apostaCentavos,
-                habilitado = !ocupado && !apostaTravada,
-                onEscolher = {
-                    apostaTexto = formatarValorCampo(it)
-                    mensagem = ""
-                },
-            )
-            Text("Mínimo R$ 1,00 · máximo R$ 10.000,00", color = Color.White.copy(alpha = 0.54f), fontSize = 11.sp)
+            if (jogo !in listOf("Apostas esportivas", "Cabo de guerra")) {
+                OutlinedTextField(
+                    value = apostaTexto,
+                    onValueChange = { apostaTexto = it; mensagem = "" },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Aposta") },
+                    prefix = { Text("R$ ") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                )
+                ChipsAposta(
+                    saldoCentavos = saldoCentavos,
+                    apostaCentavos = apostaCentavos,
+                    habilitado = !ocupado && !apostaTravada,
+                    onEscolher = {
+                        apostaTexto = formatarValorCampo(it)
+                        mensagem = ""
+                    },
+                )
+                Text("Mínimo R$ 1,00 · máximo R$ 10.000,00", color = Color.White.copy(alpha = 0.54f), fontSize = 11.sp)
+            }
 
             when (jogo) {
                 "Slots" -> SlotsJogo(
@@ -503,6 +511,8 @@ fun TelaJogos(
                     uidAtual = uidAtual,
                     saldoCentavos = saldoCentavos,
                     jogadores = jogadores,
+                    roomInviteId = roomInviteId,
+                    onRoomInviteHandled = onRoomInviteHandled,
                     onCarregarSalas = onCarregarSalasCaboGuerra,
                     onCriarSala = onCriarSalaCaboGuerra,
                     onEntrarSala = onEntrarSalaCaboGuerra,

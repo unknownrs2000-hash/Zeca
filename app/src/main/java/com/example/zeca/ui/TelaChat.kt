@@ -155,6 +155,8 @@ fun TelaChat(
     uidAtual: String,
     chavePixAtual: String,
     jogadores: List<JogadorRanking>,
+    presencas: List<com.example.zeca.PresencaChat>,
+    onAtualizarDigitando: (String) -> Unit,
     onEnviar: (String?, String?, String, String, RespostaChat?, (Exception?) -> Unit) -> Unit,
     onEnviarAudio: (String?, String?, File, Int, String, (Exception?) -> Unit) -> Unit,
     onEncaminhar: (String?, String?, String, String, (Exception?) -> Unit) -> Unit,
@@ -238,6 +240,13 @@ fun TelaChat(
         else -> null
     }
     val conversaSelecionada = conversaGrupo ?: conversas.firstOrNull { it.id == chatId }
+    var agoraMs by remember { mutableStateOf(System.currentTimeMillis()) }
+    val presencasAtivas = presencas.filter {
+        it.online && agoraMs - it.ultimaAtividadeMs in 0..45_000L
+    }
+    val digitandoAgora = presencasAtivas.filter { it.uid != uidAtual && it.conversaDigitandoId == chatId }
+    val jogandoAgora = presencasAtivas.filter { it.uid != uidAtual && it.jogoAtivo.isNotBlank() }
+    val presencaDestinatario = presencasAtivas.firstOrNull { it.uid == destinatarioUid }
 
     fun abrirConfiguracoesGrupo(grupo: ConversaChat) {
         grupoConfigId = grupo.id
@@ -279,6 +288,27 @@ fun TelaChat(
             }
             onDispose { registration.remove() }
         }
+    }
+
+    LaunchedEffect(presencas) {
+        while (true) {
+            agoraMs = System.currentTimeMillis()
+            delay(5_000)
+        }
+    }
+
+    LaunchedEffect(chatId, rascunho) {
+        val activeChatId = chatId
+        if (activeChatId == null || rascunho.isBlank()) {
+            onAtualizarDigitando("")
+        } else {
+            delay(450)
+            if (chatId == activeChatId && rascunho.isNotBlank()) onAtualizarDigitando(activeChatId)
+        }
+    }
+
+    DisposableEffect(chatId) {
+        onDispose { onAtualizarDigitando("") }
     }
 
     fun enviarTextoChat(textoOriginal: String, resposta: RespostaChat?, aoSucesso: () -> Unit) {
@@ -514,7 +544,19 @@ fun TelaChat(
                             avatarUrl = if (emGrupo) conversaGrupo?.fotoGrupoUrl.orEmpty() else destinatario?.avatarUrl.orEmpty(),
                             avatarItems = destinatario?.avatarItensEquipados.orEmpty(),
                             avatarAsProfilePhoto = destinatario?.avatarComoFotoPerfil == true,
-                            detalhe = if (emGrupo) "${conversaGrupo?.participantes?.size ?: 0} pessoas" else destinatario?.let { "Nível ${it.nivel}" } ?: "",
+                            detalhe = if (emGrupo) {
+                                buildList {
+                                    add("${conversaGrupo?.participantes?.size ?: 0} pessoas")
+                                    add("${presencasAtivas.count { it.uid in (conversaGrupo?.participantes ?: emptyList()) }} online")
+                                    if (digitandoAgora.isNotEmpty()) add("${digitandoAgora.size} digitando")
+                                    if (jogandoAgora.isNotEmpty()) add("${jogandoAgora.size} jogando")
+                                }.joinToString(" · ")
+                            } else when {
+                                digitandoAgora.isNotEmpty() -> "Digitando…"
+                                presencaDestinatario?.jogoAtivo?.isNotBlank() == true -> "Jogando"
+                                presencaDestinatario != null -> "Online · nível ${destinatario?.nivel ?: 1}"
+                                else -> "Offline · nível ${destinatario?.nivel ?: 1}"
+                            },
                             onVoltar = { if (emGrupo) grupoUid = "" else destinatarioUid = ""; erro = "" },
                             onPerfil = { perfilUid = destinatarioUid },
                         )
@@ -532,7 +574,21 @@ fun TelaChat(
                     } else {
                         Column {
                             Text("Chat", color = Color.White, fontSize = 29.sp, fontWeight = FontWeight.Black)
-                            Text("Todos os jogadores podem ver a sala global.", color = Color.White.copy(alpha = 0.62f), fontSize = 13.sp)
+                            Text("${presencasAtivas.size} online · todos podem ver a sala global", color = Color.White.copy(alpha = 0.62f), fontSize = 13.sp)
+                            if (digitandoAgora.isNotEmpty()) {
+                                Text(
+                                    "${digitandoAgora.map { presence -> jogadores.firstOrNull { it.uid == presence.uid }?.apelido ?: "Jogador" }.joinToString(", ")} digitando…",
+                                    color = Cores.Turquesa,
+                                    fontSize = 11.sp,
+                                )
+                            }
+                            if (jogandoAgora.isNotEmpty()) {
+                                Text(
+                                    "${jogandoAgora.map { presence -> jogadores.firstOrNull { it.uid == presence.uid }?.apelido ?: "Jogador" }.joinToString(", ")} jogando",
+                                    color = Cores.Verde,
+                                    fontSize = 11.sp,
+                                )
+                            }
                         }
                         OpcoesChat(listOf("Global", "Privado"), modo) {
                             modo = it

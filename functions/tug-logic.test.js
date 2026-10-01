@@ -56,7 +56,7 @@ test("2v2 teammates contribute to the same team pull count", () => {
   assert.equal(room.teamBPulls, 1);
 });
 
-test("batched taps respect elapsed-time limits and settle at the winning margin", () => {
+test("batched taps are partially accepted at the rate limit and settle at the winning margin", () => {
   const room = {
     status: "active",
     creatorUid: "creator",
@@ -66,15 +66,15 @@ test("batched taps respect elapsed-time limits and settle at the winning margin"
     startedAtMs: 1_000,
     lastPullAtMs: {},
   };
-  assert.throws(() => applyTugPull(room, "creator", 1_120, 2), /pull-too-fast/);
-  const pull = applyTugPull(room, "creator", 1_240, 2);
-  assert.equal(pull.acceptedPulls, 2);
-  let current = { ...room, ...pull };
-  for (let batch = 0; batch < 3; batch += 1) {
+  let current = { ...room, ...applyTugPull(room, "creator", 1_120, 2) };
+  assert.equal(current.acceptedPulls, 1);
+  let nextPullAt = 1_360;
+  while (current.status === "active") {
     current = {
       ...current,
-      ...applyTugPull(current, "creator", 1_480 + batch * 240, 2),
+      ...applyTugPull(current, "creator", nextPullAt, 2),
     };
+    nextPullAt += 240;
   }
   assert.equal(current.creatorPulls, 8);
   assert.equal(current.status, "settled");

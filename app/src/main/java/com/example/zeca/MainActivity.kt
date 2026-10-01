@@ -1,5 +1,6 @@
 package com.example.zeca
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -112,15 +113,44 @@ private data class NotificacaoApp(
 )
 
 class MainActivity : ComponentActivity() {
+    private val appForeground = mutableStateOf(false)
+    private val tugInviteRoomId = mutableStateOf("")
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        tugInviteRoomId.value = roomIdFromIntent(intent)
         enableEdgeToEdge()
-        setContent { CassinoTheme { CassinoApp() } }
+        setContent { CassinoTheme { CassinoApp(appForeground.value, tugInviteRoomId.value) { tugInviteRoomId.value = "" } } }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        tugInviteRoomId.value = roomIdFromIntent(intent)
+    }
+
+    private fun roomIdFromIntent(intent: Intent?): String {
+        val uri = intent?.data ?: return ""
+        val roomId = uri.pathSegments.singleOrNull() ?: return ""
+        return roomId.takeIf {
+            uri.scheme == "zeca" && uri.host == "tug" &&
+                Regex("^[a-f0-9-]{36}$", RegexOption.IGNORE_CASE).matches(it)
+        }.orEmpty()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        appForeground.value = true
+    }
+
+    override fun onPause() {
+        appForeground.value = false
+        super.onPause()
     }
 }
 
 @Composable
-fun CassinoApp() {
+fun CassinoApp(appForeground: Boolean, tugInviteRoomId: String, onTugInviteHandled: () -> Unit) {
     val auth = remember { FirebaseRepository.auth }
     var usuario by remember { mutableStateOf(auth.currentUser) }
 
@@ -134,12 +164,17 @@ fun CassinoApp() {
     if (usuarioAtual == null) {
         TelaAutenticacao(onAutenticado = { usuario = it })
     } else {
-        AppAutenticado(usuarioAtual)
+        AppAutenticado(usuarioAtual, appForeground, tugInviteRoomId, onTugInviteHandled)
     }
 }
 
 @Composable
-private fun AppAutenticado(usuario: FirebaseUser) {
+    private fun AppAutenticado(
+        usuario: FirebaseUser,
+        appForeground: Boolean,
+        tugInviteRoomId: String,
+        onTugInviteHandled: () -> Unit,
+    ) {
     val contexto = LocalContext.current
     var aba by rememberSaveable { mutableStateOf(Aba.Inicio) }
     var ehAdmin by remember(usuario.uid) { mutableStateOf(false) }
@@ -150,11 +185,33 @@ private fun AppAutenticado(usuario: FirebaseUser) {
     val movimentos = remember { mutableStateListOf<Movimento>() }
     val itensComprados = remember { mutableStateListOf<String>() }
     val notificacoes = remember { mutableStateListOf<NotificacaoApp>() }
+    var presencasChat by remember { mutableStateOf<List<PresencaChat>>(emptyList()) }
     val convitesCaboNotificados = remember(usuario.uid) { mutableSetOf<String>() }
     val stateHolder = rememberSaveableStateHolder()
 
     LaunchedEffect(usuario.uid) {
         FirebaseRepository.verificarAdmin { ehAdmin = it }
+    }
+
+    LaunchedEffect(tugInviteRoomId) {
+        if (tugInviteRoomId.isNotBlank()) aba = Aba.Jogos
+    }
+
+    DisposableEffect(usuario.uid) {
+        val registration = FirebaseRepository.observarPresencasChat { presencasChat = it }
+        onDispose { registration.remove() }
+    }
+
+    LaunchedEffect(usuario.uid, appForeground, aba) {
+        val jogoAtivo = if (aba == Aba.Jogos) "Jogando" else ""
+        if (!appForeground) {
+            FirebaseRepository.atualizarPresencaChat(online = false)
+            return@LaunchedEffect
+        }
+        while (true) {
+            FirebaseRepository.atualizarPresencaChat(online = true, jogoAtivo = jogoAtivo)
+            delay(20_000)
+        }
     }
 
     fun notificar(notificacao: NotificacaoApp) {
@@ -352,6 +409,8 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                             partidas = jogador.partidas,
                             uidAtual = usuario.uid,
                             jogadores = ranking,
+                            roomInviteId = tugInviteRoomId,
+                            onRoomInviteHandled = onTugInviteHandled,
                             onCarregarConfiguracaoMinas = { concluir ->
                                 FirebaseRepository.carregarConfiguracaoMinas(concluir)
                             },
@@ -448,6 +507,14 @@ private fun AppAutenticado(usuario: FirebaseUser) {
                             uidAtual = usuario.uid,
                             chavePixAtual = jogador.chavePix,
                             jogadores = ranking,
+                            presencas = presencasChat,
+                            onAtualizarDigitando = { chatIdDigitando ->
+                                FirebaseRepository.atualizarPresencaChat(
+                                    online = appForeground,
+                                    jogoAtivo = if (aba == Aba.Jogos) "Jogando" else "",
+                                    conversaDigitandoId = chatIdDigitando,
+                                )
+                            },
                             onEnviar = { destinatarioUid, grupoId, texto, requestId, resposta, concluir ->
                                 FirebaseRepository.enviarMensagemChat(
                                     destinatarioUid,

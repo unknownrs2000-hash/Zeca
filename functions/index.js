@@ -1337,6 +1337,7 @@ function publicTugRoom(room, includeInvites = false) {
     opponentPulls: room.opponentPulls || 0,
     teamAPulls: room.teamAPulls ?? room.creatorPulls ?? 0,
     teamBPulls: room.teamBPulls ?? room.opponentPulls ?? 0,
+    acceptedPulls: room.acceptedPulls || 0,
     winnerUid: room.winnerUid || "",
     winnerTeam: room.winnerTeam || "",
     inviteVersion: room.inviteVersion || 0,
@@ -3341,8 +3342,7 @@ exports.sendChatMessage = onCall(async (request) => {
     if (!Number.isSafeInteger(audioDurationMs) || audioDurationMs < 500 || audioDurationMs > 60_000) {
       throw new HttpsError("invalid-argument", "A gravação precisa ter entre 0,5 e 60 segundos. Tente gravar por mais tempo.");
     }
-    if (!audioUrl.startsWith(`https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/video/upload/`)
-        || !audioUrl.endsWith(`/${requestId}.m4a`)) {
+    if (!audioUrl.startsWith(`https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/video/upload/`)) {
       throw new HttpsError("invalid-argument", "A URL do upload não corresponde ao formato de áudio esperado.");
     }
   } else if (audioPublicId || audioDurationMs != null) {

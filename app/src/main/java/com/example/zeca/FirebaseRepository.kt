@@ -65,6 +65,14 @@ data class MensagemChat(
     val audioDurationMs: Int = 0,
 )
 
+data class PresencaChat(
+    val uid: String,
+    val online: Boolean,
+    val ultimaAtividadeMs: Long,
+    val conversaDigitandoId: String,
+    val jogoAtivo: String,
+)
+
 data class AssinaturaAudioChat(
     val cloudName: String,
     val apiKey: String,
@@ -323,6 +331,7 @@ data class SalaCaboGuerra(
     val puxoesTimeB: Int = 0,
     val versaoConvite: Int = 0,
     val timeVencedor: String = "",
+    val puxoesAceitos: Int = 0,
 )
 
 private fun Map<*, *>.toSalaCaboGuerra(): SalaCaboGuerra? {
@@ -369,6 +378,7 @@ private fun Map<*, *>.toSalaCaboGuerra(): SalaCaboGuerra? {
             ?: (this["opponentPulls"] as? Number)?.toInt() ?: 0,
         versaoConvite = (this["inviteVersion"] as? Number)?.toInt() ?: 0,
         timeVencedor = this["winnerTeam"] as? String ?: "",
+        puxoesAceitos = (this["acceptedPulls"] as? Number)?.toInt() ?: 0,
     )
 }
 
@@ -513,6 +523,38 @@ object FirebaseRepository {
             .addSnapshotListener { snapshot, _ ->
                 callback(snapshot?.documents.orEmpty().mapNotNull(::toJogadorRanking))
             }
+
+    fun observarPresencasChat(callback: (List<PresencaChat>) -> Unit): ListenerRegistration =
+        database.collection("userPresence")
+            .whereEqualTo("online", true)
+            .limit(100)
+            .addSnapshotListener { snapshot, _ ->
+                callback(snapshot?.documents.orEmpty().mapNotNull { document ->
+                    val data = document.data ?: return@mapNotNull null
+                    val lastSeen = data["lastSeenAt"] as? com.google.firebase.Timestamp
+                    PresencaChat(
+                        uid = document.id,
+                        online = data["online"] as? Boolean ?: false,
+                        ultimaAtividadeMs = lastSeen?.toDate()?.time ?: 0L,
+                        conversaDigitandoId = data["typingChatId"] as? String ?: "",
+                        jogoAtivo = data["activeGame"] as? String ?: "",
+                    )
+                })
+            }
+
+    fun atualizarPresencaChat(online: Boolean, jogoAtivo: String = "", conversaDigitandoId: String = "") {
+        val uid = auth.currentUser?.uid ?: return
+        database.collection("userPresence").document(uid).set(
+            mapOf(
+                "uid" to uid,
+                "online" to online,
+                "lastSeenAt" to com.google.firebase.firestore.FieldValue.serverTimestamp(),
+                "activeGame" to jogoAtivo.take(40),
+                "typingChatId" to conversaDigitandoId.take(160),
+            ),
+            com.google.firebase.firestore.SetOptions.merge(),
+        )
+    }
 
     fun observarMensagensChat(
         chatId: String,

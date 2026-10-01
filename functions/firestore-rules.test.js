@@ -78,6 +78,25 @@ test("blocked users cannot read their profile or the leaderboard", async () => {
   await assertFails(getDoc(doc(database, "leaderboard", uid)));
 });
 
+test("presence is visible to active players but writable only by its owner", async () => {
+  const uid = "presence-owner";
+  await seedPlayer(uid);
+  await seedPlayer("presence-reader");
+  const ownerDb = environment.authenticatedContext(uid).firestore();
+  const readerDb = environment.authenticatedContext("presence-reader").firestore();
+  const presence = {
+    uid,
+    online: true,
+    lastSeenAt: serverTimestamp(),
+    activeGame: "Jogando",
+    typingChatId: "global",
+  };
+  await assertSucceeds(setDoc(doc(ownerDb, "userPresence", uid), presence));
+  await assertSucceeds(getDoc(doc(readerDb, "userPresence", uid)));
+  await assertFails(setDoc(doc(readerDb, "userPresence", uid), { ...presence, online: false }));
+  await assertFails(setDoc(doc(ownerDb, "userPresence", uid), { ...presence, admin: true }));
+});
+
 test("chat accepts an authenticated Cloudinary voice note but rejects arbitrary audio URLs", async () => {
   const uid = "audio-sender";
   await seedPlayer(uid);

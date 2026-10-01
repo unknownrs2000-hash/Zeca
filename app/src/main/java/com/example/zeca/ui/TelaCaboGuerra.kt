@@ -1,5 +1,7 @@
 package com.example.zeca.ui
 
+import android.content.Intent
+import android.net.Uri
 import android.os.SystemClock
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -41,6 +43,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -60,6 +63,8 @@ fun TelaCaboGuerra(
     uidAtual: String,
     saldoCentavos: Long,
     jogadores: List<JogadorRanking>,
+    roomInviteId: String,
+    onRoomInviteHandled: () -> Unit,
     onCarregarSalas: ((List<SalaCaboGuerra>, Exception?) -> Unit) -> Unit,
     onCriarSala: (Long, List<String>, String, String, String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
     onEntrarSala: (String, String, String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
@@ -80,14 +85,27 @@ fun TelaCaboGuerra(
     var puxoesPendentes by remember { mutableStateOf(0) }
     var enviandoLotePuxoes by remember { mutableStateOf(false) }
     var ultimoToqueMs by remember { mutableStateOf(0L) }
+    var deepLinkResolvido by remember(roomInviteId) { mutableStateOf(roomInviteId.isBlank()) }
     val convidados = remember { mutableStateListOf<String>() }
     val jogadoresDisponiveis = jogadores.filter { it.uid != uidAtual }
     val haptic = LocalHapticFeedback.current
+    val contexto = LocalContext.current
 
     fun atualizarSalas() {
         onCarregarSalas { rooms, error ->
             salas = rooms
             if (error != null) erro = error.localizedMessage.orEmpty()
+            if (!deepLinkResolvido && roomInviteId.isNotBlank()) {
+                val invitedRoom = rooms.firstOrNull { it.id == roomInviteId }
+                if (invitedRoom != null) {
+                    salaSelecionada = invitedRoom
+                    aviso = "Convite para Cabo de Guerra aberto."
+                } else if (error == null) {
+                    erro = "Esta sala não existe mais ou você não tem convite para ela."
+                }
+                deepLinkResolvido = true
+                onRoomInviteHandled()
+            }
             salaSelecionada?.let { selected -> rooms.firstOrNull { it.id == selected.id }?.let { salaSelecionada = it } }
         }
     }
@@ -123,6 +141,8 @@ fun TelaCaboGuerra(
                     puxoesPendentes = 0
                     atualizarSalas()
                 } else {
+                    val acceptedPulls = next?.puxoesAceitos?.coerceIn(0, count) ?: count
+                    if (next?.status == "active") puxoesPendentes += count - acceptedPulls
                     salaSelecionada = next
                 }
             }
@@ -143,6 +163,20 @@ fun TelaCaboGuerra(
             return false
         }
         return true
+    }
+
+    fun compartilharConvite(roomId: String) {
+        val inviteLink = Uri.Builder()
+            .scheme("zeca")
+            .authority("tug")
+            .appendPath(roomId)
+            .build()
+            .toString()
+        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, "Entre na minha sala de Cabo de Guerra: $inviteLink")
+        }
+        contexto.startActivity(Intent.createChooser(sendIntent, "Compartilhar convite"))
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
@@ -253,6 +287,9 @@ fun TelaCaboGuerra(
                                         }
                                     }
                                 }
+                            }
+                            TextButton(onClick = { compartilharConvite(room.id) }, enabled = !carregando) {
+                                Text("Compartilhar link de convite", color = Cores.Turquesa)
                             }
                             TextButton(
                                 onClick = {

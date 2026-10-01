@@ -21,13 +21,13 @@ function applyTugPull(room, uid, nowMs, pullCount = 1) {
   }
   const lastPullAtMs = room.lastPullAtMs?.[uid] ?? room.startedAtMs ?? nowMs - PULL_COOLDOWN_MS;
   const allowedPulls = Math.floor((nowMs - lastPullAtMs) / PULL_COOLDOWN_MS);
-  if (allowedPulls < 1 || pullCount > allowedPulls) throw new Error("pull-too-fast");
+  if (allowedPulls < 1) throw new Error("pull-too-fast");
 
   const teamAPulls = room.teamAPulls ?? room.creatorPulls ?? 0;
   const teamBPulls = room.teamBPulls ?? room.opponentPulls ?? 0;
   const lead = teamAPulls - teamBPulls;
   const pullsToWin = player.team === "A" ? WINNING_PULL_MARGIN - lead : WINNING_PULL_MARGIN + lead;
-  const appliedPulls = Math.min(pullCount, pullsToWin);
+  const appliedPulls = Math.min(pullCount, allowedPulls, pullsToWin);
   const nextTeamAPulls = teamAPulls + (player.team === "A" ? appliedPulls : 0);
   const nextTeamBPulls = teamBPulls + (player.team === "B" ? appliedPulls : 0);
   const nextLead = nextTeamAPulls - nextTeamBPulls;

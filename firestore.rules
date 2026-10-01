@@ -263,6 +263,23 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /userPresence/{userId} {
+      allow read: if activeUser();
+      allow create, update: if activeUser()
+        && request.auth.uid == userId
+        && request.resource.data.keys().hasOnly([
+          'uid', 'online', 'lastSeenAt', 'activeGame', 'typingChatId'
+        ])
+        && request.resource.data.uid == userId
+        && request.resource.data.online is bool
+        && request.resource.data.lastSeenAt == request.time
+        && request.resource.data.activeGame is string
+        && request.resource.data.activeGame.size() <= 40
+        && request.resource.data.typingChatId is string
+        && request.resource.data.typingChatId.size() <= 160;
+      allow delete: if activeUser() && request.auth.uid == userId;
+    }
+
     match /pixKeys/{keyHash} {
       allow read, write: if false;
     }
