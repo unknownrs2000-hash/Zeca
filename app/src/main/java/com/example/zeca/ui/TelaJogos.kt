@@ -99,10 +99,12 @@ private val miniJogosSolo = listOf(
     )),
 )
 
-private val jogosSolo = listOf(
-    "Slots", "Roleta", "Crash", "Blackjack", "Cara ou coroa", "Dado", "Par ou ímpar", "Minas",
-    "Raspadinha", "Futebol", "Apostas esportivas",
-) + miniJogosSolo.map { it.nome }
+private val jogosSoloPorGrupo = linkedMapOf(
+    "Novos" to miniJogosSolo.map { it.nome },
+    "Rápidos" to listOf("Cara ou coroa", "Dado", "Par ou ímpar", "Raspadinha", "Futebol"),
+    "Mesa" to listOf("Slots", "Roleta", "Crash", "Blackjack", "Minas"),
+    "Esportes" to listOf("Apostas esportivas"),
+)
 
 @Composable
 fun TelaJogos(
@@ -133,8 +135,9 @@ fun TelaJogos(
     onIniciarBlackjack: (Long, String, (EstadoBlackjack?, Exception?) -> Unit) -> Unit,
     onAcaoBlackjack: (String, String, String, (EstadoBlackjack?, Exception?) -> Unit) -> Unit,
 ) {
-    var jogo by rememberSaveable { mutableStateOf("Slots") }
+    var jogo by rememberSaveable { mutableStateOf(miniJogosSolo.first().nome) }
     var categoriaJogos by rememberSaveable { mutableStateOf("Solo") }
+    var grupoSolo by rememberSaveable { mutableStateOf("Novos") }
     var selecaoMinijogo by rememberSaveable { mutableStateOf("") }
     var apostaTexto by rememberSaveable { mutableStateOf("10,00") }
     var tipoRoleta by rememberSaveable { mutableStateOf("Cor") }
@@ -271,27 +274,62 @@ fun TelaJogos(
         JogosPainel {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf("Solo", "1v1", "2v2").forEach { categoria ->
-                    Button(
-                        onClick = {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(42.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (categoriaJogos == categoria) Cores.Verde else Color.White.copy(alpha = 0.07f))
+                            .clickable {
                             if (categoriaJogos != categoria) {
                                 categoriaJogos = categoria
-                                jogo = if (categoria == "Solo") "Slots" else "Cabo de guerra"
+                                grupoSolo = "Novos"
+                                jogo = if (categoria == "Solo") miniJogosSolo.first().nome else "Cabo de guerra"
                                 mensagem = ""
                                 lucroUltimo = 0L
                                 resultado = "Escolha um jogo para começar"
                             }
                         },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (categoriaJogos == categoria) Color.White.copy(alpha = 0.9f) else Color.White.copy(alpha = 0.1f),
-                        ),
+                        contentAlignment = Alignment.Center,
                     ) {
-                        Text(categoria, color = if (categoriaJogos == categoria) Color(0xFF111418) else Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text(categoria, color = if (categoriaJogos == categoria) Color(0xFF111418) else Color.White.copy(alpha = 0.78f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
+            if (categoriaJogos == "Solo") {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    jogosSoloPorGrupo.keys.forEach { grupo ->
+                        val selecionado = grupoSolo == grupo
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(34.dp)
+                                .clip(RoundedCornerShape(9.dp))
+                                .background(if (selecionado) Color.White.copy(alpha = 0.13f) else Color.Transparent)
+                                .clickable {
+                                    grupoSolo = grupo
+                                    jogo = jogosSoloPorGrupo[grupo]?.firstOrNull().orEmpty()
+                                    selecaoMinijogo = miniJogosSolo.firstOrNull { it.nome == jogo }?.opcoes?.firstOrNull()?.valor.orEmpty()
+                                    mensagem = ""
+                                    lucroUltimo = 0L
+                                    resultado = "Escolha um jogo para começar"
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(grupo, color = if (selecionado) Color.White else Color.White.copy(alpha = 0.58f), fontSize = 10.sp, fontWeight = if (selecionado) FontWeight.Bold else FontWeight.Medium, maxLines = 1)
+                        }
+                    }
+                }
+            }
+            val jogosVisiveis = if (categoriaJogos == "Solo") jogosSoloPorGrupo[grupoSolo].orEmpty() else listOf("Cabo de guerra")
+            Text(
+                if (categoriaJogos == "Solo") "${jogosVisiveis.size} jogos · $grupoSolo" else "Salas multiplayer · ${categoriaJogos}",
+                color = Color.White.copy(alpha = 0.5f),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+            )
             SeletorJogos(
-                if (categoriaJogos == "Solo") jogosSolo else listOf("Cabo de guerra"),
+                jogosVisiveis,
                 jogo,
             ) {
                 jogo = it
@@ -1116,23 +1154,88 @@ private fun DadoVisual(numero: Int, carregando: Boolean, pulso: Float) {
 @Composable
 internal fun SeletorJogos(opcoes: List<String>, selecionada: String, onSelecionar: (String) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        opcoes.chunked(3).forEach { linha ->
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        opcoes.chunked(2).forEach { linha ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 linha.forEach { opcao ->
-                    Button(
-                        onClick = { onSelecionar(opcao) },
+                    TileJogo(
+                        nome = opcao,
+                        selecionado = opcao == selecionada,
                         modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (opcao == selecionada) Color.White.copy(alpha = 0.9f) else Color.White.copy(alpha = 0.1f),
-                        ),
-                    ) {
-                        Text(opcao, color = if (opcao == selecionada) Color(0xFF111418) else Color.White, fontSize = 10.sp, maxLines = 2)
-                    }
+                        onClick = { onSelecionar(opcao) },
+                    )
                 }
                 if (linha.size == 1) Spacer(Modifier.weight(1f))
             }
         }
     }
+}
+
+@Composable
+private fun TileJogo(nome: String, selecionado: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val destaque = corDestaqueJogo(nome)
+    Row(
+        modifier = modifier
+            .height(72.dp)
+            .clip(RoundedCornerShape(13.dp))
+            .background(if (selecionado) destaque.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.045f))
+            .border(1.dp, if (selecionado) destaque.copy(alpha = 0.82f) else Color.White.copy(alpha = 0.09f), RoundedCornerShape(13.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(
+            Modifier
+                .size(38.dp)
+                .clip(RoundedCornerShape(11.dp))
+                .background(destaque.copy(alpha = 0.16f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(simboloJogo(nome), color = destaque, fontSize = 20.sp, fontWeight = FontWeight.Black)
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(nome, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 2)
+            if (selecionado) Text("Selecionado", color = destaque, fontSize = 9.sp, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+private fun simboloJogo(nome: String): String = when (nome) {
+    "Slots" -> "7"
+    "Roleta", "Roda colorida" -> "◉"
+    "Crash" -> "↗"
+    "Blackjack", "Duas cartas" -> "♠"
+    "Cara ou coroa" -> "◐"
+    "Dado", "Soma dos dados" -> "⚄"
+    "Par ou ímpar" -> "±"
+    "Minas", "Portas da sorte" -> "◆"
+    "Raspadinha" -> "✦"
+    "Futebol" -> "⚽"
+    "Apostas esportivas" -> "◎"
+    "Pedra, papel e tesoura" -> "✂"
+    "Maior ou menor" -> "↕"
+    "Número secreto" -> "#"
+    "Faixa premiada" -> "⌁"
+    "Cabo de guerra" -> "⇄"
+    else -> "•"
+}
+
+private fun corDestaqueJogo(nome: String): Color = when (nome) {
+    "Slots" -> Color(0xFFFF737C)
+    "Roleta", "Roda colorida" -> Color(0xFFFFC857)
+    "Crash" -> Color(0xFF43D9C0)
+    "Blackjack", "Duas cartas" -> Color(0xFF8EA8FF)
+    "Cara ou coroa", "Pedra, papel e tesoura" -> Color(0xFFFF987B)
+    "Dado", "Soma dos dados" -> Color(0xFF63C8FF)
+    "Par ou ímpar" -> Color(0xFF80D99A)
+    "Minas", "Portas da sorte" -> Color(0xFFFF8C80)
+    "Raspadinha" -> Color(0xFFC9A1FF)
+    "Futebol", "Apostas esportivas" -> Color(0xFF77DFA0)
+    "Maior ou menor" -> Color(0xFF80C7FF)
+    "Número secreto" -> Color(0xFFFFD166)
+    "Faixa premiada" -> Color(0xFFB6D875)
+    "Cabo de guerra" -> Color(0xFFFF987B)
+    else -> Cores.Turquesa
 }
 
 @Composable
