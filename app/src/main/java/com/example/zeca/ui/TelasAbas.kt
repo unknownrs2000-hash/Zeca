@@ -272,6 +272,8 @@ private fun compartilharComprovanteImagem(context: android.content.Context, reci
 
 @Composable
 fun TelaCarteira(
+    linkPagamentoRecebido: String,
+    onLinkPagamentoRecebido: () -> Unit,
     saldoCentavos: Long,
     chavePix: String,
     tipoChavePix: String,
@@ -285,6 +287,7 @@ fun TelaCarteira(
     onTransferir: (String, Long, String, (ResultadoTransferencia?, String?) -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
+    var areaCarteira by rememberSaveable { mutableStateOf("Cobrar") }
     var tipoEdicao by rememberSaveable { mutableStateOf(tipoChavePix.ifBlank { "E-mail" }) }
     var chaveEditavel by rememberSaveable { mutableStateOf(chavePix) }
     var mensagem by rememberSaveable { mutableStateOf("") }
@@ -350,244 +353,301 @@ fun TelaCarteira(
             .addOnFailureListener { mensagemTransferencia = "Não foi possível ler o QR code. Tente novamente." }
     }
 
+    LaunchedEffect(linkPagamentoRecebido) {
+        if (linkPagamentoRecebido.isBlank()) return@LaunchedEffect
+        val uri = runCatching { Uri.parse(linkPagamentoRecebido) }.getOrNull()
+        val chave = uri?.getQueryParameter("key").orEmpty()
+        val amountParameter = uri?.getQueryParameter("amount")
+        val valor = amountParameter?.toLongOrNull()
+        if (uri?.scheme != "zeca" || uri.host != "pix" || chave.isBlank()
+            || (amountParameter != null && (valor == null || valor !in 1..1_000_000))) {
+            areaCarteira = "Enviar"
+            mensagemTransferencia = "Link de pagamento inválido."
+        } else {
+            areaCarteira = "Enviar"
+            chaveDestinatario = chave
+            destinatario = null
+            valor?.let { valorTransferencia = BigDecimal.valueOf(it, 2).toPlainString().replace('.', ',') }
+            buscarDestinatario(chave)
+        }
+        onLinkPagamentoRecebido()
+    }
+
     TelaBase("Carteira", "Saldo e movimentações.") {
         GlassCard {
             Text("SALDO DISPONÍVEL", color = Color.White.copy(alpha = 0.62f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
             Text(formatarReais(saldoCentavos), color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black)
         }
 
-        GlassCard {
-            Text("Minha chave Pix", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            if (chavePix.isNotBlank()) {
-                Text("${tipoChavePix}: $chavePix", color = Color.White.copy(alpha = 0.76f), fontSize = 13.sp)
-                TextButton(onClick = {
-                    val clipboard = context.getSystemService(ClipboardManager::class.java)
-                    clipboard?.setPrimaryClip(ClipData.newPlainText("Chave Pix do Zeca", chavePix))
-                    Toast.makeText(context, "Chave copiada", Toast.LENGTH_SHORT).show()
-                }) { Text("Copiar chave") }
-            } else {
-                Text("Cadastre um e-mail ou gere uma chave aleatória.", color = Color.White.copy(alpha = 0.68f), fontSize = 13.sp)
-            }
+        Opcoes(listOf("Cobrar", "Enviar", "Histórico", "Chave Pix"), areaCarteira) { areaCarteira = it }
 
-            Opcoes(listOf("E-mail", "Aleatória"), tipoEdicao) { novoTipo ->
-                tipoEdicao = novoTipo
-                chaveEditavel = if (novoTipo == tipoChavePix) chavePix else ""
-                mensagem = ""
-            }
-            if (tipoEdicao == "E-mail") {
-                OutlinedTextField(
-                    value = chaveEditavel,
-                    onValueChange = { chaveEditavel = it; mensagem = "" },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("E-mail da chave") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+        when (areaCarteira) {
+            "Cobrar" -> GlassCard {
+                Text("Criar cobrança", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    "QR e link para transferências entre saldos do Zeca. Não é um Pix bancário.",
+                    color = Color.White.copy(alpha = 0.65f),
+                    fontSize = 12.sp,
                 )
-                if (emailVerificado) {
-                    Text("E-mail da conta verificado.", color = Cores.Verde, fontSize = 12.sp)
-                } else {
-                    Text(
-                        "Verifique o e-mail da conta ($emailConta) para cadastrá-lo como chave Pix.",
-                        color = Cores.Laranja,
-                        fontSize = 12.sp,
-                    )
-                    Button(
-                        onClick = {
-                            verificacaoOcupada = true
-                            mensagemVerificacao = ""
-                            onReenviarVerificacao { erro ->
-                                verificacaoOcupada = false
-                                mensagemVerificacao = erro ?: "Enviamos o link de verificação para $emailConta."
-                            }
-                        },
-                        enabled = !verificacaoOcupada,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Reenviar e-mail de verificação") }
-                    Button(
-                        onClick = {
-                            verificacaoOcupada = true
-                            mensagemVerificacao = ""
-                            onConferirVerificacao { verificado, erro ->
-                                verificacaoOcupada = false
-                                if (verificado) emailVerificado = true
-                                mensagemVerificacao = erro
-                                    ?: if (verificado) "E-mail verificado." else "Ainda não verificado. Abra o link enviado ao seu e-mail."
-                            }
-                        },
-                        enabled = !verificacaoOcupada,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Já verifiquei") }
-                    if (mensagemVerificacao.isNotBlank()) {
-                        Text(mensagemVerificacao, color = Color.White.copy(alpha = 0.76f), fontSize = 12.sp)
-                    }
-                }
-            } else {
                 OutlinedTextField(
-                    value = chaveEditavel,
-                    onValueChange = { chaveEditavel = it; mensagem = "" },
+                    value = valorCobranca,
+                    onValueChange = { valorCobranca = it; mensagemQr = ""; mostrarQr = false },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Chave aleatória") },
-                    readOnly = true,
-                    singleLine = true,
-                )
-                TextButton(onClick = {
-                    chaveEditavel = UUID.randomUUID().toString().replace("-", "")
-                    mensagem = ""
-                }) { Text("Gerar chave aleatória") }
-            }
-            Button(
-                onClick = {
-                    onSalvarChave(tipoEdicao, chaveEditavel.trim()) { erro ->
-                        mensagem = erro ?: "Chave salva."
-                    }
-                },
-                enabled = chaveValida && (tipoEdicao != "E-mail" || emailVerificado),
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Salvar chave") }
-            if (mensagem.isNotBlank()) Text(mensagem, color = Cores.Verde, fontSize = 13.sp)
-        }
-
-        GlassCard {
-            Text("Criar cobrança por QR", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            Text(
-                "QR para transferências entre saldos do Zeca. Não é um QR Pix bancário.",
-                color = Color.White.copy(alpha = 0.65f),
-                fontSize = 12.sp,
-            )
-            OutlinedTextField(
-                value = valorCobranca,
-                onValueChange = { valorCobranca = it; mensagemQr = ""; mostrarQr = false },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Valor fixo (opcional)") },
-                prefix = { Text("R$ ") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            )
-            Button(
-                onClick = {
-                    mostrarQr = !valorQrInvalido
-                    mensagemQr = if (valorQrInvalido) {
-                        "Informe um valor entre R$ 0,01 e R$ 10.000,00."
-                    } else ""
-                },
-                enabled = chavePix.isNotBlank(),
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Gerar QR de cobrança") }
-            if (imagemQr != null) {
-                Image(
-                    bitmap = imagemQr.asImageBitmap(),
-                    contentDescription = "QR code de cobrança interna do Zeca",
-                    modifier = Modifier.align(Alignment.CenterHorizontally).size(220.dp),
-                )
-                Text("Chave: $chavePix", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
-                valorQrCentavos?.let {
-                    Text("Valor: ${formatarReais(it)}", color = Cores.Verde, fontWeight = FontWeight.Bold)
-                }
-            }
-            if (mensagemQr.isNotBlank()) Text(mensagemQr, color = Cores.Laranja, fontSize = 12.sp)
-            if (chavePix.isBlank()) {
-                Text("Cadastre uma chave antes de criar uma cobrança.", color = Cores.Laranja, fontSize = 12.sp)
-            }
-        }
-
-        GlassCard {
-            Text("Enviar para um usuário", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            Button(onClick = ::lerQrCode, modifier = Modifier.fillMaxWidth()) { Text("Ler QR code") }
-            OutlinedTextField(
-                value = chaveDestinatario,
-                onValueChange = { chaveDestinatario = it; destinatario = null; mensagemTransferencia = "" },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("E-mail ou chave aleatória") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-            )
-            Button(
-                onClick = { buscarDestinatario(chaveDestinatario.trim()) },
-                enabled = chaveDestinatario.isNotBlank() && !transferenciaOcupada,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text(if (transferenciaOcupada) "Buscando..." else "Buscar usuário") }
-            destinatario?.let { jogador ->
-                Text("${jogador.apelido} · Nível ${jogador.nivel}", color = Cores.Turquesa, fontWeight = FontWeight.Bold)
-                OutlinedTextField(
-                    value = valorTransferencia,
-                    onValueChange = { valorTransferencia = it; mensagemTransferencia = "" },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Valor da transferência") },
+                    label = { Text("Valor fixo (opcional)") },
                     prefix = { Text("R$ ") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 )
-                val valorEnvio = parseValorCentavos(valorTransferencia)
                 Button(
                     onClick = {
-                        val valor = valorEnvio ?: return@Button
-                        transferenciaOcupada = true
-                        onTransferir(chaveDestinatario.trim(), valor, UUID.randomUUID().toString()) { resultado, erro ->
-                            transferenciaOcupada = false
-                            if (erro == null && resultado != null) {
-                                comprovante = ComprovantePix(
-                                    id = resultado.id,
-                                    contraparte = resultado.nomeDestino,
-                                    valorCentavos = valor,
-                                    horario = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.forLanguageTag("pt-BR"))
-                                        .format(java.util.Date()),
-                                    recebimento = false,
-                                    saldoAposCentavos = resultado.saldoCentavos,
-                                )
-                                destinatario = null
-                                mensagemTransferencia = "Transferência concluída para ${resultado.nomeDestino}."
-                                chaveDestinatario = ""
-                            } else {
-                                mensagemTransferencia = erro ?: "Não foi possível concluir a transferência."
-                            }
-                        }
+                        mostrarQr = !valorQrInvalido
+                        mensagemQr = if (valorQrInvalido) {
+                            "Informe um valor entre R$ 0,01 e R$ 10.000,00."
+                        } else ""
                     },
-                    enabled = valorEnvio != null && valorEnvio > 0 && !transferenciaOcupada,
+                    enabled = chavePix.isNotBlank(),
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text(if (transferenciaOcupada) "Enviando..." else "Confirmar envio") }
-            }
-            if (mensagemTransferencia.isNotBlank()) {
-                Text(
-                    mensagemTransferencia,
-                    color = if (mensagemTransferencia.contains("encontrada")) Cores.Laranja else Cores.Verde,
-                    fontSize = 13.sp,
-                )
-            }
-            Text("A transferência é entre saldos do Zeca; não movimenta valores bancários.", color = Color.White.copy(alpha = 0.58f), fontSize = 11.sp)
-        }
-
-        GlassCard {
-            Text("Histórico", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            if (historico.isEmpty()) {
-                Text("Nenhuma movimentação por enquanto.", color = Color.White.copy(alpha = 0.65f), fontSize = 13.sp)
-            } else {
-                historico.take(8).forEach { movimento ->
+                ) { Text(if (mostrarQr) "Atualizar cobrança" else "Criar cobrança") }
+                if (imagemQr != null) {
+                    Image(
+                        bitmap = imagemQr.asImageBitmap(),
+                        contentDescription = "QR code de cobrança interna do Zeca",
+                        modifier = Modifier.align(Alignment.CenterHorizontally).size(220.dp),
+                    )
+                    Text("Chave: $chavePix", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                    valorQrCentavos?.let {
+                        Text("Valor: ${formatarReais(it)}", color = Cores.Verde, fontWeight = FontWeight.Bold)
+                    }
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .then(if (movimento.ehTransferenciaPix) Modifier.clickable {
-                                comprovante = ComprovantePix(
-                                    id = movimento.id,
-                                    contraparte = movimento.titulo,
-                                    valorCentavos = kotlin.math.abs(movimento.variacaoCentavos),
-                                    horario = movimento.horario,
-                                    recebimento = movimento.variacaoCentavos > 0,
-                                )
-                            } else Modifier),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(movimento.titulo, color = Color.White, fontSize = 14.sp)
-                            Text(movimento.horario, color = Color.White.copy(alpha = 0.52f), fontSize = 11.sp)
-                        }
-                        Text(
-                            (if (movimento.variacaoCentavos >= 0) "+" else "-") + formatarReais(kotlin.math.abs(movimento.variacaoCentavos)),
-                            color = if (movimento.variacaoCentavos >= 0) Cores.Verde else Color(0xFFFF8790),
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp,
-                        )
+                        Button(
+                            onClick = {
+                                val clipboard = context.getSystemService(ClipboardManager::class.java)
+                                clipboard?.setPrimaryClip(ClipData.newPlainText("Link de pagamento Zeca", conteudoQr))
+                                Toast.makeText(context, "Link de pagamento copiado", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("Copiar link") }
+                        Button(
+                            onClick = {
+                                val texto = buildString {
+                                    append("Cobrança Zeca")
+                                    valorQrCentavos?.let { append(" · ${formatarReais(it)}") }
+                                    append("\n$conteudoQr")
+                                }
+                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_TEXT, texto)
+                                }
+                                context.startActivity(Intent.createChooser(shareIntent, "Compartilhar cobrança"))
+                            },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("Compartilhar") }
                     }
                 }
+                if (mensagemQr.isNotBlank()) Text(mensagemQr, color = Cores.Laranja, fontSize = 12.sp)
+                if (chavePix.isBlank()) {
+                    Text("Cadastre uma chave para criar sua cobrança.", color = Cores.Laranja, fontSize = 12.sp)
+                    Button(onClick = { areaCarteira = "Chave Pix" }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Cadastrar chave Pix")
+                    }
+                }
+            }
+
+            "Enviar" -> GlassCard {
+                Text("Enviar para um usuário", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Button(onClick = ::lerQrCode, modifier = Modifier.fillMaxWidth()) { Text("Ler QR code") }
+                OutlinedTextField(
+                    value = chaveDestinatario,
+                    onValueChange = { chaveDestinatario = it; destinatario = null; mensagemTransferencia = "" },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("E-mail ou chave aleatória") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                )
+                Button(
+                    onClick = { buscarDestinatario(chaveDestinatario.trim()) },
+                    enabled = chaveDestinatario.isNotBlank() && !transferenciaOcupada,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(if (transferenciaOcupada) "Buscando..." else "Buscar usuário") }
+                destinatario?.let { jogador ->
+                    Text("${jogador.apelido} · Nível ${jogador.nivel}", color = Cores.Turquesa, fontWeight = FontWeight.Bold)
+                    OutlinedTextField(
+                        value = valorTransferencia,
+                        onValueChange = { valorTransferencia = it; mensagemTransferencia = "" },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Valor da transferência") },
+                        prefix = { Text("R$ ") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    )
+                    val valorEnvio = parseValorCentavos(valorTransferencia)
+                    Button(
+                        onClick = {
+                            val valor = valorEnvio ?: return@Button
+                            transferenciaOcupada = true
+                            onTransferir(chaveDestinatario.trim(), valor, UUID.randomUUID().toString()) { resultado, erro ->
+                                transferenciaOcupada = false
+                                if (erro == null && resultado != null) {
+                                    comprovante = ComprovantePix(
+                                        id = resultado.id,
+                                        contraparte = resultado.nomeDestino,
+                                        valorCentavos = valor,
+                                        horario = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.forLanguageTag("pt-BR"))
+                                            .format(java.util.Date()),
+                                        recebimento = false,
+                                        saldoAposCentavos = resultado.saldoCentavos,
+                                    )
+                                    destinatario = null
+                                    mensagemTransferencia = "Transferência concluída para ${resultado.nomeDestino}."
+                                    chaveDestinatario = ""
+                                } else {
+                                    mensagemTransferencia = erro ?: "Não foi possível concluir a transferência."
+                                }
+                            }
+                        },
+                        enabled = valorEnvio != null && valorEnvio > 0 && !transferenciaOcupada,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(if (transferenciaOcupada) "Enviando..." else "Confirmar envio") }
+                }
+                if (mensagemTransferencia.isNotBlank()) {
+                    Text(
+                        mensagemTransferencia,
+                        color = if (mensagemTransferencia.contains("encontrada") || mensagemTransferencia.contains("inválido")) {
+                            Cores.Laranja
+                        } else Cores.Verde,
+                        fontSize = 13.sp,
+                    )
+                }
+                Text("A transferência é entre saldos do Zeca; não movimenta valores bancários.", color = Color.White.copy(alpha = 0.58f), fontSize = 11.sp)
+            }
+
+            "Histórico" -> GlassCard {
+                Text("Movimentações", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                if (historico.isEmpty()) {
+                    Text("Nenhuma movimentação por enquanto.", color = Color.White.copy(alpha = 0.65f), fontSize = 13.sp)
+                } else {
+                    historico.take(8).forEach { movimento ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(if (movimento.ehTransferenciaPix) Modifier.clickable {
+                                    comprovante = ComprovantePix(
+                                        id = movimento.id,
+                                        contraparte = movimento.titulo,
+                                        valorCentavos = kotlin.math.abs(movimento.variacaoCentavos),
+                                        horario = movimento.horario,
+                                        recebimento = movimento.variacaoCentavos > 0,
+                                    )
+                                } else Modifier),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(movimento.titulo, color = Color.White, fontSize = 14.sp)
+                                Text(movimento.horario, color = Color.White.copy(alpha = 0.52f), fontSize = 11.sp)
+                            }
+                            Text(
+                                (if (movimento.variacaoCentavos >= 0) "+" else "-") + formatarReais(kotlin.math.abs(movimento.variacaoCentavos)),
+                                color = if (movimento.variacaoCentavos >= 0) Cores.Verde else Color(0xFFFF8790),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                            )
+                        }
+                    }
+                }
+            }
+
+            else -> GlassCard {
+                Text("Minha chave Pix", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                if (chavePix.isNotBlank()) {
+                    Text("${tipoChavePix}: $chavePix", color = Color.White.copy(alpha = 0.76f), fontSize = 13.sp)
+                    TextButton(onClick = {
+                        val clipboard = context.getSystemService(ClipboardManager::class.java)
+                        clipboard?.setPrimaryClip(ClipData.newPlainText("Chave Pix do Zeca", chavePix))
+                        Toast.makeText(context, "Chave copiada", Toast.LENGTH_SHORT).show()
+                    }) { Text("Copiar chave") }
+                } else {
+                    Text("Cadastre um e-mail ou gere uma chave aleatória.", color = Color.White.copy(alpha = 0.68f), fontSize = 13.sp)
+                }
+
+                Opcoes(listOf("E-mail", "Aleatória"), tipoEdicao) { novoTipo ->
+                    tipoEdicao = novoTipo
+                    chaveEditavel = if (novoTipo == tipoChavePix) chavePix else ""
+                    mensagem = ""
+                }
+                if (tipoEdicao == "E-mail") {
+                    OutlinedTextField(
+                        value = chaveEditavel,
+                        onValueChange = { chaveEditavel = it; mensagem = "" },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("E-mail da chave") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                    )
+                    if (emailVerificado) {
+                        Text("E-mail da conta verificado.", color = Cores.Verde, fontSize = 12.sp)
+                    } else {
+                        Text(
+                            "Verifique o e-mail da conta ($emailConta) para cadastrá-lo como chave Pix.",
+                            color = Cores.Laranja,
+                            fontSize = 12.sp,
+                        )
+                        Button(
+                            onClick = {
+                                verificacaoOcupada = true
+                                mensagemVerificacao = ""
+                                onReenviarVerificacao { erro ->
+                                    verificacaoOcupada = false
+                                    mensagemVerificacao = erro ?: "Enviamos o link de verificação para $emailConta."
+                                }
+                            },
+                            enabled = !verificacaoOcupada,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("Reenviar e-mail de verificação") }
+                        Button(
+                            onClick = {
+                                verificacaoOcupada = true
+                                mensagemVerificacao = ""
+                                onConferirVerificacao { verificado, erro ->
+                                    verificacaoOcupada = false
+                                    if (verificado) emailVerificado = true
+                                    mensagemVerificacao = erro
+                                        ?: if (verificado) "E-mail verificado." else "Ainda não verificado. Abra o link enviado ao seu e-mail."
+                                }
+                            },
+                            enabled = !verificacaoOcupada,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("Já verifiquei") }
+                        if (mensagemVerificacao.isNotBlank()) {
+                            Text(mensagemVerificacao, color = Color.White.copy(alpha = 0.76f), fontSize = 12.sp)
+                        }
+                    }
+                } else {
+                    OutlinedTextField(
+                        value = chaveEditavel,
+                        onValueChange = { chaveEditavel = it; mensagem = "" },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Chave aleatória") },
+                        readOnly = true,
+                        singleLine = true,
+                    )
+                    TextButton(onClick = {
+                        chaveEditavel = UUID.randomUUID().toString().replace("-", "")
+                        mensagem = ""
+                    }) { Text("Gerar chave aleatória") }
+                }
+                Button(
+                    onClick = {
+                        onSalvarChave(tipoEdicao, chaveEditavel.trim()) { erro ->
+                            mensagem = erro ?: "Chave salva."
+                        }
+                    },
+                    enabled = chaveValida && (tipoEdicao != "E-mail" || emailVerificado),
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Salvar chave") }
+                if (mensagem.isNotBlank()) Text(mensagem, color = Cores.Verde, fontSize = 13.sp)
             }
         }
     }

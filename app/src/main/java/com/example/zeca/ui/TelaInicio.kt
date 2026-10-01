@@ -1,5 +1,8 @@
 package com.example.zeca.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -37,6 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -348,8 +352,10 @@ internal fun TelaPerfilJogador(
     carregando: Boolean,
     erro: String,
     onFechar: () -> Unit,
+    gruposEmComum: List<String> = emptyList(),
     onConversar: (() -> Unit)? = null,
 ) {
+    val context = LocalContext.current
     BackHandler(onBack = onFechar)
     Box(
         modifier = Modifier
@@ -412,12 +418,34 @@ internal fun TelaPerfilJogador(
                                 color = Color.White.copy(alpha = 0.58f),
                                 fontSize = 12.sp,
                             )
+                            Button(
+                                onClick = {
+                                    val clipboard = context.getSystemService(ClipboardManager::class.java)
+                                    clipboard?.setPrimaryClip(ClipData.newPlainText("Chave Pix", perfil.chavePix))
+                                    Toast.makeText(context, "Chave Pix copiada", Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("Copiar chave Pix") }
                         }
                     }
                     SecaoJogador("Estatísticas") {
                         DadoJogador("Saldo", formatarReais(perfil.saldoCentavos))
                         DadoJogador("Partidas", perfil.partidas.toString())
                         DadoJogador("Vitórias", perfil.vitorias.toString())
+                        DadoJogador("Derrotas", (perfil.partidas - perfil.vitorias).coerceAtLeast(0).toString())
+                        DadoJogador(
+                            "Taxa de vitórias",
+                            if (perfil.partidas > 0) {
+                                "${(perfil.vitorias.coerceIn(0, perfil.partidas) * 100) / perfil.partidas}%"
+                            } else "—",
+                        )
+                    }
+                    if (gruposEmComum.isNotEmpty()) {
+                        SecaoJogador("Grupos em comum") {
+                            gruposEmComum.forEach { nomeGrupo ->
+                                Text(nomeGrupo, color = Color.White, fontSize = 14.sp)
+                            }
+                        }
                     }
                     SecaoJogador("Coleção") {
                         ItensColecao(perfil.inventario, molduraEquipada = perfil.molduraEquipada)

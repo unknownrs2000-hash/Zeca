@@ -115,18 +115,36 @@ private data class NotificacaoApp(
 class MainActivity : ComponentActivity() {
     private val appForeground = mutableStateOf(false)
     private val tugInviteRoomId = mutableStateOf("")
+    private val pixPaymentLink = mutableStateOf("")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         tugInviteRoomId.value = roomIdFromIntent(intent)
+        pixPaymentLink.value = pixPaymentLinkFromIntent(intent)
         enableEdgeToEdge()
-        setContent { CassinoTheme { CassinoApp(appForeground.value, tugInviteRoomId.value) { tugInviteRoomId.value = "" } } }
+        setContent {
+            CassinoTheme {
+                CassinoApp(
+                    appForeground.value,
+                    tugInviteRoomId.value,
+                    pixPaymentLink.value,
+                    { tugInviteRoomId.value = "" },
+                    { pixPaymentLink.value = "" },
+                )
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         tugInviteRoomId.value = roomIdFromIntent(intent)
+        pixPaymentLink.value = pixPaymentLinkFromIntent(intent)
+    }
+
+    private fun pixPaymentLinkFromIntent(intent: Intent?): String {
+        val uri = intent?.data ?: return ""
+        return uri.takeIf { it.scheme == "zeca" && it.host == "pix" }?.toString().orEmpty()
     }
 
     private fun roomIdFromIntent(intent: Intent?): String {
@@ -150,7 +168,13 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun CassinoApp(appForeground: Boolean, tugInviteRoomId: String, onTugInviteHandled: () -> Unit) {
+fun CassinoApp(
+    appForeground: Boolean,
+    tugInviteRoomId: String,
+    pixPaymentLink: String,
+    onTugInviteHandled: () -> Unit,
+    onPixPaymentLinkHandled: () -> Unit,
+) {
     val auth = remember { FirebaseRepository.auth }
     var usuario by remember { mutableStateOf(auth.currentUser) }
 
@@ -164,7 +188,7 @@ fun CassinoApp(appForeground: Boolean, tugInviteRoomId: String, onTugInviteHandl
     if (usuarioAtual == null) {
         TelaAutenticacao(onAutenticado = { usuario = it })
     } else {
-        AppAutenticado(usuarioAtual, appForeground, tugInviteRoomId, onTugInviteHandled)
+        AppAutenticado(usuarioAtual, appForeground, tugInviteRoomId, pixPaymentLink, onTugInviteHandled, onPixPaymentLinkHandled)
     }
 }
 
@@ -173,7 +197,9 @@ fun CassinoApp(appForeground: Boolean, tugInviteRoomId: String, onTugInviteHandl
         usuario: FirebaseUser,
         appForeground: Boolean,
         tugInviteRoomId: String,
+        pixPaymentLink: String,
         onTugInviteHandled: () -> Unit,
+        onPixPaymentLinkHandled: () -> Unit,
     ) {
     val contexto = LocalContext.current
     var aba by rememberSaveable { mutableStateOf(Aba.Inicio) }
@@ -195,6 +221,10 @@ fun CassinoApp(appForeground: Boolean, tugInviteRoomId: String, onTugInviteHandl
 
     LaunchedEffect(tugInviteRoomId) {
         if (tugInviteRoomId.isNotBlank()) aba = Aba.Jogos
+    }
+
+    LaunchedEffect(pixPaymentLink) {
+        if (pixPaymentLink.isNotBlank()) aba = Aba.Carteira
     }
 
     DisposableEffect(usuario.uid, aba) {
@@ -476,6 +506,8 @@ fun CassinoApp(appForeground: Boolean, tugInviteRoomId: String, onTugInviteHandl
                             },
                         )
                         Aba.Carteira -> TelaCarteira(
+                            linkPagamentoRecebido = pixPaymentLink,
+                            onLinkPagamentoRecebido = onPixPaymentLinkHandled,
                             saldoCentavos = jogador.saldoCentavos,
                             chavePix = jogador.chavePix,
                             tipoChavePix = jogador.tipoChavePix,
@@ -512,6 +544,9 @@ fun CassinoApp(appForeground: Boolean, tugInviteRoomId: String, onTugInviteHandl
                             uidAtual = usuario.uid,
                             chavePixAtual = jogador.chavePix,
                             jogadores = ranking,
+                            onBuscarJogadores = { prefixo, concluir ->
+                                FirebaseRepository.buscarJogadoresPorUsername(prefixo, concluir)
+                            },
                             presencas = presencasChat,
                             onAtualizarDigitando = { chatIdDigitando ->
                                 FirebaseRepository.atualizarPresencaChat(
@@ -563,6 +598,9 @@ fun CassinoApp(appForeground: Boolean, tugInviteRoomId: String, onTugInviteHandl
                             },
                             onGerenciarMembros = { chatId, action, targetUid, memberUids, concluir ->
                                 FirebaseRepository.gerenciarMembrosGrupo(chatId, action, targetUid, memberUids, concluir)
+                            },
+                            onDissolverGrupo = { chatId, concluir ->
+                                FirebaseRepository.dissolverGrupoChat(chatId, concluir)
                             },
                             onEnviarFotoGrupo = { chatId, uri, concluir ->
                                 FirebaseRepository.enviarFotoGrupo(uri, chatId, contexto.contentResolver) { error ->

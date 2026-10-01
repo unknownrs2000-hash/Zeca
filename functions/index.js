@@ -1392,8 +1392,8 @@ async function expireIdleTugRoom(roomRef) {
 exports.listTugRooms = onCall(async (request) => {
   const uid = authenticatedUid(request);
   const [waitingSnapshot, participantSnapshot] = await Promise.all([
-    database.collection("tugRooms").where("status", "==", "waiting").limit(100).get(),
-    database.collection("tugRooms").where("participantUids", "array-contains", uid).limit(20).get(),
+    database.collection("tugRooms").where("status", "==", "waiting").limit(25).get(),
+    database.collection("tugRooms").where("participantUids", "array-contains", uid).limit(10).get(),
   ]);
   const candidates = new Map([...waitingSnapshot.docs, ...participantSnapshot.docs].map((document) => [document.id, document]));
   const staleRooms = [...candidates.values()].filter((document) => {
@@ -3181,6 +3181,26 @@ exports.manageChatGroupMembers = onCall(async (request) => {
       adminUids: admins.filter((adminUid) => adminUid !== targetUid),
     });
   });
+  return { ok: true };
+});
+
+exports.dissolveChatGroup = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const chatId = request.data?.chatId;
+  if (typeof chatId !== "string" || !/^[a-f0-9-]{36}$/i.test(chatId)) {
+    throw new HttpsError("invalid-argument", "Grupo inválido.");
+  }
+
+  const chatRef = database.collection("chats").doc(chatId);
+  const chatSnapshot = await chatRef.get();
+  if (!chatSnapshot.exists || chatSnapshot.get("type") !== "group") {
+    throw new HttpsError("not-found", "Grupo não encontrado.");
+  }
+  if (chatSnapshot.get("createdBy") !== uid) {
+    throw new HttpsError("permission-denied", "Somente o criador pode dissolver o grupo.");
+  }
+
+  await database.recursiveDelete(chatRef);
   return { ok: true };
 });
 

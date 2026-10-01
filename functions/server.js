@@ -37,9 +37,17 @@ app.post("/call/:name", async (req, res) => {
   } catch (error) {
     const known = error instanceof HttpsError;
     if (!known) console.error(error);
-    const code = known ? error.code : "internal";
+    const quotaExceeded = error.code === 8
+      || error.code === "RESOURCE_EXHAUSTED"
+      || error.code === "resource-exhausted";
+    const code = known ? error.code : quotaExceeded ? "resource-exhausted" : "internal";
+    const message = known
+      ? error.message
+      : quotaExceeded
+        ? "A cota do Firestore foi excedida. Aguarde a renovação da cota ou habilite faturamento no Firebase."
+        : "Erro interno.";
     res.status(STATUS[code] || 500).json({
-      error: { code, message: known ? error.message : "Erro interno." },
+      error: { code, message },
     });
   }
 });

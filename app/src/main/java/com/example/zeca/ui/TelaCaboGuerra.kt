@@ -113,7 +113,12 @@ fun TelaCaboGuerra(
     LaunchedEffect(Unit) {
         atualizarSalas()
         while (true) {
-            delay(if (salaSelecionada?.status in listOf("active", "ready")) 1_000 else 12_000)
+            val refreshInterval = when (salaSelecionada?.status) {
+                "active" -> 1_500L
+                "ready" -> 8_000L
+                else -> 60_000L
+            }
+            delay(refreshInterval)
             atualizarSalas()
         }
     }

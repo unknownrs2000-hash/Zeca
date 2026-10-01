@@ -524,6 +524,24 @@ object FirebaseRepository {
                 callback(snapshot?.documents.orEmpty().mapNotNull(::toJogadorRanking))
             }
 
+    fun buscarJogadoresPorUsername(prefixo: String, callback: (List<JogadorRanking>, Exception?) -> Unit) {
+        val prefixoNormalizado = prefixo.trim().removePrefix("@").lowercase(java.util.Locale.ROOT)
+        if (prefixoNormalizado.isBlank()) {
+            callback(emptyList(), null)
+            return
+        }
+        database.collection("leaderboard")
+            .orderBy("username")
+            .startAt(prefixoNormalizado)
+            .endAt("$prefixoNormalizado\uf8ff")
+            .limit(5)
+            .get()
+            .addOnSuccessListener { snapshot ->
+                callback(snapshot.documents.mapNotNull(::toJogadorRanking), null)
+            }
+            .addOnFailureListener { error -> callback(emptyList(), error) }
+    }
+
     fun observarPresencasChat(callback: (List<PresencaChat>) -> Unit): ListenerRegistration =
         database.collection("userPresence")
             .whereEqualTo("online", true)
@@ -823,6 +841,10 @@ object FirebaseRepository {
         if (targetUid.isNotBlank()) data["targetUid"] = targetUid
         if (memberUids.isNotEmpty()) data["memberUids"] = memberUids
         chamarFunction("manageChatGroupMembers", data) { _, error -> callback(error) }
+    }
+
+    fun dissolverGrupoChat(chatId: String, callback: (Exception?) -> Unit) {
+        chamarFunction("dissolveChatGroup", mapOf("chatId" to chatId)) { _, error -> callback(error) }
     }
 
     fun atualizarFotoGrupo(chatId: String, photoUrl: String, callback: (Exception?) -> Unit) {

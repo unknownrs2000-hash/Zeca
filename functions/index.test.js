@@ -9,6 +9,7 @@ const {
   adminUpdateGameSettings,
   adminUpdateUserInventory,
   createTugRoom,
+  dissolveChatGroup,
   joinTugRoom,
   listFootballMatches,
   listTugRooms,
@@ -108,6 +109,7 @@ test("new multiplayer and sports callables reject unauthenticated requests", asy
   const unauthenticated = { auth: null, data: {} };
   for (const callable of [
     createTugRoom,
+    dissolveChatGroup,
     joinTugRoom,
     listFootballMatches,
     listTugRooms,
@@ -118,6 +120,13 @@ test("new multiplayer and sports callables reject unauthenticated requests", asy
   ]) {
     await assert.rejects(callable(unauthenticated), (error) => error.code === "unauthenticated");
   }
+});
+
+test("group dissolution rejects invalid group IDs before accessing Firestore", async () => {
+  await assert.rejects(
+    dissolveChatGroup({ auth: { uid: "player", token: {} }, data: { chatId: "invalid" } }),
+    (error) => error.code === "invalid-argument",
+  );
 });
 
 test("tug rooms and sports bets reject invalid stakes and duplicate or unknown selections", async () => {
