@@ -1,6 +1,6 @@
 "use strict";
 
-const { createHash, randomInt, randomUUID, scryptSync } = require("node:crypto");
+const { createHash, createHmac, randomBytes, randomInt, randomUUID, scryptSync } = require("node:crypto");
 const { getAuth } = require("firebase-admin/auth");
 const { cert, initializeApp } = require("firebase-admin/app");
 const { v2: cloudinary } = require("cloudinary");
@@ -3866,6 +3866,13 @@ exports.adminDeleteUser = onCall(async (request) => {
   const userRef = database.collection("users").doc(targetUid);
   const profileSnapshot = await userRef.get();
   const profile = profileSnapshot.data() || {};
+  if (typeof profile.whatsappLink?.jid === "string") {
+    const linkRef = database.collection("whatsappAccountLinks")
+      .doc(createHash("sha256").update(profile.whatsappLink.jid).digest("hex"));
+    const linkSnapshot = await linkRef.get();
+    if (linkSnapshot.exists && linkSnapshot.get("uid") === targetUid) await linkRef.delete();
+  }
+  await database.collection("whatsappLinkCodes").doc(targetUid).delete();
   const chatSnapshot = await database.collection("chats")
     .where("participantUids", "array-contains", targetUid).get();
   for (const chatDocument of chatSnapshot.docs) {
@@ -4576,12 +4583,13 @@ const ACCOUNT_SETTING_DEFAULTS = Object.freeze({
 exports.getAccountSettings = onCall(async (request) => {
   const uid = authenticatedUid(request);
   const userRef = database.collection("users").doc(uid);
-  const [settingsSnapshot, activitySnapshot, friendSnapshot, announcementSnapshot, statsSnapshot] = await Promise.all([
+  const [settingsSnapshot, activitySnapshot, friendSnapshot, announcementSnapshot, statsSnapshot, userSnapshot] = await Promise.all([
     userRef.collection("preferences").doc("appSettings").get(),
     userRef.collection("accountActivity").orderBy("createdAtMs", "desc").limit(30).get(),
     userRef.collection("friends").get(),
     database.collection("systemSettings").doc("announcements").get(),
     userRef.collection("minigameStats").get(),
+    userRef.get(),
   ]);
   const settings = { ...ACCOUNT_SETTING_DEFAULTS, ...(settingsSnapshot.data() || {}) };
   const acceptedFriends = friendSnapshot.docs.filter((document) => document.get("status") === "accepted");
@@ -4624,6 +4632,10 @@ exports.getAccountSettings = onCall(async (request) => {
     .slice(0, 3);
   return {
     settings,
+    whatsappLink: {
+      linked: Boolean(userSnapshot.get("whatsappLink.jid")),
+      linkedAtMs: userSnapshot.get("whatsappLink.linkedAtMs") || 0,
+    },
     friends,
     friendRequests: requests,
     activity: activitySnapshot.docs.map((document) => ({
@@ -4635,6 +4647,163 @@ exports.getAccountSettings = onCall(async (request) => {
     recommendations,
   };
 });
+
+exports.createWhatsAppLinkCode = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const userRef = database.collection("users").doc(uid);
+  const codeRef = database.collection("whatsappLinkCodes").doc(uid);
+  const code = randomBytes(6).toString("hex").toUpperCase();
+  const codeHash = createHash("sha256").update(code).digest("hex");
+  const nowMs = Date.now();
+  const expiresAtMs = nowMs + 10 * 60_000;
+
+  await database.runTransaction(async (transaction) => {
+    const userSnapshot = await transaction.get(userRef);
+    if (!userSnapshot.exists) throw new HttpsError("failed-precondition", "Configure sua conta antes de vincular o WhatsApp.");
+    if (userSnapshot.get("whatsappLink.jid")) {
+      throw new HttpsError("failed-precondition", "Já existe uma conta do WhatsApp vinculada.");
+    }
+    transaction.set(codeRef, { codeHash, expiresAtMs, createdAtMs: nowMs });
+  });
+
+  return { code, expiresAtMs };
+});
+
+exports.unlinkWhatsAppAccount = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const userRef = database.collection("users").doc(uid);
+
+  await database.runTransaction(async (transaction) => {
+    const userSnapshot = await transaction.get(userRef);
+    const jid = userSnapshot.get("whatsappLink.jid");
+    if (!jid) return;
+
+    const linkRef = database.collection("whatsappAccountLinks")
+      .doc(createHash("sha256").update(jid).digest("hex"));
+    const linkSnapshot = await transaction.get(linkRef);
+    if (linkSnapshot.exists && linkSnapshot.get("uid") === uid) transaction.delete(linkRef);
+    transaction.update(userRef, { whatsappLink: FieldValue.delete() });
+  });
+
+  return { unlinked: true };
+});
+
+exports.getLinkedWhatsAppEconomy = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const profile = await database.collection("users").doc(uid).get();
+  const jid = profile.get("whatsappLink.jid");
+  if (typeof jid !== "string" || !/^\d+@s\.whatsapp\.net$/.test(jid)) {
+    throw new HttpsError("failed-precondition", "Vincule sua conta do WhatsApp antes de consultar a economia.");
+  }
+
+  const secret = process.env.WHATSAPP_LINK_SECRET;
+  const baseUrl = process.env.PIROQUINHAS_API_URL;
+  if (!secret || secret.length < 32 || !baseUrl) {
+    throw new HttpsError("failed-precondition", "A integração com o servidor do bot ainda não está configurada.");
+  }
+  let apiUrl;
+  try {
+    apiUrl = new URL(baseUrl);
+  } catch {
+    throw new HttpsError("failed-precondition", "O endereço do servidor do bot está inválido.");
+  }
+  if (apiUrl.protocol !== "https:" || apiUrl.pathname !== "/" || apiUrl.search || apiUrl.hash) {
+    throw new HttpsError("failed-precondition", "O servidor do bot deve usar um endereço HTTPS válido.");
+  }
+
+  const timestamp = String(Date.now());
+  const path = "/api/integration/economy";
+  const payload = `${timestamp}\nGET\n${path}\n${jid}`;
+  const signature = createHmac("sha256", secret).update(payload).digest("hex");
+  let response;
+  try {
+    response = await fetch(`${apiUrl.origin}${path}`, {
+      method: "GET",
+      headers: {
+        "x-zeca-jid": jid,
+        "x-zeca-timestamp": timestamp,
+        "x-zeca-signature": signature,
+      },
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (error) {
+    console.error("Falha ao consultar economia no servidor do WhatsApp:", error);
+    throw new HttpsError("failed-precondition", "O servidor do WhatsApp está indisponível. Tente novamente mais tarde.");
+  }
+  if (!response.ok) {
+    console.error(`Consulta da economia no bot retornou HTTP ${response.status}.`);
+    throw new HttpsError("failed-precondition", "Não foi possível consultar a economia do WhatsApp agora.");
+  }
+  let economy;
+  try {
+    economy = await response.json();
+  } catch (error) {
+    console.error("Resposta inválida do endpoint de economia do bot:", error);
+    throw new HttpsError("internal", "O servidor do WhatsApp retornou uma resposta inválida.");
+  }
+  if (!Number.isSafeInteger(economy.totalGold) || economy.totalGold < 0
+      || !Number.isSafeInteger(economy.totalBankGold) || economy.totalBankGold < 0
+      || !Array.isArray(economy.groups) || !Array.isArray(economy.history)) {
+    throw new HttpsError("internal", "O servidor do WhatsApp retornou dados de economia inválidos.");
+  }
+  return economy;
+});
+
+exports._completeWhatsAppLink = async (request) => {
+  const rawCode = request.data?.code;
+  const rawJid = request.data?.jid;
+  if (typeof rawCode !== "string" || !/^[a-f\d]{12}$/i.test(rawCode)) {
+    throw new HttpsError("invalid-argument", "Código de vínculo inválido.");
+  }
+  if (typeof rawJid !== "string") throw new HttpsError("invalid-argument", "Conta do WhatsApp inválida.");
+
+  const jid = rawJid.trim().toLowerCase().split(":")[0];
+  if (!/^\d+@(s\.whatsapp\.net|lid)$/.test(jid)) {
+    throw new HttpsError("invalid-argument", "Use o comando em uma conversa privada com o bot.");
+  }
+  const code = rawCode.toUpperCase();
+  const codeHash = createHash("sha256").update(code).digest("hex");
+  const matchingCodes = await database.collection("whatsappLinkCodes")
+    .where("codeHash", "==", codeHash)
+    .limit(1)
+    .get();
+  if (matchingCodes.empty) throw new HttpsError("not-found", "Código inválido ou expirado. Gere outro código no app.");
+
+  const codeRef = matchingCodes.docs[0].ref;
+  const uid = codeRef.id;
+  const userRef = database.collection("users").doc(uid);
+  const linkRef = database.collection("whatsappAccountLinks")
+    .doc(createHash("sha256").update(jid).digest("hex"));
+  const nowMs = Date.now();
+
+  await database.runTransaction(async (transaction) => {
+    const [codeSnapshot, userSnapshot, linkSnapshot] = await Promise.all([
+      transaction.get(codeRef),
+      transaction.get(userRef),
+      transaction.get(linkRef),
+    ]);
+    if (!codeSnapshot.exists || codeSnapshot.get("codeHash") !== codeHash
+        || codeSnapshot.get("expiresAtMs") <= nowMs) {
+      throw new HttpsError("not-found", "Código inválido ou expirado. Gere outro código no app.");
+    }
+    if (!userSnapshot.exists) throw new HttpsError("not-found", "Conta do app não encontrada.");
+    if (userSnapshot.get("isBlocked") === true) {
+      throw new HttpsError("permission-denied", "Esta conta do app está desativada.");
+    }
+    if (userSnapshot.get("whatsappLink.jid")) {
+      throw new HttpsError("failed-precondition", "Esta conta do app já tem um WhatsApp vinculado.");
+    }
+    if (linkSnapshot.exists && linkSnapshot.get("uid") !== uid) {
+      throw new HttpsError("already-exists", "Esta conta do WhatsApp já está vinculada a outro perfil.");
+    }
+
+    transaction.set(linkRef, { uid, linkedAtMs: nowMs });
+    transaction.update(userRef, { whatsappLink: { jid, linkedAtMs: nowMs } });
+    transaction.delete(codeRef);
+  });
+
+  return { linked: true };
+};
 
 exports.saveAccountSettings = onCall(async (request) => {
   const uid = authenticatedUid(request);

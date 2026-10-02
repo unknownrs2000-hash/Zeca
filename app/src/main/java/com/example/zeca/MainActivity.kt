@@ -3,6 +3,7 @@ package com.example.zeca
 import android.content.Intent
 import android.app.Activity
 import android.app.KeyguardManager
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -872,6 +873,35 @@ fun CassinoApp(
                             bloqueioDispositivoAtivo = bloqueioDispositivoAtivo,
                             isAdmin = ehAdmin,
                             onRecarregar = { carregarPainelConta() },
+                            onCriarCodigoVinculoWhatsApp = { complete ->
+                                FirebaseRepository.criarCodigoVinculoWhatsApp(complete)
+                            },
+                            onDesvincularWhatsApp = { complete ->
+                                FirebaseRepository.desvincularWhatsApp(complete)
+                            },
+                            onCarregarEconomiaWhatsApp = { complete ->
+                                FirebaseRepository.carregarEconomiaWhatsApp(complete)
+                            },
+                            onAbrirWhatsApp = { message ->
+                                val whatsappUrl = if (message.isBlank()) {
+                                    "https://wa.me/"
+                                } else {
+                                    "https://wa.me/?text=${Uri.encode(message)}"
+                                }
+                                val intent = Intent(
+                                    Intent.ACTION_VIEW,
+                                    Uri.parse(whatsappUrl),
+                                )
+                                try {
+                                    contexto.startActivity(intent)
+                                } catch (error: android.content.ActivityNotFoundException) {
+                                    android.widget.Toast.makeText(
+                                        contexto,
+                                        error.localizedMessage ?: "Não foi possível abrir o WhatsApp.",
+                                        android.widget.Toast.LENGTH_LONG,
+                                    ).show()
+                                }
+                            },
                             onSalvarPreferencias = { preferences, complete ->
                                 FirebaseRepository.salvarPreferenciasConta(preferences) { error ->
                                     if (error == null) {

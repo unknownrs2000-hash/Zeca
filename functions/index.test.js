@@ -22,6 +22,10 @@ const {
   saveAccountSettings,
   publishAppAnnouncement,
   createSupportTicket,
+  createWhatsAppLinkCode,
+  getLinkedWhatsAppEconomy,
+  unlinkWhatsAppAccount,
+  _completeWhatsAppLink,
   adminListSupportTickets,
   getTugRoomMessages,
   getTugRoomPresets,
@@ -260,6 +264,29 @@ test("account, friendship, announcement and support callables authenticate and v
       ...player,
       data: { title: "Oi", details: "Curto", category: "help" },
     }),
+    (error) => error.code === "invalid-argument",
+  );
+});
+
+test("WhatsApp account linking requires an authenticated app account and validates bot claims", async () => {
+  await assert.rejects(
+    createWhatsAppLinkCode({ auth: null, data: {} }),
+    (error) => error.code === "unauthenticated",
+  );
+  await assert.rejects(
+    unlinkWhatsAppAccount({ auth: null, data: {} }),
+    (error) => error.code === "unauthenticated",
+  );
+  await assert.rejects(
+    getLinkedWhatsAppEconomy({ auth: null, data: {} }),
+    (error) => error.code === "unauthenticated",
+  );
+  await assert.rejects(
+    _completeWhatsAppLink({ data: { code: "123", jid: "5511999999999@s.whatsapp.net" } }),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    _completeWhatsAppLink({ data: { code: "A1B2C3D4E5F6", jid: "123456789@g.us" } }),
     (error) => error.code === "invalid-argument",
   );
 });

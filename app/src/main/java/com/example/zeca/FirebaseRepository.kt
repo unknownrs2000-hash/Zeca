@@ -545,6 +545,21 @@ data class AmigoConta(
 data class AlteracaoConta(val id: String, val fields: List<String>, val createdAtMs: Long)
 data class AvisoApp(val id: String, val title: String, val details: String, val type: String, val expiresAtMs: Long)
 data class RecomendacaoJogo(val gameId: String, val played: Int, val wins: Int)
+data class VinculoWhatsAppConta(val linked: Boolean = false, val linkedAtMs: Long = 0L)
+data class GrupoEconomiaWhatsApp(val name: String, val gold: Long, val bankGold: Long)
+data class HistoricoGoldWhatsApp(
+    val groupName: String,
+    val type: String,
+    val item: String,
+    val amount: Long,
+    val createdAtMs: Long,
+)
+data class EconomiaWhatsApp(
+    val totalGold: Long,
+    val totalBankGold: Long,
+    val groups: List<GrupoEconomiaWhatsApp>,
+    val history: List<HistoricoGoldWhatsApp>,
+)
 data class PainelConta(
     val preferences: PreferenciasConta = PreferenciasConta(),
     val friends: List<AmigoConta> = emptyList(),
@@ -552,6 +567,7 @@ data class PainelConta(
     val activity: List<AlteracaoConta> = emptyList(),
     val announcements: List<AvisoApp> = emptyList(),
     val recommendations: List<RecomendacaoJogo> = emptyList(),
+    val whatsappLink: VinculoWhatsAppConta = VinculoWhatsAppConta(),
 )
 
 object FirebaseRepository {
@@ -2117,9 +2133,64 @@ object FirebaseRepository {
                     activity = activity,
                     announcements = announcements,
                     recommendations = recommendations,
+                    whatsappLink = (data["whatsappLink"] as? Map<*, *>)?.let { link ->
+                        VinculoWhatsAppConta(
+                            linked = link["linked"] as? Boolean ?: false,
+                            linkedAtMs = (link["linkedAtMs"] as? Number)?.toLong() ?: 0L,
+                        )
+                    } ?: VinculoWhatsAppConta(),
                 ),
                 null,
             )
+        }
+    }
+
+    fun criarCodigoVinculoWhatsApp(callback: (String?, Long, Exception?) -> Unit) {
+        chamarFunction("createWhatsAppLinkCode", emptyMap()) { data, error ->
+            callback(
+                data?.get("code") as? String,
+                (data?.get("expiresAtMs") as? Number)?.toLong() ?: 0L,
+                error ?: if (data?.get("code") is String) null else IllegalStateException("Código de vínculo não recebido."),
+            )
+        }
+    }
+
+    fun desvincularWhatsApp(callback: (Exception?) -> Unit) {
+        chamarFunction("unlinkWhatsAppAccount", emptyMap()) { _, error -> callback(error) }
+    }
+
+    fun carregarEconomiaWhatsApp(callback: (EconomiaWhatsApp?, Exception?) -> Unit) {
+        chamarFunction("getLinkedWhatsAppEconomy", emptyMap()) { data, error ->
+            if (error != null || data == null) {
+                callback(null, error ?: IllegalStateException("Resposta da economia do WhatsApp vazia."))
+                return@chamarFunction
+            }
+            val groups = (data["groups"] as? List<*>).orEmpty().mapNotNull { raw ->
+                val group = raw as? Map<*, *> ?: return@mapNotNull null
+                val name = group["name"] as? String ?: return@mapNotNull null
+                GrupoEconomiaWhatsApp(
+                    name = name,
+                    gold = (group["gold"] as? Number)?.toLong() ?: 0L,
+                    bankGold = (group["bankGold"] as? Number)?.toLong() ?: 0L,
+                )
+            }
+            val history = (data["history"] as? List<*>).orEmpty().mapNotNull { raw ->
+                val entry = raw as? Map<*, *> ?: return@mapNotNull null
+                HistoricoGoldWhatsApp(
+                    groupName = entry["groupName"] as? String ?: return@mapNotNull null,
+                    type = entry["type"] as? String ?: return@mapNotNull null,
+                    item = entry["item"] as? String ?: "Movimentação",
+                    amount = (entry["amount"] as? Number)?.toLong() ?: 0L,
+                    createdAtMs = (entry["createdAtMs"] as? Number)?.toLong() ?: 0L,
+                )
+            }
+            val totalGold = (data["totalGold"] as? Number)?.toLong()
+            val totalBankGold = (data["totalBankGold"] as? Number)?.toLong()
+            if (totalGold == null || totalBankGold == null) {
+                callback(null, IllegalStateException("Resposta da economia do WhatsApp inválida."))
+                return@chamarFunction
+            }
+            callback(EconomiaWhatsApp(totalGold, totalBankGold, groups, history), null)
         }
     }
 

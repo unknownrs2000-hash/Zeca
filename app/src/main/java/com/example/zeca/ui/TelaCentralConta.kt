@@ -8,8 +8,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -33,11 +35,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.zeca.AlteracaoConta
 import com.example.zeca.AvisoApp
+import com.example.zeca.EconomiaWhatsApp
 import com.example.zeca.PainelConta
 import com.example.zeca.PreferenciasConta
 import com.example.zeca.RecomendacaoJogo
 import com.example.zeca.ui.theme.Cores
 import java.text.SimpleDateFormat
+import java.text.NumberFormat
 import java.util.Date
 import java.util.Locale
 
@@ -50,6 +54,10 @@ fun TelaCentralConta(
     isAdmin: Boolean,
     onRecarregar: () -> Unit,
     onSalvarPreferencias: (PreferenciasConta, (Exception?) -> Unit) -> Unit,
+    onCriarCodigoVinculoWhatsApp: ((String?, Long, Exception?) -> Unit) -> Unit,
+    onDesvincularWhatsApp: ((Exception?) -> Unit) -> Unit,
+    onCarregarEconomiaWhatsApp: ((EconomiaWhatsApp?, Exception?) -> Unit) -> Unit,
+    onAbrirWhatsApp: (String) -> Unit,
     onGerenciarAmigo: (String, String, String, (Exception?) -> Unit) -> Unit,
     onDefinirBloqueio: (Boolean) -> Unit,
     onPublicarAviso: (String, String, String, Long, (Exception?) -> Unit) -> Unit,
@@ -65,6 +73,13 @@ fun TelaCentralConta(
     var suporteTitulo by rememberSaveable { mutableStateOf("") }
     var suporteDetalhes by rememberSaveable { mutableStateOf("") }
     var suporteMensagem by rememberSaveable { mutableStateOf("") }
+    var codigoVinculoWhatsApp by rememberSaveable { mutableStateOf("") }
+    var codigoVinculoExpiraEm by rememberSaveable { mutableStateOf(0L) }
+    var criandoCodigoVinculo by remember { mutableStateOf(false) }
+    var confirmarDesvinculoWhatsApp by rememberSaveable { mutableStateOf(false) }
+    var economiaWhatsApp by remember { mutableStateOf<EconomiaWhatsApp?>(null) }
+    var carregandoEconomiaWhatsApp by remember { mutableStateOf(false) }
+    var erroEconomiaWhatsApp by rememberSaveable { mutableStateOf("") }
 
     fun save(updated: PreferenciasConta) {
         statusMensagem = "Salvando..."
@@ -188,6 +203,154 @@ fun TelaCentralConta(
             if (painel?.friends.isNullOrEmpty() && painel?.friendRequests.isNullOrEmpty()) {
                 Text("Seus amigos e convites recebidos aparecerão aqui.", color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp)
             }
+        }
+
+        SecaoConta("Conectar ao WhatsApp") {
+            Text(
+                "Vincule sua conta enviando um código temporário ao bot. O saldo e o progresso do app e do WhatsApp continuam separados.",
+                color = Color.White.copy(alpha = 0.68f),
+                fontSize = 12.sp,
+            )
+            if (painel?.whatsappLink?.linked == true) {
+                Text("✅ Conta do WhatsApp vinculada", color = Cores.Turquesa, fontWeight = FontWeight.Bold)
+                OutlinedButton(onClick = { onAbrirWhatsApp("") }) { Text("Escolher conversa do bot") }
+                OutlinedButton(
+                    onClick = {
+                        onRecarregar()
+                        carregandoEconomiaWhatsApp = true
+                        erroEconomiaWhatsApp = ""
+                        onCarregarEconomiaWhatsApp { result, error ->
+                            carregandoEconomiaWhatsApp = false
+                            economiaWhatsApp = result
+                            erroEconomiaWhatsApp = error?.localizedMessage.orEmpty()
+                        }
+                    },
+                    enabled = !carregandoEconomiaWhatsApp,
+                ) { Text(if (carregandoEconomiaWhatsApp) "Consultando economia..." else "Consultar gold e extrato") }
+                if (erroEconomiaWhatsApp.isNotBlank()) {
+                    Text(erroEconomiaWhatsApp, color = Color(0xFFFF8B91), fontSize = 12.sp)
+                }
+                economiaWhatsApp?.let { economy ->
+                    val formatGold = remember {
+                        NumberFormat.getIntegerInstance(Locale.forLanguageTag("pt-BR"))
+                    }
+                    Text(
+                        "Gold disponível: ${formatGold.format(economy.totalGold)}",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        "Gold guardado no banco: ${formatGold.format(economy.totalBankGold)}",
+                        color = Color.White.copy(alpha = 0.72f),
+                        fontSize = 12.sp,
+                    )
+                    economy.groups.forEach { group ->
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(Cores.Fundo, RoundedCornerShape(12.dp))
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(3.dp),
+                        ) {
+                            Text(group.name, color = Color.White, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "Disponível: ${formatGold.format(group.gold)}  ·  Banco: ${formatGold.format(group.bankGold)} gold",
+                                color = Color.White.copy(alpha = 0.68f),
+                                fontSize = 12.sp,
+                            )
+                        }
+                    }
+                    if (economy.history.isNotEmpty()) {
+                        Text("Movimentações recentes", color = Color.White, fontWeight = FontWeight.Bold)
+                        economy.history.take(10).forEach { movement ->
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                val date = remember(movement.createdAtMs) {
+                                    SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
+                                        .format(Date(movement.createdAtMs))
+                                }
+                                Text(
+                                    "${if (movement.type == "spent") "−" else "+"}${formatGold.format(movement.amount)} gold · ${movement.item}",
+                                    color = if (movement.type == "spent") Color.White.copy(alpha = 0.78f) else Cores.Turquesa,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Text("${movement.groupName} · $date", color = Color.White.copy(alpha = 0.52f), fontSize = 10.sp)
+                            }
+                        }
+                    }
+                    Text(
+                        "Gold é uma moeda virtual do bot; não faz parte do saldo em reais do app e não pode ser resgatado por Pix.",
+                        color = Color.White.copy(alpha = 0.56f),
+                        fontSize = 11.sp,
+                    )
+                }
+                OutlinedButton(
+                    onClick = { confirmarDesvinculoWhatsApp = true },
+                    enabled = !carregando,
+                ) { Text("Desvincular conta") }
+            } else {
+                Button(
+                    onClick = {
+                        criandoCodigoVinculo = true
+                        onCriarCodigoVinculoWhatsApp { code, expiresAtMs, error ->
+                            criandoCodigoVinculo = false
+                            if (error != null) {
+                                statusMensagem = error.localizedMessage ?: "Não foi possível gerar o código."
+                            } else {
+                                codigoVinculoWhatsApp = code.orEmpty()
+                                codigoVinculoExpiraEm = expiresAtMs
+                                statusMensagem = "Código gerado. Envie-o ao bot em até 10 minutos."
+                            }
+                        }
+                    },
+                    enabled = !criandoCodigoVinculo && !carregando,
+                ) {
+                    Text(if (criandoCodigoVinculo) "Gerando código..." else "Gerar código de vínculo")
+                }
+                if (codigoVinculoWhatsApp.isNotBlank()) {
+                    Text(
+                        codigoVinculoWhatsApp.chunked(4).joinToString("-"),
+                        color = Color.White,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 2.sp,
+                    )
+                    val expiryTime = remember(codigoVinculoExpiraEm) {
+                        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(codigoVinculoExpiraEm))
+                    }
+                    Text("Expira às $expiryTime. Use apenas em uma conversa privada com o bot.", color = Color.White.copy(alpha = 0.62f), fontSize = 11.sp)
+                    Button(
+                        onClick = { onAbrirWhatsApp("!vincular $codigoVinculoWhatsApp") },
+                    ) { Text("Escolher bot e enviar código") }
+                }
+            }
+        }
+
+        if (confirmarDesvinculoWhatsApp) {
+            AlertDialog(
+                onDismissRequest = { confirmarDesvinculoWhatsApp = false },
+                title = { Text("Desvincular WhatsApp?") },
+                text = { Text("O bot deixará de estar associado a esta conta do app. Seus saldos e progressos não serão alterados.") },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            confirmarDesvinculoWhatsApp = false
+                            onDesvincularWhatsApp { error ->
+                                statusMensagem = error?.localizedMessage ?: "Conta do WhatsApp desvinculada."
+                                if (error == null) {
+                                    codigoVinculoWhatsApp = ""
+                                    codigoVinculoExpiraEm = 0L
+                                    economiaWhatsApp = null
+                                    onRecarregar()
+                                }
+                            }
+                        },
+                    ) { Text("Desvincular", color = Color(0xFFFF8B91)) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmarDesvinculoWhatsApp = false }) { Text("Cancelar") }
+                },
+            )
         }
 
         SecaoConta("Preferências sincronizadas") {
