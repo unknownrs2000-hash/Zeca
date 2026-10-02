@@ -12,6 +12,57 @@ app.use(express.json({ limit: "20kb" }));
 
 app.get("/", (_req, res) => res.send("zeca-server ok"));
 
+app.post("/whatsapp/wallet", async (req, res) => {
+  const secret = process.env.WHATSAPP_LINK_SECRET;
+  if (!secret || secret.length < 32) {
+    console.error("WHATSAPP_LINK_SECRET está ausente ou curto demais.");
+    return res.status(503).json({ error: { code: "unavailable", message: "Carteira compartilhada indisponível." } });
+  }
+
+  const {
+    action,
+    jid,
+    recipientJid = "",
+    requestId = "",
+    deltaCents = "",
+    description = "",
+  } = req.body || {};
+  const timestamp = req.get("x-wallet-timestamp") || "";
+  const signature = req.get("x-wallet-signature") || "";
+  if (!["balance", "adjust", "transfer"].includes(action)
+      || typeof jid !== "string"
+      || !/^\d+@s\.whatsapp\.net$/.test(jid)
+      || typeof recipientJid !== "string"
+      || (action === "transfer" && (!/^\d+@s\.whatsapp\.net$/.test(recipientJid) || recipientJid === jid))
+      || !/^\d{13}$/.test(timestamp)
+      || !/^[a-f\d]{64}$/i.test(signature)) {
+    return res.status(400).json({ error: { code: "invalid-argument", message: "Solicitação inválida." } });
+  }
+  if (Math.abs(Date.now() - Number(timestamp)) > 60_000) {
+    return res.status(401).json({ error: { code: "unauthenticated", message: "Solicitação expirada." } });
+  }
+
+  const canonical = `${timestamp}\nPOST\n/whatsapp/wallet\n${jid}\n${action}\n${recipientJid}\n${requestId}\n${deltaCents}\n${description}`;
+  const expected = crypto.createHmac("sha256", secret).update(canonical).digest();
+  const received = Buffer.from(signature, "hex");
+  if (received.length !== expected.length || !crypto.timingSafeEqual(expected, received)) {
+    return res.status(401).json({ error: { code: "unauthenticated", message: "Assinatura inválida." } });
+  }
+
+  try {
+    const result = await handlers._operateWhatsAppWallet({
+      data: { action, jid, recipientJid, requestId, deltaCents, description },
+    });
+    return res.json({ result });
+  } catch (error) {
+    const known = error instanceof HttpsError;
+    if (!known) console.error("Falha na carteira compartilhada do WhatsApp:", error);
+    const code = known ? error.code : "internal";
+    const message = known ? error.message : "Não foi possível atualizar a carteira.";
+    return res.status(STATUS[code] || 500).json({ error: { code, message } });
+  }
+});
+
 app.post("/whatsapp/link/complete", async (req, res) => {
   const secret = process.env.WHATSAPP_LINK_SECRET;
   if (!secret || secret.length < 32) {

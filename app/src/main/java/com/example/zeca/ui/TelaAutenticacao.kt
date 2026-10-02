@@ -58,10 +58,43 @@ fun TelaAutenticacao(onAutenticado: (FirebaseUser) -> Unit) {
     var senha by remember { mutableStateOf("") }
     var ocupado by remember { mutableStateOf(false) }
     var erro by remember { mutableStateOf("") }
+    var exigePais by remember { mutableStateOf(false) }
+    var usuarioAguardandoPais by remember { mutableStateOf<FirebaseUser?>(null) }
 
     fun finalizarLogin(user: FirebaseUser) {
         ocupado = false
         onAutenticado(user)
+    }
+
+    fun exigirPaisAntesDeContinuar(user: FirebaseUser) {
+        FirebaseRepository.getAccountCurrency { account, accountError ->
+            AppCurrencyFormatter.update(account)
+            if (account == null || account.countryCode.isBlank()) {
+                usuarioAguardandoPais = user
+                exigePais = true
+                ocupado = false
+                erro = accountError?.localizedMessage ?: "Selecione seu país para continuar."
+                return@getAccountCurrency
+            }
+            finalizarLogin(user)
+        }
+    }
+
+    if (exigePais) {
+        PaisObrigatorio { pais, moeda ->
+            FirebaseRepository.setAccountCountry(pais, moeda) { setError ->
+                if (setError != null) {
+                    erro = setError.localizedMessage ?: "Não foi possível salvar o país."
+                    return@setAccountCountry
+                }
+                AppCurrencyFormatter.update(AccountCurrencyInfo(countryCode = pais, currencyCode = moeda, rate = 1.0))
+                val proximoUsuario = usuarioAguardandoPais ?: return@setAccountCountry
+                usuarioAguardandoPais = null
+                exigePais = false
+                finalizarLogin(proximoUsuario)
+            }
+        }
+        return
     }
 
     Box(
@@ -110,7 +143,7 @@ fun TelaAutenticacao(onAutenticado: (FirebaseUser) -> Unit) {
             )
             if (modoCadastro) {
                 Text(
-                    "Cada e-mail pode ser usado em uma única conta.",
+                    "Cada e-mail pode ser usado em uma Ãºnica conta.",
                     color = Color.White.copy(alpha = 0.58f),
                     fontSize = 11.sp,
                 )
@@ -131,7 +164,7 @@ fun TelaAutenticacao(onAutenticado: (FirebaseUser) -> Unit) {
                     if (modoCadastro && nome.trim().length !in 2..24) {
                         erro = "O apelido deve ter entre 2 e 24 caracteres."
                     } else if (!emailValido || senha.length < 6) {
-                        erro = "Informe um e-mail válido e uma senha com pelo menos 6 caracteres."
+                        erro = "Informe um e-mail vÃ¡lido e uma senha com pelo menos 6 caracteres."
                     } else {
                         ocupado = true
                         erro = ""
@@ -163,7 +196,7 @@ fun TelaAutenticacao(onAutenticado: (FirebaseUser) -> Unit) {
                                             .addOnFailureListener { verificationError ->
                                                 Toast.makeText(
                                                     context,
-                                                    "Conta criada, mas o envio falhou: ${mensagemAuth(verificationError)}. Você pode reenviar pela Carteira.",
+                                                    "Conta criada, mas o envio falhou: ${mensagemAuth(verificationError)}. VocÃª pode reenviar pela Carteira.",
                                                     Toast.LENGTH_LONG,
                                                 ).show()
                                                 finalizarLogin(user)
@@ -175,7 +208,7 @@ fun TelaAutenticacao(onAutenticado: (FirebaseUser) -> Unit) {
                                     }
                                 }
                             } else {
-                                finalizarLogin(user)
+                                exigirPaisAntesDeContinuar(user)
                             }
                         }
                     }
@@ -224,7 +257,7 @@ fun TelaAutenticacao(onAutenticado: (FirebaseUser) -> Unit) {
                                 val credential = CredentialManager.create(context).getCredential(context, request).credential
                                 if (credential !is CustomCredential || credential.type != GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                                     ocupado = false
-                                    erro = "Não foi possível obter a conta Google."
+                                    erro = "NÃ£o foi possÃ­vel obter a conta Google."
                                 } else {
                                     val token = GoogleIdTokenCredential.createFrom(credential.data).idToken
                                     auth.signInWithCredential(GoogleAuthProvider.getCredential(token, null))
@@ -233,15 +266,15 @@ fun TelaAutenticacao(onAutenticado: (FirebaseUser) -> Unit) {
                                             if (!result.isSuccessful || user == null) {
                                                 ocupado = false
                                                 erro = mensagemAuth(result.exception)
-                                            } else finalizarLogin(user)
+                                            } else exigirPaisAntesDeContinuar(user)
                                         }
                                 }
                             } catch (exception: GetCredentialException) {
                                 ocupado = false
-                                erro = exception.localizedMessage ?: "Não foi possível entrar com Google."
+                                erro = exception.localizedMessage ?: "NÃ£o foi possÃ­vel entrar com Google."
                             } catch (exception: Exception) {
                                 ocupado = false
-                                erro = exception.localizedMessage ?: "Não foi possível entrar com Google."
+                                erro = exception.localizedMessage ?: "NÃ£o foi possÃ­vel entrar com Google."
                             }
                         }
                     }
@@ -258,7 +291,7 @@ fun TelaAutenticacao(onAutenticado: (FirebaseUser) -> Unit) {
                 enabled = !ocupado,
                 modifier = Modifier.align(Alignment.CenterHorizontally),
             ) {
-                Text(if (modoCadastro) "Já tenho uma conta" else "Criar uma conta")
+                Text(if (modoCadastro) "JÃ¡ tenho uma conta" else "Criar uma conta")
             }
         }
     }
@@ -270,8 +303,8 @@ private fun RowDivider() {
 }
 
 private fun mensagemAuth(exception: Exception?): String = when {
-    exception == null -> "Não foi possível concluir a operação."
+    exception == null -> "NÃ£o foi possÃ­vel concluir a operaÃ§Ã£o."
     exception is FirebaseAuthUserCollisionException ->
-        "Já existe uma conta vinculada a este e-mail. Entre usando o método do cadastro original."
-    else -> exception.localizedMessage ?: "Não foi possível concluir a operação."
+        "JÃ¡ existe uma conta vinculada a este e-mail. Entre usando o mÃ©todo do cadastro original."
+    else -> exception.localizedMessage ?: "NÃ£o foi possÃ­vel concluir a operaÃ§Ã£o."
 }

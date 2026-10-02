@@ -157,6 +157,7 @@ import com.google.zxing.qrcode.QRCodeWriter
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.math.BigDecimal
+import java.math.RoundingMode
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -1686,9 +1687,17 @@ private fun TelaConversa(
     var arquivoAudioTemporario by remember { mutableStateOf<File?>(null) }
     var inicioGravacaoMs by remember { mutableStateOf(0L) }
     var tempoGravacaoMs by remember { mutableStateOf(0L) }
+    val moedaDaConta = AppCurrencyFormatter.current.value
     val valorCobrancaCentavos = remember(valorCobranca) { parseValorCobranca(valorCobranca) }
-    val conteudoCobranca = remember(chavePixAtual, valorCobrancaCentavos) {
-        valorCobrancaCentavos?.let { valor ->
+    val valorCobrancaBaseCentavos = valorCobrancaCentavos?.let {
+        BigDecimal.valueOf(it).divide(
+            BigDecimal.valueOf(moedaDaConta.rate.takeIf { rate -> rate > 0.0 } ?: 1.0),
+            0,
+            RoundingMode.HALF_UP,
+        ).longValueExact()
+    }
+    val conteudoCobranca = remember(chavePixAtual, valorCobrancaBaseCentavos) {
+        valorCobrancaBaseCentavos?.let { valor ->
             Uri.Builder()
                 .scheme("zeca")
                 .authority("pix")
@@ -2095,12 +2104,12 @@ private fun TelaConversa(
                         onValueChange = { valorCobranca = it.filter { caractere -> caractere.isDigit() || caractere == ',' || caractere == '.' }.take(8) },
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("Valor") },
-                        prefix = { Text("R$ ") },
+                        prefix = { Text("${moedaDaConta.currencyCode} ") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     )
                     if (valorCobranca.isNotBlank() && valorCobrancaCentavos == null) {
-                        Text("Informe um valor entre R$ 0,01 e R$ 10.000,00.", color = Cores.Laranja, fontSize = 12.sp)
+                        Text("Informe um valor entre 0,01 e 10.000,00 ${moedaDaConta.currencyCode}.", color = Cores.Laranja, fontSize = 12.sp)
                     }
                     imagemCobranca?.let { bitmap ->
                         Image(
@@ -2119,7 +2128,7 @@ private fun TelaConversa(
                         onClick = {
                             val centavos = valorCobrancaCentavos ?: return@Button
                             val codigo = conteudoCobranca ?: return@Button
-                            val texto = "COBRANÇA ZECA\nValor: ${formatarReais(centavos)}\n$codigo"
+                            val texto = "COBRANÇA ZECA\nValor: ${formatarReais(valorCobrancaBaseCentavos ?: centavos)}\n$codigo"
                             onEnviarCobranca(texto) { cobrancaAberta = false }
                         },
                         enabled = imagemCobranca != null && !enviando && podeEnviarMensagem,

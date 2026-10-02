@@ -1,5 +1,8 @@
 package com.example.zeca.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -38,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -416,6 +420,7 @@ internal fun TelaPerfilJogador(
     onConversar: (() -> Unit)? = null,
 ) {
     var fotoAmpliada by remember { mutableStateOf<FotoPerfilAmpliada?>(null) }
+    val context = LocalContext.current
     BackHandler(onBack = onFechar)
     Box(
         modifier = Modifier
@@ -505,6 +510,31 @@ internal fun TelaPerfilJogador(
                                 "${(perfil.vitorias.coerceIn(0, perfil.partidas) * 100) / perfil.partidas}%"
                             } else "—",
                         )
+                    }
+                    SecaoJogador("Chave Pix") {
+                        if (perfil.chavePix.isBlank()) {
+                            Text(
+                                "Este jogador ainda não cadastrou uma chave Pix.",
+                                color = Color.White.copy(alpha = 0.62f),
+                                fontSize = 13.sp,
+                            )
+                        } else {
+                            Text(
+                                "${perfil.tipoChavePix.replaceFirstChar { it.uppercase() }} · ${perfil.chavePix}",
+                                color = Color.White,
+                                fontSize = 13.sp,
+                            )
+                            Button(
+                                onClick = {
+                                    context.getSystemService(ClipboardManager::class.java)
+                                        ?.setPrimaryClip(ClipData.newPlainText("Chave Pix", perfil.chavePix))
+                                    Toast.makeText(context, "Chave Pix copiada", Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text("Copiar chave Pix")
+                            }
+                        }
                     }
                     if (gruposEmComum.isNotEmpty()) {
                         SecaoJogador("Grupos em comum") {

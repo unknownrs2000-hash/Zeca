@@ -1,4 +1,4 @@
-package com.example.zeca
+﻿package com.example.zeca
 
 import android.content.Intent
 import android.app.Activity
@@ -25,14 +25,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -75,6 +74,9 @@ import androidx.compose.ui.zIndex
 import kotlinx.coroutines.delay
 import com.example.zeca.ui.TelaCarteira
 import com.example.zeca.ui.TelaConfigurarPerfil
+import com.example.zeca.ui.AccountCurrencyInfo
+import com.example.zeca.ui.AppCurrencyFormatter
+import com.example.zeca.ui.PaisObrigatorio
 import com.example.zeca.ui.TelaAutenticacao
 import com.example.zeca.ui.TelaAdmin
 import com.example.zeca.ui.TelaChat
@@ -101,7 +103,7 @@ private fun formatarValorNotificacao(centavos: Long): String =
         .format(BigDecimal.valueOf(centavos, 2))
 
 enum class Aba(val titulo: String, val icone: ImageVector) {
-    Inicio("Início", Icons.Filled.Home),
+    Inicio("InÃ­cio", Icons.Filled.Home),
     Jogos("Jogos", Icons.Filled.Casino),
     Carteira("Carteira", Icons.Filled.AccountBalanceWallet),
     Chat("Chat", Icons.AutoMirrored.Filled.Chat),
@@ -243,6 +245,46 @@ fun CassinoApp(
     var tentativaAutenticacao by remember(usuario.uid) { mutableStateOf(0) }
     var promptDispensado by remember(usuario.uid) { mutableStateOf(false) }
     var mudancaBloqueioPendente by remember(usuario.uid) { mutableStateOf<Boolean?>(null) }
+    var exigePais by remember(usuario.uid) { mutableStateOf(false) }
+    var carregandoPais by remember(usuario.uid) { mutableStateOf(false) }
+
+    LaunchedEffect(usuario.uid) {
+        carregandoPais = true
+        FirebaseRepository.getAccountCurrency { info, error ->
+            carregandoPais = false
+            val account = info ?: AccountCurrencyInfo()
+            AppCurrencyFormatter.update(account)
+            exigePais = account.countryCode.isBlank()
+            if (error != null && account.countryCode.isBlank()) {
+                android.widget.Toast.makeText(
+                    contexto,
+                    error.localizedMessage ?: "Selecione o seu país para continuar.",
+                    android.widget.Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+    }
+
+    if (exigePais) {
+        PaisObrigatorio { pais, moeda ->
+            FirebaseRepository.setAccountCountry(pais, moeda) { setError ->
+                if (setError != null) {
+                    android.widget.Toast.makeText(
+                        contexto,
+                        setError.localizedMessage ?: "Não foi possível salvar o país.",
+                        android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                    return@setAccountCountry
+                }
+                FirebaseRepository.getAccountCurrency { account, _ ->
+                    AppCurrencyFormatter.update(account ?: AccountCurrencyInfo(countryCode = pais, currencyCode = moeda, rate = 1.0))
+                    exigePais = false
+                }
+            }
+        }
+        return
+    }
+
     val autenticadorDispositivo = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
@@ -257,7 +299,7 @@ fun CassinoApp(
             promptDispensado = false
         } else {
             promptDispensado = true
-            android.widget.Toast.makeText(contexto, "Autenticação cancelada.", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(contexto, "AutenticaÃ§Ã£o cancelada.", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
     LaunchedEffect(appForeground, bloqueioDispositivoAtivo, tentativaAutenticacao) {
@@ -273,7 +315,7 @@ fun CassinoApp(
             val keyguard = contexto.getSystemService(KeyguardManager::class.java)
             val intent = keyguard?.createConfirmDeviceCredentialIntent(
                 "Desbloquear Zeca",
-                "Confirme seu PIN, padrão ou senha do dispositivo.",
+                "Confirme seu PIN, padrÃ£o ou senha do dispositivo.",
             )
             if (intent == null) {
                 promptDispensado = true
@@ -329,12 +371,12 @@ fun CassinoApp(
                                 notificacoes.add(
                                     NotificacaoApp(
                                         id = notificationId,
-                                        titulo = "Atualização de denúncia",
+                                        titulo = "AtualizaÃ§Ã£o de denÃºncia",
                                         detalhe = when (report.status) {
-                                            "reviewing" -> "Sua denúncia entrou em análise."
-                                            "resolved" -> "Sua denúncia foi resolvida."
-                                            "dismissed" -> "Sua denúncia foi encerrada sem ação."
-                                            else -> "O status da sua denúncia foi atualizado."
+                                            "reviewing" -> "Sua denÃºncia entrou em anÃ¡lise."
+                                            "resolved" -> "Sua denÃºncia foi resolvida."
+                                            "dismissed" -> "Sua denÃºncia foi encerrada sem aÃ§Ã£o."
+                                            else -> "O status da sua denÃºncia foi atualizado."
                                         },
                                         aba = Aba.Comunidade,
                                     ),
@@ -349,7 +391,7 @@ fun CassinoApp(
                 recursosSociais = result
                 erroRecursosSociais = null
             } else {
-                erroRecursosSociais = error?.localizedMessage ?: "Não foi possível carregar os dados da comunidade."
+                erroRecursosSociais = error?.localizedMessage ?: "NÃ£o foi possÃ­vel carregar os dados da comunidade."
             }
         }
     }
@@ -364,7 +406,7 @@ fun CassinoApp(
         FirebaseRepository.carregarPainelConta { result, error ->
             carregandoPainelConta = false
             if (result == null) {
-                erroPainelConta = error?.localizedMessage ?: "Não foi possível carregar as configurações da conta."
+                erroPainelConta = error?.localizedMessage ?: "NÃ£o foi possÃ­vel carregar as configuraÃ§Ãµes da conta."
                 return@carregarPainelConta
             }
             erroPainelConta = ""
@@ -409,7 +451,7 @@ fun CassinoApp(
                 notificar(
                     NotificacaoApp(
                         id = "announcement:${announcement.id}",
-                        titulo = if (announcement.type == "maintenance") "Aviso de manutenção" else "Novidade no app",
+                        titulo = if (announcement.type == "maintenance") "Aviso de manutenÃ§Ã£o" else "Novidade no app",
                         detalhe = announcement.title,
                         aba = Aba.Conta,
                     ),
@@ -455,7 +497,7 @@ fun CassinoApp(
                                     NotificacaoApp(
                                         id = "room-full:${room.id}",
                                         titulo = "Sala cheia",
-                                        detalhe = "A sala de ${room.criadorNome} está pronta para começar.",
+                                        detalhe = "A sala de ${room.criadorNome} estÃ¡ pronta para comeÃ§ar.",
                                         aba = Aba.Jogos,
                                     ),
                                 )
@@ -464,7 +506,7 @@ fun CassinoApp(
                                     NotificacaoApp(
                                         id = "room-started:${room.id}",
                                         titulo = "Partida iniciada",
-                                        detalhe = "A partida de ${room.criadorNome} começou.",
+                                        detalhe = "A partida de ${room.criadorNome} comeÃ§ou.",
                                         aba = Aba.Jogos,
                                     ),
                                 )
@@ -522,7 +564,7 @@ fun CassinoApp(
                                 NotificacaoApp(
                                     id = "tug-invite:${room.id}:${room.versaoConvite}",
                                     titulo = "Convite para Cabo de Guerra",
-                                    detalhe = "${room.criadorNome} convidou você · aposta ${formatarValorNotificacao(room.apostaCentavos)}",
+                                    detalhe = "${room.criadorNome} convidou vocÃª Â· aposta ${formatarValorNotificacao(room.apostaCentavos)}",
                                     aba = Aba.Jogos,
                                 ),
                             )
@@ -555,11 +597,11 @@ fun CassinoApp(
                             NotificacaoApp(
                                 id = "movimento:${movimento.id}",
                                 titulo = when {
-                                    premioNivel -> "Novo nível alcançado!"
+                                    premioNivel -> "Novo nÃ­vel alcanÃ§ado!"
                                     pixRecebido -> "Pix recebido"
                                     else -> "Saldo recebido"
                                 },
-                                detalhe = "${movimento.titulo} · ${formatarValorNotificacao(movimento.variacaoCentavos)}",
+                                detalhe = "${movimento.titulo} Â· ${formatarValorNotificacao(movimento.variacaoCentavos)}",
                                 aba = Aba.Carteira,
                             ),
                         )
@@ -658,7 +700,7 @@ fun CassinoApp(
                     mudancaBloqueioPendente = false
                     promptDispensado = false
                     tentativaAutenticacao += 1
-                }) { androidx.compose.material3.Text("Desativar proteção", color = Cores.Turquesa) }
+                }) { androidx.compose.material3.Text("Desativar proteÃ§Ã£o", color = Cores.Turquesa) }
             }
         }
     } else if (jogador == null) {
@@ -829,7 +871,7 @@ fun CassinoApp(
                                 conquistasCarregando = recursosSociaisCarregando,
                                 historicoCarregando = recursosSociaisCarregando,
                                 erros = erroRecursosSociais?.let {
-                                    mapOf("clãs" to it, "evento" to it, "conquistas" to it, "histórico" to it)
+                                    mapOf("clãs" to it, "evento" to it, "conquistas" to it, "histÃ³rico" to it)
                                 }.orEmpty(),
                             ),
                             onCriarCla = { rascunho, concluir ->
@@ -901,7 +943,7 @@ fun CassinoApp(
                                 } catch (error: android.content.ActivityNotFoundException) {
                                     android.widget.Toast.makeText(
                                         contexto,
-                                        error.localizedMessage ?: "Não foi possível abrir o WhatsApp.",
+                                        error.localizedMessage ?: "NÃ£o foi possÃ­vel abrir o WhatsApp.",
                                         android.widget.Toast.LENGTH_LONG,
                                     ).show()
                                 }
@@ -952,16 +994,16 @@ fun CassinoApp(
                                 if (keyguard?.isDeviceSecure != true) {
                                     android.widget.Toast.makeText(
                                         contexto,
-                                        "Configure PIN, padrão ou senha de bloqueio no Android primeiro.",
+                                        "Configure PIN, padrÃ£o ou senha de bloqueio no Android primeiro.",
                                         android.widget.Toast.LENGTH_LONG,
                                     ).show()
                                 } else {
                                     val intent = keyguard.createConfirmDeviceCredentialIntent(
-                                        "Confirmar proteção do Zeca",
-                                        "Confirme sua identidade para alterar esta configuração.",
+                                        "Confirmar proteÃ§Ã£o do Zeca",
+                                        "Confirme sua identidade para alterar esta configuraÃ§Ã£o.",
                                     )
                                     if (intent == null) {
-                                        android.widget.Toast.makeText(contexto, "Não foi possível abrir a autenticação do dispositivo.", android.widget.Toast.LENGTH_LONG).show()
+                                        android.widget.Toast.makeText(contexto, "NÃ£o foi possÃ­vel abrir a autenticaÃ§Ã£o do dispositivo.", android.widget.Toast.LENGTH_LONG).show()
                                     } else {
                                         mudancaBloqueioPendente = enabled
                                         solicitacaoAutenticacaoPendente = true
@@ -1239,7 +1281,7 @@ fun CassinoApp(
                             Text(notificacao.detalhe, color = Color.White.copy(alpha = 0.72f), fontSize = 12.sp, maxLines = 2)
                         }
                         IconButton(onClick = { notificacoes.removeAll { it.id == notificacao.id } }) {
-                            Icon(Icons.Filled.Close, contentDescription = "Fechar notificação", tint = Color.White.copy(alpha = 0.7f))
+                            Icon(Icons.Filled.Close, contentDescription = "Fechar notificaÃ§Ã£o", tint = Color.White.copy(alpha = 0.7f))
                         }
                     }
                 }
@@ -1267,51 +1309,60 @@ fun BarraInferior(
     Row(
         modifier = modifier
             .navigationBarsPadding()
-            .padding(horizontal = 14.dp, vertical = 10.dp)
-            .height(64.dp)
-            .clip(CircleShape)
+            .padding(horizontal = 8.dp, vertical = 8.dp)
+            .fillMaxWidth()
+            .height(72.dp)
+            .clip(RoundedCornerShape(24.dp))
             .background(
                 Brush.verticalGradient(
                     listOf(Color.White.copy(alpha = 0.18f), Cores.Barra.copy(alpha = 0.88f)),
                 ),
             )
-            .border(1.dp, Color.White.copy(alpha = 0.26f), CircleShape)
-            .padding(5.dp)
+            .border(1.dp, Color.White.copy(alpha = 0.26f), RoundedCornerShape(24.dp))
+            .padding(horizontal = 4.dp, vertical = 4.dp)
             .then(if (Cores.ReduzirMovimento) Modifier else Modifier.animateContentSize()),
-        horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Aba.entries.filter { (mostrarAdmin || it != Aba.Admin) && it != Aba.Conta }.forEach { aba ->
+        val abasVisiveis = Aba.entries.filter { (mostrarAdmin || it != Aba.Admin) && it != Aba.Conta }
+        abasVisiveis.forEach { aba ->
             val selecionada = aba == atual
-            Row(
+            Column(
                 modifier = Modifier
-                    .clip(CircleShape)
-                    .background(
-                        if (selecionada) Color.White.copy(alpha = 0.92f)
-                        else Color.Transparent,
-                    )
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(18.dp))
                     .clickable { onSelecionar(aba) }
-                    .padding(horizontal = if (selecionada) 14.dp else 11.dp, vertical = 11.dp)
-                    .then(if (Cores.ReduzirMovimento) Modifier else Modifier.animateContentSize()),
-                verticalAlignment = Alignment.CenterVertically,
+                    .padding(vertical = 3.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
             ) {
-                Icon(
-                    imageVector = aba.icone,
-                    contentDescription = aba.titulo,
-                    tint = if (selecionada) Color(0xFF111418) else Color.White.copy(alpha = 0.82f),
-                    modifier = Modifier.size(24.dp),
-                )
-                if (selecionada) {
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        aba.titulo,
-                        color = Color(0xFF111418),
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp,
-                        maxLines = 1,
+                Box(
+                    modifier = Modifier
+                        .size(width = 40.dp, height = 28.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (selecionada) Color.White.copy(alpha = 0.92f)
+                            else Color.Transparent,
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = aba.icone,
+                        contentDescription = null,
+                        tint = if (selecionada) Color(0xFF111418) else Color.White.copy(alpha = 0.82f),
+                        modifier = Modifier.size(22.dp),
                     )
                 }
+                Text(
+                    text = if (aba == Aba.Comunidade) "Social" else aba.titulo,
+                    color = if (selecionada) Color.White else Color.White.copy(alpha = 0.74f),
+                    fontWeight = if (selecionada) FontWeight.Bold else FontWeight.Medium,
+                    fontSize = if (abasVisiveis.size > 6) 9.sp else 10.sp,
+                    maxLines = 1,
+                    softWrap = false,
+                )
             }
         }
     }
 }
+

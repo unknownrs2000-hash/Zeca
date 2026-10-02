@@ -1,4 +1,4 @@
-package com.example.zeca.ui
+﻿package com.example.zeca.ui
 
 import android.net.Uri
 import androidx.compose.foundation.background
@@ -12,6 +12,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -49,6 +50,31 @@ import java.text.SimpleDateFormat
 import java.text.NumberFormat
 import java.util.Date
 import java.util.Locale
+
+@Composable
+private fun SecaoConta(titulo: String, content: @Composable () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Cores.Cartao),
+    ) {
+        Column(
+            Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(titulo, color = Cores.Turquesa, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            HorizontalDivider(color = Color.White.copy(alpha = 0.12f))
+            content()
+        }
+    }
+}
+
+@Composable
+private fun PreferenceSwitchConta(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, color = Color.White, modifier = Modifier.weight(1f), fontSize = 13.sp)
+        Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
 
 @Composable
 fun TelaCentralConta(
@@ -95,7 +121,7 @@ fun TelaCentralConta(
     fun save(updated: PreferenciasConta) {
         statusMensagem = "Salvando..."
         onSalvarPreferencias(updated) { error ->
-            statusMensagem = error?.localizedMessage ?: "Configurações salvas e sincronizadas."
+            statusMensagem = error?.localizedMessage ?: "ConfiguraÃ§Ãµes salvas e sincronizadas."
             if (error == null) {
                 com.example.zeca.ui.theme.Cores.aplicarTema(updated.theme)
                 com.example.zeca.ui.theme.Cores.aplicarAcessibilidade(
@@ -119,17 +145,17 @@ fun TelaCentralConta(
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Central da conta", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Black)
-                Text("Privacidade, amigos, acessibilidade e segurança", color = Color.White.copy(alpha = 0.68f), fontSize = 13.sp)
+                Text("Privacidade, amigos, acessibilidade e seguranÃ§a", color = Color.White.copy(alpha = 0.68f), fontSize = 13.sp)
             }
             TextButton(onClick = onVoltar) { Text("Voltar", color = Cores.Turquesa) }
         }
-        if (carregando) Text("Carregando suas configurações...", color = Color.White.copy(alpha = 0.7f))
+        if (carregando) Text("Carregando suas configuraÃ§Ãµes...", color = Color.White.copy(alpha = 0.7f))
         if (erro.isNotBlank()) Text(erro, color = Color(0xFFFF8B91))
         if (statusMensagem.isNotBlank()) Text(statusMensagem, color = Cores.Turquesa, fontSize = 12.sp)
 
-        SecaoConta("Privacidade e sincronização com o bot") {
+        SecaoConta("Privacidade e sincronizaÃ§Ã£o com o bot") {
             Text(
-                "Os dados ficam privados nesta conta e só são consultados quando você ativa cada opção. Desative uma opção para interromper novas consultas.",
+                "Os dados ficam privados nesta conta e sÃ³ sÃ£o consultados quando vocÃª ativa cada opÃ§Ã£o. Desative uma opÃ§Ã£o para interromper novas consultas.",
                 color = Color.White.copy(alpha = 0.68f),
                 fontSize = 12.sp,
             )
@@ -137,15 +163,15 @@ fun TelaCentralConta(
                 save(preferences.copy(shareBotProfile = it))
                 if (!it) painelWhatsApp = painelWhatsApp?.copy(profile = null)
             }
-            PreferenceSwitchConta("Pet e inventário", preferences.shareBotPetInventory) {
+            PreferenceSwitchConta("Pet e inventÃ¡rio", preferences.shareBotPetInventory) {
                 save(preferences.copy(shareBotPetInventory = it))
                 if (!it) painelWhatsApp = painelWhatsApp?.copy(pet = null, inventory = emptyMap())
             }
-            PreferenceSwitchConta("Missões do bot e eventos cruzados", preferences.shareBotMissions) {
+            PreferenceSwitchConta("MissÃµes do bot e eventos cruzados", preferences.shareBotMissions) {
                 save(preferences.copy(shareBotMissions = it))
                 if (!it) painelWhatsApp = painelWhatsApp?.copy(missions = emptyList())
             }
-            PreferenceSwitchConta("Gold virtual e extrato por grupo", preferences.shareBotEconomy) {
+            PreferenceSwitchConta("Carteira e extrato compartilhados", preferences.shareBotEconomy) {
                 save(preferences.copy(shareBotEconomy = it))
                 if (!it) painelWhatsApp = painelWhatsApp?.copy(economy = null)
             }
@@ -154,7 +180,7 @@ fun TelaCentralConta(
         SecaoConta("Privacidade e perfil") {
             Text("Visibilidade", color = Color.White, fontWeight = FontWeight.Bold)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("public" to "Público", "private" to "Somente amigos").forEach { (value, label) ->
+                listOf("public" to "PÃºblico", "private" to "Somente amigos").forEach { (value, label) ->
                     if (preferences.profileVisibility == value) {
                         Button(onClick = { }) { Text(label) }
                     } else {
@@ -162,7 +188,7 @@ fun TelaCentralConta(
                     }
                 }
             }
-            Text("Perfis privados só podem ser abertos por amigos aceitos. Saldo, inventário e chave Pix não são publicados.", color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp)
+            Text("Perfis privados sÃ³ podem ser abertos por amigos aceitos. Saldo, inventÃ¡rio e chave Pix nÃ£o sÃ£o publicados.", color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp)
             var statusEditavel by remember(preferences.customStatus) { mutableStateOf(preferences.customStatus) }
             OutlinedTextField(
                 value = statusEditavel,
@@ -181,7 +207,7 @@ fun TelaCentralConta(
             OutlinedTextField(
                 value = usernameAmigo,
                 onValueChange = { usernameAmigo = it.filter { char -> char.isLetterOrDigit() || char == '_' }.take(20) },
-                label = { Text("Nome de usuário") },
+                label = { Text("Nome de usuÃ¡rio") },
                 prefix = { Text("@") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
@@ -219,9 +245,9 @@ fun TelaCentralConta(
                         Text("${friend.nome} (@${friend.username})", color = Color.White)
                         Text(
                             when {
-                                friend.online -> "● Online${friend.status.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()}"
+                                friend.online -> "â— Online${friend.status.takeIf { it.isNotBlank() }?.let { " Â· $it" }.orEmpty()}"
                                 friend.status.isNotBlank() -> friend.status
-                                else -> "○ Offline"
+                                else -> "â—‹ Offline"
                             },
                             color = Color.White.copy(alpha = 0.62f),
                             fontSize = 11.sp,
@@ -236,210 +262,167 @@ fun TelaCentralConta(
                 }
             }
             if (painel?.friends.isNullOrEmpty() && painel?.friendRequests.isNullOrEmpty()) {
-                Text("Seus amigos e convites recebidos aparecerão aqui.", color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp)
+                Text("Seus amigos e convites recebidos aparecerÃ£o aqui.", color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp)
             }
         }
 
         SecaoConta("Conectar ao WhatsApp") {
             Text(
-                "Vincule sua conta para consultar dados escolhidos por você, sincronizar desafios e enviar imagens ao bot. Saldos e progressos financeiros continuam separados.",
+                "Vincule sua conta para consultar dados escolhidos por voce, sincronizar desafios e compartilhar a mesma carteira e moeda do app com o bot.",
                 color = Color.White.copy(alpha = 0.68f),
                 fontSize = 12.sp,
             )
-            if (painel?.whatsappLink?.linked == true) {
-                Text("✅ Conta do WhatsApp vinculada", color = Cores.Turquesa, fontWeight = FontWeight.Bold)
-                OutlinedButton(onClick = { onAbrirWhatsApp("") }) { Text("Escolher conversa do bot") }
-                OutlinedButton(
-                    onClick = {
-                        onRecarregar()
-                        carregandoPainelWhatsApp = true
-                        erroPainelWhatsApp = ""
-                        onCarregarPainelWhatsApp { result, error ->
-                            carregandoPainelWhatsApp = false
-                            painelWhatsApp = result
-                            erroPainelWhatsApp = error?.localizedMessage.orEmpty()
-                        }
-                    },
-                    enabled = !carregandoPainelWhatsApp,
-                ) { Text(if (carregandoPainelWhatsApp) "Sincronizando..." else "Sincronizar dados permitidos") }
-                if (erroPainelWhatsApp.isNotBlank()) {
-                    Text(erroPainelWhatsApp, color = Color(0xFFFF8B91), fontSize = 12.sp)
-                }
-                if (preferences.shareBotProfile || preferences.shareBotPetInventory
-                    || preferences.shareBotMissions || preferences.shareBotEconomy
-                ) {
-                    painelWhatsApp?.let { botPanel ->
-                    val formatGold = remember {
-                        NumberFormat.getIntegerInstance(Locale.forLanguageTag("pt-BR"))
+                    if (painel?.whatsappLink?.linked == true) {
+            Text("âœ… Conta do WhatsApp vinculada", color = Cores.Turquesa, fontWeight = FontWeight.Bold)
+            val numeroWhatsApp = painel?.whatsappLink?.phoneNumber?.takeIf { it.isNotBlank() }
+            if (numeroWhatsApp != null) {
+                Text("NÃºmero vinculado: $numeroWhatsApp", color = Color.White.copy(alpha = 0.76f), fontSize = 12.sp)
+            }
+            OutlinedButton(onClick = { onAbrirWhatsApp("") }) { Text("Escolher conversa do bot") }
+            OutlinedButton(
+                onClick = {
+                    onRecarregar()
+                    carregandoPainelWhatsApp = true
+                    erroPainelWhatsApp = ""
+                    onCarregarPainelWhatsApp { result, error ->
+                        carregandoPainelWhatsApp = false
+                        painelWhatsApp = result
+                        erroPainelWhatsApp = error?.localizedMessage.orEmpty()
                     }
+                },
+                enabled = !carregandoPainelWhatsApp,
+            ) { Text(if (carregandoPainelWhatsApp) "Sincronizando..." else "Sincronizar dados permitidos") }
+            OutlinedButton(
+                onClick = { confirmarDesvinculoWhatsApp = true },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0x1AFF8B91), contentColor = Color(0xFFFF8B91)),
+            ) { Text("Desvincular WhatsApp") }
+            if (erroPainelWhatsApp.isNotBlank()) {
+                Text(erroPainelWhatsApp, color = Color(0xFFFF8B91), fontSize = 12.sp)
+            }
+            if (preferences.shareBotProfile || preferences.shareBotPetInventory || preferences.shareBotMissions || preferences.shareBotEconomy) {
+                painelWhatsApp?.let { botPanel ->
+                    val formatGold = remember { NumberFormat.getIntegerInstance(Locale.forLanguageTag("pt-BR")) }
+                    Text(
+                        "Pontos de integraÃ§Ã£o: ${formatGold.format(botPanel.integrationPoints)}",
+                        color = Cores.Turquesa,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    botPanel.profile?.let { profile ->
+                        Text("Perfil do bot Â· ${profile.displayName}", color = Color.White, fontWeight = FontWeight.Bold)
                         Text(
-                            "Pontos de integração: ${formatGold.format(botPanel.integrationPoints)}",
-                            color = Cores.Turquesa,
-                            fontWeight = FontWeight.Bold,
+                            "NÃ­vel ${profile.level} Â· ${formatGold.format(profile.xp)} XP Â· ${formatGold.format(profile.quizPoints)} pontos de quiz Â· ${formatGold.format(profile.messages)} mensagens",
+                            color = Color.White.copy(alpha = 0.72f),
+                            fontSize = 12.sp,
                         )
-                        botPanel.profile?.let { profile ->
-                            Text("Perfil do bot · ${profile.displayName}", color = Color.White, fontWeight = FontWeight.Bold)
+                        profile.groups.forEach { group ->
                             Text(
-                                "Nível ${profile.level} · ${formatGold.format(profile.xp)} XP · ${formatGold.format(profile.quizPoints)} pontos de quiz · ${formatGold.format(profile.messages)} mensagens",
-                                color = Color.White.copy(alpha = 0.72f),
-                                fontSize = 12.sp,
+                                "${group.name} Â· nÃ­vel ${group.level} Â· ${formatGold.format(group.xp)} XP",
+                                color = Color.White.copy(alpha = 0.62f),
+                                fontSize = 11.sp,
                             )
-                            profile.groups.forEach { group ->
-                                Text(
-                                    "${group.name} · nível ${group.level} · ${formatGold.format(group.xp)} XP",
-                                    color = Color.White.copy(alpha = 0.62f),
-                                    fontSize = 11.sp,
-                                )
-                            }
                         }
-                        if (preferences.shareBotPetInventory) {
-                            botPanel.pet?.let { pet ->
-                                Text("Pet · ${pet.name.ifBlank { pet.type.ifBlank { "Sem nome" } }}", color = Color.White, fontWeight = FontWeight.Bold)
-                                Text(
-                                    "Nível ${pet.level} · ${pet.rarity.ifBlank { "raridade não informada" }} · energia ${pet.energy}% · fome ${pet.fullness}% · felicidade ${pet.happiness}%",
-                                    color = Color.White.copy(alpha = 0.7f),
-                                    fontSize = 11.sp,
-                                )
-                            } ?: Text("Nenhum pet encontrado na conta do bot.", color = Color.White.copy(alpha = 0.62f), fontSize = 12.sp)
-                            if (botPanel.inventory.isNotEmpty()) {
-                                Text("Inventário do bot", color = Color.White, fontWeight = FontWeight.Bold)
-                                botPanel.inventory.entries.take(30).forEach { (item, quantity) ->
-                                    Text("$item × $quantity", color = Color.White.copy(alpha = 0.72f), fontSize = 11.sp)
-                                }
-                            } else {
-                                Text("O inventário do bot está vazio.", color = Color.White.copy(alpha = 0.62f), fontSize = 12.sp)
+                    }
+                    if (preferences.shareBotPetInventory) {
+                        botPanel.pet?.let { pet ->
+                            val petNome = pet.name.ifBlank { pet.type.ifBlank { "Sem nome" } }
+                            val petRaridade = pet.rarity.ifBlank { "raridade nao informada" }
+                            Text("Pet · $petNome", color = Color.White, fontWeight = FontWeight.Bold)
+                            Text(
+                                "Nivel ${pet.level} · $petRaridade · energia ${pet.energy}% · fome ${pet.fullness}% · felicidade ${pet.happiness}%",
+                                color = Color.White.copy(alpha = 0.7f),
+                                fontSize = 11.sp,
+                            )
+                        } ?: Text("Nenhum pet encontrado na conta do bot.", color = Color.White.copy(alpha = 0.62f), fontSize = 12.sp)
+                        if (botPanel.inventory.isNotEmpty()) {
+                            Text("InventÃ¡rio do bot", color = Color.White, fontWeight = FontWeight.Bold)
+                            botPanel.inventory.entries.take(30).forEach { (item, quantity) ->
+                                Text("$item Ã— $quantity", color = Color.White.copy(alpha = 0.72f), fontSize = 11.sp)
                             }
+                        } else {
+                            Text("O inventÃ¡rio do bot estÃ¡ vazio.", color = Color.White.copy(alpha = 0.62f), fontSize = 12.sp)
                         }
-                        if (preferences.shareBotMissions) {
-                            Text("Missões cruzadas do bot", color = Color.White, fontWeight = FontWeight.Bold)
-                            botPanel.missions.forEach { mission ->
-                                MissaoWhatsAppLinha(
-                                    mission = mission,
-                                    onResgatar = {
-                                        onResgatarMissaoWhatsApp(mission.id) { points, error ->
-                                            statusMensagem = error?.localizedMessage
-                                                ?: "Missão resgatada: +${points ?: 10L} pontos de integração."
-                                            if (error == null) {
-                                                carregandoPainelWhatsApp = true
-                                                onCarregarPainelWhatsApp { updated, loadError ->
-                                                    carregandoPainelWhatsApp = false
-                                                    if (loadError == null) painelWhatsApp = updated
-                                                }
+                    }
+                    if (preferences.shareBotMissions) {
+                        Text("MissÃµes cruzadas do bot", color = Color.White, fontWeight = FontWeight.Bold)
+                        botPanel.missions.forEach { mission ->
+                            MissaoWhatsAppLinha(
+                                mission = mission,
+                                onResgatar = {
+                                    onResgatarMissaoWhatsApp(mission.id) { points, error ->
+                                        statusMensagem = error?.localizedMessage ?: "MissÃ£o resgatada: +${points ?: 10L} pontos de integraÃ§Ã£o."
+                                        if (error == null) {
+                                            carregandoPainelWhatsApp = true
+                                            onCarregarPainelWhatsApp { updated, loadError ->
+                                                carregandoPainelWhatsApp = false
+                                                if (loadError == null) painelWhatsApp = updated
                                             }
                                         }
-                                    },
-                                )
-                            }
-                        }
-                        botPanel.economy?.let { economy ->
-                            Text(
-                                "Gold virtual · disponível ${formatGold.format(economy.totalGold)} · banco ${formatGold.format(economy.totalBankGold)}",
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                            )
-                            economy.groups.forEach { group ->
-                                Text(
-                                    "${group.name} · ${formatGold.format(group.gold)} disponível · ${formatGold.format(group.bankGold)} no banco",
-                                    color = Color.White.copy(alpha = 0.68f),
-                                    fontSize = 11.sp,
-                                )
-                            }
-                            if (economy.history.isNotEmpty()) {
-                                Text("Extrato recente do bot", color = Color.White, fontWeight = FontWeight.Bold)
-                                economy.history.take(10).forEach { movement ->
-                                    val date = remember(movement.createdAtMs) {
-                                        SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
-                                            .format(Date(movement.createdAtMs))
                                     }
-                                Text(
-                                    "${if (movement.type == "spent") "−" else "+"}${formatGold.format(movement.amount)} gold · ${movement.item}",
-                                    color = if (movement.type == "spent") Color.White.copy(alpha = 0.78f) else Cores.Turquesa,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                )
-                                Text("${movement.groupName} · $date", color = Color.White.copy(alpha = 0.52f), fontSize = 10.sp)
-                                }
-                            }
-                        }
-                    Text(
-                        "Os pontos de integração e o gold do bot não fazem parte do saldo em reais e não podem ser resgatados por Pix.",
-                        color = Color.White.copy(alpha = 0.56f),
-                        fontSize = 11.sp,
-                    )
-                    }
-                }
-                if (preferences.shareBotMissions && eventoSemanal != null) {
-                    Text("Evento semanal do app · ${eventoSemanal.tema}", color = Color.White, fontWeight = FontWeight.Bold)
-                    Text(eventoSemanal.descricao, color = Color.White.copy(alpha = 0.68f), fontSize = 12.sp)
-                    OutlinedButton(
-                        onClick = {
-                            onAbrirWhatsApp(
-                                "🎮 Evento semanal do Zeca: ${eventoSemanal.tema}\n" +
-                                    "${eventoSemanal.descricao}\n" +
-                                    "Progresso: ${eventoSemanal.progresso}/${eventoSemanal.meta}\n" +
-                                    "Participe no app Zeca!",
+                                },
                             )
-                        },
-                    ) { Text("Compartilhar evento no WhatsApp") }
-                }
-                OutlinedButton(onClick = { seletorFigurinha.launch("image/*") }) {
-                    Text("Escolher imagem e enviar ao bot como figurinha")
-                }
-                Text(
-                    "Escolha uma imagem; o WhatsApp abrirá o seletor de conversa com o comando !s preenchido.",
-                    color = Color.White.copy(alpha = 0.56f),
-                    fontSize = 11.sp,
-                )
-                OutlinedButton(
-                    onClick = { confirmarDesvinculoWhatsApp = true },
-                    enabled = !carregando,
-                ) { Text("Desvincular conta") }
-            } else {
-                Button(
-                    onClick = {
-                        criandoCodigoVinculo = true
-                        onCriarCodigoVinculoWhatsApp { code, expiresAtMs, error ->
-                            criandoCodigoVinculo = false
-                            if (error != null) {
-                                statusMensagem = error.localizedMessage ?: "Não foi possível gerar o código."
-                            } else {
-                                codigoVinculoWhatsApp = code.orEmpty()
-                                codigoVinculoExpiraEm = expiresAtMs
-                                statusMensagem = "Código gerado. Envie-o ao bot em até 10 minutos."
-                            }
                         }
-                    },
-                    enabled = !criandoCodigoVinculo && !carregando,
-                ) {
-                    Text(if (criandoCodigoVinculo) "Gerando código..." else "Gerar código de vínculo")
-                }
-                if (codigoVinculoWhatsApp.isNotBlank()) {
-                    Text(
-                        codigoVinculoWhatsApp.chunked(4).joinToString("-"),
-                        color = Color.White,
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Black,
-                        letterSpacing = 2.sp,
-                    )
-                    val expiryTime = remember(codigoVinculoExpiraEm) {
-                        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(codigoVinculoExpiraEm))
+                        if (botPanel.missions.isEmpty()) {
+                            Text("Nenhuma missÃ£o aberta no bot agora.", color = Color.White.copy(alpha = 0.62f), fontSize = 11.sp)
+                        }
                     }
-                    Text("Expira às $expiryTime. Use apenas em uma conversa privada com o bot.", color = Color.White.copy(alpha = 0.62f), fontSize = 11.sp)
-                    Button(
-                        onClick = { onAbrirWhatsApp("!vincular $codigoVinculoWhatsApp") },
-                    ) { Text("Escolher bot e enviar código") }
-                }
-                OutlinedButton(onClick = { seletorFigurinha.launch("image/*") }) {
-                    Text("Compartilhar imagem como figurinha no WhatsApp")
+                    if (preferences.shareBotEconomy) {
+                        botPanel.economy?.let { economy ->
+                            Text("Economia do bot", color = Color.White, fontWeight = FontWeight.Bold)
+                            Text(
+                                "Saldo unificado: ${formatarReais(economy.totalGold)}",
+                                color = Color.White.copy(alpha = 0.7f),
+                                fontSize = 11.sp,
+                            )
+                        } ?: Text("Nenhuma economia compartilhada do bot.", color = Color.White.copy(alpha = 0.62f), fontSize = 11.sp)
+                    }
                 }
             }
+        } else {
+            Button(
+                onClick = {
+                    criandoCodigoVinculo = true
+                    onCriarCodigoVinculoWhatsApp { code, expiresAtMs, error ->
+                        criandoCodigoVinculo = false
+                        if (error != null) {
+                            statusMensagem = error.localizedMessage ?: "NÃ£o foi possÃ­vel gerar o cÃ³digo."
+                        } else {
+                            codigoVinculoWhatsApp = code.orEmpty()
+                            codigoVinculoExpiraEm = expiresAtMs
+                            statusMensagem = "CÃ³digo gerado. Envie-o ao bot em atÃ© 10 minutos."
+                        }
+                    }
+                },
+                enabled = !criandoCodigoVinculo && !carregando,
+            ) {
+                Text(if (criandoCodigoVinculo) "Gerando cÃ³digo..." else "Gerar cÃ³digo de vÃ­nculo")
+            }
+            if (codigoVinculoWhatsApp.isNotBlank()) {
+                Text(
+                    codigoVinculoWhatsApp.chunked(4).joinToString("-"),
+                    color = Color.White,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 2.sp,
+                )
+                val expiryTime = remember(codigoVinculoExpiraEm) {
+                    SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(codigoVinculoExpiraEm))
+                }
+                Text("Expira Ã s $expiryTime. Use apenas em uma conversa privada com o bot.", color = Color.White.copy(alpha = 0.62f), fontSize = 11.sp)
+                Button(
+                    onClick = { onAbrirWhatsApp("!vincular $codigoVinculoWhatsApp") },
+                ) { Text("Escolher bot e enviar cÃ³digo") }
+            }
+            OutlinedButton(onClick = { seletorFigurinha.launch("image/*") }) {
+                Text("Compartilhar imagem como figurinha no WhatsApp")
+            }
+        }
         }
 
         if (confirmarDesvinculoWhatsApp) {
             AlertDialog(
                 onDismissRequest = { confirmarDesvinculoWhatsApp = false },
                 title = { Text("Desvincular WhatsApp?") },
-                text = { Text("O bot deixará de estar associado a esta conta do app. Seus saldos e progressos não serão alterados.") },
+                text = { Text("O bot deixarÃ¡ de estar associado a esta conta do app e o nÃºmero vinculado serÃ¡ removido do perfil desta conta. Seus saldos e progressos nÃ£o serÃ£o alterados.") },
                 confirmButton = {
                     TextButton(
                         onClick = {
@@ -461,15 +444,14 @@ fun TelaCentralConta(
                 },
             )
         }
-
-        SecaoConta("Preferências sincronizadas") {
-            PreferenceSwitchConta("Confirmar ações importantes", preferences.confirmImportant) {
+        SecaoConta("PreferÃªncias sincronizadas") {
+            PreferenceSwitchConta("Confirmar aÃ§Ãµes importantes", preferences.confirmImportant) {
                 save(preferences.copy(confirmImportant = it))
             }
-            PreferenceSwitchConta("Recomendações personalizadas", preferences.personalizedRecommendations) {
+            PreferenceSwitchConta("RecomendaÃ§Ãµes personalizadas", preferences.personalizedRecommendations) {
                 save(preferences.copy(personalizedRecommendations = it))
             }
-            PreferenceSwitchConta("Sincronizar configurações entre dispositivos", preferences.syncSettings) {
+            PreferenceSwitchConta("Sincronizar configuraÃ§Ãµes entre dispositivos", preferences.syncSettings) {
                 save(preferences.copy(syncSettings = it))
             }
             Text("Tema visual", color = Color.White, fontWeight = FontWeight.Bold)
@@ -479,14 +461,14 @@ fun TelaCentralConta(
                     else OutlinedButton(onClick = { save(preferences.copy(theme = value)) }) { Text(label) }
                 }
             }
-            Text("Idioma e localização · formato de data", color = Color.White, fontWeight = FontWeight.Bold)
+            Text("Idioma e localizaÃ§Ã£o Â· formato de data", color = Color.White, fontWeight = FontWeight.Bold)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf("pt-BR" to "Português (Brasil)", "en-US" to "English", "es" to "Español").forEach { (value, label) ->
+                listOf("pt-BR" to "PortuguÃªs (Brasil)", "en-US" to "English", "es" to "EspaÃ±ol").forEach { (value, label) ->
                     if (preferences.locale == value) Button(onClick = {}) { Text(label) }
                     else OutlinedButton(onClick = { save(preferences.copy(locale = value)) }) { Text(label) }
                 }
             }
-            Text("A preferência é sincronizada e aplicada à formatação de datas; a tradução das telas será ampliada gradualmente.", color = Color.White.copy(alpha = 0.58f), fontSize = 11.sp)
+            Text("A preferÃªncia Ã© sincronizada e aplicada Ã  formataÃ§Ã£o de datas; a traduÃ§Ã£o das telas serÃ¡ ampliada gradualmente.", color = Color.White.copy(alpha = 0.58f), fontSize = 11.sp)
         }
 
         SecaoConta("Acessibilidade") {
@@ -505,19 +487,19 @@ fun TelaCentralConta(
                 enabled = fontScaleEditavel.toDouble() != preferences.accessibilityFontScale,
             ) { Text("Aplicar tamanho do texto") }
             PreferenceSwitchConta("Alto contraste", preferences.highContrast) { save(preferences.copy(highContrast = it)) }
-            PreferenceSwitchConta("Reduzir animações", preferences.reduceMotion) { save(preferences.copy(reduceMotion = it)) }
-            Text("Ajude a melhorar a acessibilidade: envie comentários sobre contraste, navegação, leitor de tela ou tamanho do texto.", color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp)
+            PreferenceSwitchConta("Reduzir animaÃ§Ãµes", preferences.reduceMotion) { save(preferences.copy(reduceMotion = it)) }
+            Text("Ajude a melhorar a acessibilidade: envie comentÃ¡rios sobre contraste, navegaÃ§Ã£o, leitor de tela ou tamanho do texto.", color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp)
             OutlinedTextField(
                 value = suporteDetalhes,
                 onValueChange = { suporteDetalhes = it.take(2_000) },
-                label = { Text("Comentário de acessibilidade") },
+                label = { Text("ComentÃ¡rio de acessibilidade") },
                 modifier = Modifier.fillMaxWidth(),
                 minLines = 3,
             )
             OutlinedButton(
                 onClick = {
                     onEnviarSuporte("Feedback de acessibilidade", suporteDetalhes.trim(), "accessibility") { error ->
-                        suporteMensagem = error?.localizedMessage ?: "Comentário enviado para a equipe."
+                        suporteMensagem = error?.localizedMessage ?: "ComentÃ¡rio enviado para a equipe."
                         if (error == null) suporteDetalhes = ""
                     }
                 },
@@ -526,19 +508,19 @@ fun TelaCentralConta(
             if (suporteMensagem.isNotBlank()) Text(suporteMensagem, color = Cores.Turquesa, fontSize = 12.sp)
         }
 
-        SecaoConta("Proteção do dispositivo") {
-            Text("Use o PIN, padrão ou senha de bloqueio configurado no Android. O app nunca recebe nem armazena sua credencial.", color = Color.White.copy(alpha = 0.72f), fontSize = 12.sp)
-            PreferenceSwitchConta("Solicitar autenticação do dispositivo", bloqueioDispositivoAtivo, onDefinirBloqueio)
+        SecaoConta("ProteÃ§Ã£o do dispositivo") {
+            Text("Use o PIN, padrÃ£o ou senha de bloqueio configurado no Android. O app nunca recebe nem armazena sua credencial.", color = Color.White.copy(alpha = 0.72f), fontSize = 12.sp)
+            PreferenceSwitchConta("Solicitar autenticaÃ§Ã£o do dispositivo", bloqueioDispositivoAtivo, onDefinirBloqueio)
         }
 
-        SecaoConta("Recomendações para você") {
+        SecaoConta("RecomendaÃ§Ãµes para vocÃª") {
             val recommendations = if (preferences.personalizedRecommendations) painel?.recommendations.orEmpty() else emptyList()
             if (recommendations.isEmpty()) {
-                Text("Jogue alguns minigames para receber recomendações baseadas no seu histórico.", color = Color.White.copy(alpha = 0.66f), fontSize = 12.sp)
+                Text("Jogue alguns minigames para receber recomendaÃ§Ãµes baseadas no seu histÃ³rico.", color = Color.White.copy(alpha = 0.66f), fontSize = 12.sp)
             } else {
                 recommendations.forEach { recommendation ->
                     Text(
-                        "${nomeJogoConta(recommendation)} · ${recommendation.played} partidas · ${recommendation.wins} vitórias",
+                        "${nomeJogoConta(recommendation)} Â· ${recommendation.played} partidas Â· ${recommendation.wins} vitÃ³rias",
                         color = Color.White,
                         fontSize = 13.sp,
                     )
@@ -546,10 +528,10 @@ fun TelaCentralConta(
             }
         }
 
-        SecaoConta("Avisos de manutenção e novidades") {
+        SecaoConta("Avisos de manutenÃ§Ã£o e novidades") {
             painel?.announcements.orEmpty().forEach { announcement -> AvisoConta(announcement) }
             if (painel?.announcements.isNullOrEmpty()) {
-                Text("Nenhum aviso de manutenção ou novidade ativo.", color = Color.White.copy(alpha = 0.66f), fontSize = 12.sp)
+                Text("Nenhum aviso de manutenÃ§Ã£o ou novidade ativo.", color = Color.White.copy(alpha = 0.66f), fontSize = 12.sp)
             }
             if (isAdmin) {
                 var announcementType by rememberSaveable { mutableStateOf("news") }
@@ -557,7 +539,7 @@ fun TelaCentralConta(
                 OutlinedTextField(
                     value = avisoTitulo,
                     onValueChange = { avisoTitulo = it.take(80) },
-                    label = { Text("Título") },
+                    label = { Text("TÃ­tulo") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                 )
@@ -569,7 +551,7 @@ fun TelaCentralConta(
                     minLines = 2,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("news" to "Novidade", "maintenance" to "Manutenção").forEach { (value, label) ->
+                    listOf("news" to "Novidade", "maintenance" to "ManutenÃ§Ã£o").forEach { (value, label) ->
                         if (announcementType == value) Button(onClick = {}) { Text(label) }
                         else OutlinedButton(onClick = { announcementType = value }) { Text(label) }
                     }
@@ -591,18 +573,18 @@ fun TelaCentralConta(
             }
         }
 
-        SecaoConta("Registro de alterações da conta") {
+        SecaoConta("Registro de alteraÃ§Ãµes da conta") {
             painel?.activity.orEmpty().forEach { activity -> AlteracaoContaLinha(activity, preferences.locale) }
             if (painel?.activity.isNullOrEmpty()) {
-                Text("Alterações recentes de perfil e configurações aparecerão aqui.", color = Color.White.copy(alpha = 0.66f), fontSize = 12.sp)
+                Text("AlteraÃ§Ãµes recentes de perfil e configuraÃ§Ãµes aparecerÃ£o aqui.", color = Color.White.copy(alpha = 0.66f), fontSize = 12.sp)
             }
         }
 
         SecaoConta("Ajuda e suporte") {
             Text("Perguntas frequentes", color = Cores.Turquesa, fontWeight = FontWeight.Bold)
-            Text("• Convites de sala: compartilhe o link pela tela da sala; a outra pessoa precisa ter o Zeca instalado.", color = Color.White.copy(alpha = 0.76f), fontSize = 12.sp)
-            Text("• Privacidade: escolha Público ou Somente amigos na Central da conta.", color = Color.White.copy(alpha = 0.76f), fontSize = 12.sp)
-            Text("• Segurança: o bloqueio usa a credencial já configurada no Android; o app não recebe seu PIN.", color = Color.White.copy(alpha = 0.76f), fontSize = 12.sp)
+            Text("â€¢ Convites de sala: compartilhe o link pela tela da sala; a outra pessoa precisa ter o Zeca instalado.", color = Color.White.copy(alpha = 0.76f), fontSize = 12.sp)
+            Text("â€¢ Privacidade: escolha PÃºblico ou Somente amigos na Central da conta.", color = Color.White.copy(alpha = 0.76f), fontSize = 12.sp)
+            Text("â€¢ SeguranÃ§a: o bloqueio usa a credencial jÃ¡ configurada no Android; o app nÃ£o recebe seu PIN.", color = Color.White.copy(alpha = 0.76f), fontSize = 12.sp)
             OutlinedTextField(
                 value = suporteTitulo,
                 onValueChange = { suporteTitulo = it.take(80) },
@@ -620,7 +602,7 @@ fun TelaCentralConta(
             Button(
                 onClick = {
                     onEnviarSuporte(suporteTitulo.trim(), suporteDetalhes.trim(), "help") { error ->
-                        suporteMensagem = error?.localizedMessage ?: "Solicitação enviada. Obrigado."
+                        suporteMensagem = error?.localizedMessage ?: "SolicitaÃ§Ã£o enviada. Obrigado."
                         if (error == null) {
                             suporteTitulo = ""
                             suporteDetalhes = ""
@@ -628,38 +610,13 @@ fun TelaCentralConta(
                     }
                 },
                 enabled = suporteTitulo.trim().length >= 3 && suporteDetalhes.trim().length >= 10 && !carregando,
-            ) { Text("Enviar solicitação") }
+            ) { Text("Enviar solicitaÃ§Ã£o") }
             if (suporteMensagem.isNotBlank()) Text(suporteMensagem, color = Cores.Turquesa, fontSize = 12.sp)
         }
 
         if (painel != null) {
-            OutlinedButton(onClick = onRecarregar, modifier = Modifier.fillMaxWidth()) { Text("Atualizar informações") }
+            OutlinedButton(onClick = onRecarregar, modifier = Modifier.fillMaxWidth()) { Text("Atualizar informaÃ§Ãµes") }
         }
-    }
-}
-
-@Composable
-private fun SecaoConta(titulo: String, content: @Composable () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = Cores.Cartao),
-    ) {
-        Column(
-            Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text(titulo, color = Cores.Turquesa, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-            HorizontalDivider(color = Color.White.copy(alpha = 0.12f))
-            content()
-        }
-    }
-}
-
-@Composable
-private fun PreferenceSwitchConta(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, color = Color.White, modifier = Modifier.weight(1f), fontSize = 13.sp)
-        Switch(checked = checked, onCheckedChange = onChange)
     }
 }
 
@@ -674,11 +631,11 @@ private fun MissaoWhatsAppLinha(mission: MissaoWhatsApp, onResgatar: () -> Unit)
     ) {
         Text(mission.title, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
         Text(
-            "${mission.progress.coerceAtMost(mission.target)}/${mission.target} · " +
+            "${mission.progress.coerceAtMost(mission.target)}/${mission.target} Â· " +
                 when {
                     mission.claimedInApp -> "recompensa resgatada no app"
                     mission.claimedInBot -> "resgatada no bot"
-                    mission.completed -> "concluída"
+                    mission.completed -> "concluÃ­da"
                     else -> "em andamento"
                 },
             color = if (mission.completed) Cores.Turquesa else Color.White.copy(alpha = 0.64f),
@@ -694,7 +651,7 @@ private fun MissaoWhatsAppLinha(mission: MissaoWhatsApp, onResgatar: () -> Unit)
 private fun AvisoConta(announcement: AvisoApp) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
-            if (announcement.type == "maintenance") "Manutenção · ${announcement.title}" else "Novidade · ${announcement.title}",
+            if (announcement.type == "maintenance") "ManutenÃ§Ã£o Â· ${announcement.title}" else "Novidade Â· ${announcement.title}",
             color = Color.White,
             fontWeight = FontWeight.Bold,
         )
@@ -714,11 +671,11 @@ private fun AlteracaoContaLinha(activity: AlteracaoConta, localeTag: String) {
 }
 
 private fun nomeCampoConta(field: String): String = when (field) {
-    "displayName" -> "nome de exibição"
-    "username" -> "nome de usuário"
+    "displayName" -> "nome de exibiÃ§Ã£o"
+    "username" -> "nome de usuÃ¡rio"
     "bio" -> "biografia"
     "avatarUrl" -> "foto de perfil"
-    "avatarAsProfilePhoto" -> "preferência de avatar"
+    "avatarAsProfilePhoto" -> "preferÃªncia de avatar"
     "profileVisibility" -> "privacidade do perfil"
     "customStatus" -> "status personalizado"
     "theme" -> "tema visual"
@@ -731,6 +688,6 @@ private fun nomeJogoConta(recommendation: RecomendacaoJogo): String = when (reco
     "tug" -> "Cabo de guerra"
     "teamRace" -> "Corrida em equipe"
     "teamRelay" -> "Revezamento"
-    "teamBlitz" -> "Quiz relâmpago"
+    "teamBlitz" -> "Quiz relÃ¢mpago"
     else -> recommendation.gameId.replaceFirstChar { it.uppercase() }
 }

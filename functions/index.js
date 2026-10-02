@@ -75,6 +75,7 @@ initializeApp(serviceAccount ? { credential: cert(JSON.parse(serviceAccount)) } 
 const database = getFirestore();
 const INITIAL_BALANCE_CENTS = 50_000;
 const MAX_TRANSFER_CENTS = 1_000_000;
+const CROSS_CURRENCY_TRANSFER_FEE_BPS = 100;
 const GAME_COOLDOWN_MS = 250;
 const CHAT_COOLDOWN_MS = 300;
 const DEFAULT_MINES_RTP_BPS = 9_800;
@@ -82,6 +83,8 @@ const JOKENPO_QUEUE_TTL_MS = 90_000;
 const SOLO_CHALLENGE_TTL_MS = 5 * 60_000;
 const SOLO_CHALLENGE_GAMES = new Set(["memorySequence", "quizSprint", "codebreaker", "mazeRunner"]);
 const CLOUDINARY_CLOUD_NAME = "vwctfu9u";
+const supportedCurrencyCodes = new Set(Intl.supportedValuesOf("currency"));
+const dailyCurrencyRates = new Map();
 const COSMETICS = {
   frame_aurora: { name: "Moldura Aurora", priceCents: 1_299 },
   title_lucky: { name: "Título: Sorte Grande", priceCents: 799 },
@@ -113,6 +116,88 @@ const COSMETICS = {
   avatar_earrings_star: { name: "Brincos Estrela", priceCents: 799, slot: "earrings" },
   avatar_cap_mint: { name: "Boné Menta", priceCents: 1_099, slot: "headwear" },
 };
+
+async function getDailyCurrencyRate(currencyCode) {
+  if (currencyCode === "BRL") {
+    return { rate: 1, rateDate: new Date().toISOString().slice(0, 10) };
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  const memoryKey = `${currencyCode}:${today}`;
+  const memoryRate = dailyCurrencyRates.get(memoryKey);
+  if (memoryRate) return memoryRate;
+  const rateRef = database.collection("systemExchangeRates").doc(`BRL_${currencyCode}`);
+  const cached = await rateRef.get();
+  const cachedRate = cached.get("rate");
+  if (cached.get("cacheDay") === today && Number.isFinite(cachedRate) && cachedRate > 0) {
+    const result = { rate: cachedRate, rateDate: cached.get("rateDate") };
+    dailyCurrencyRates.set(memoryKey, result);
+    return result;
+  }
+
+  let response;
+  try {
+    response = await fetch("https://open.er-api.com/v6/latest/BRL", {
+      signal: AbortSignal.timeout(8_000),
+    });
+  } catch (error) {
+    console.error("Falha ao obter a cotação cambial diária:", error);
+    throw new HttpsError("unavailable", "A cotação cambial está indisponível. Tente novamente mais tarde.");
+  }
+  if (!response.ok) {
+    console.error(`O serviço de câmbio retornou HTTP ${response.status}.`);
+    throw new HttpsError("unavailable", "A cotação cambial está indisponível. Tente novamente mais tarde.");
+  }
+  let quotation;
+  try {
+    quotation = await response.json();
+  } catch (error) {
+    console.error("Resposta inválida do serviço de câmbio:", error);
+    throw new HttpsError("unavailable", "O serviço de câmbio retornou uma resposta inválida.");
+  }
+  const rate = quotation?.rates?.[currencyCode];
+  const rateDate = Number.isSafeInteger(quotation?.time_last_update_unix)
+    ? new Date(quotation.time_last_update_unix * 1_000).toISOString().slice(0, 10)
+    : null;
+  if (!Number.isFinite(rate) || rate <= 0 || typeof rateDate !== "string"
+      || !/^\d{4}-\d{2}-\d{2}$/.test(rateDate)) {
+    console.error("O serviço de câmbio retornou uma cotação inválida.");
+    throw new HttpsError("unavailable", "Não foi possível validar a cotação cambial.");
+  }
+  await rateRef.set({ rate, rateDate, cacheDay: today, fetchedAtMs: Date.now() });
+  const result = { rate, rateDate };
+  dailyCurrencyRates.set(memoryKey, result);
+  return result;
+}
+
+function calculateCurrencyTransfer(amountCents, senderCurrencyCode, recipientCurrencyCode, senderRate, recipientRate) {
+  if (!Number.isSafeInteger(amountCents) || amountCents < 1
+      || !Number.isFinite(senderRate) || senderRate <= 0
+      || !Number.isFinite(recipientRate) || recipientRate <= 0) {
+    throw new HttpsError("invalid-argument", "O valor ou a cotação da transferência é inválido.");
+  }
+  const amountInBrlCents = Math.round(amountCents / senderRate);
+  const feeCents = senderCurrencyCode !== recipientCurrencyCode
+    ? Math.round(amountInBrlCents * CROSS_CURRENCY_TRANSFER_FEE_BPS / 10_000)
+    : 0;
+  const senderDebitCents = amountInBrlCents + feeCents;
+  const recipientAmountCents = Math.round(amountInBrlCents * recipientRate);
+  const exchangeRate = Number((recipientRate / senderRate).toFixed(8));
+  if (!Number.isSafeInteger(amountInBrlCents) || amountInBrlCents < 1
+      || !Number.isSafeInteger(senderDebitCents)
+      || !Number.isSafeInteger(recipientAmountCents) || recipientAmountCents < 1
+      || !Number.isFinite(exchangeRate) || exchangeRate <= 0) {
+    throw new HttpsError("invalid-argument", "O valor convertido é inválido.");
+  }
+  return {
+    amountInBrlCents,
+    feeCents,
+    senderDebitCents,
+    recipientAmountCents,
+    exchangeRate,
+  };
+}
+
+exports._calculateCurrencyTransfer = calculateCurrencyTransfer;
 
 function authenticatedUid(request) {
   if (!request.auth) {
@@ -588,17 +673,29 @@ exports.lookupPixKey = onCall(async (request) => {
     throw new HttpsError("not-found", "Nenhuma conta encontrada para essa chave.");
   }
   const uid = keySnapshot.data().uid;
-  const profileSnapshot = await database.collection("leaderboard").doc(uid).get();
-  if (!profileSnapshot.exists) {
+  const [profileSnapshot, userSnapshot] = await Promise.all([
+    database.collection("leaderboard").doc(uid).get(),
+    database.collection("users").doc(uid).get(),
+  ]);
+  if (!profileSnapshot.exists || !userSnapshot.exists) {
     throw new HttpsError("not-found", "Perfil do destinatário não encontrado.");
   }
   const profile = profileSnapshot.data();
+  const currencyCode = userSnapshot.get("currencyCode");
+  if (!supportedCurrencyCodes.has(currencyCode || "")) {
+    throw new HttpsError("failed-precondition", "A conta do destinatário ainda não tem uma moeda configurada.");
+  }
+  const { rate, rateDate } = await getDailyCurrencyRate(currencyCode);
   return {
     uid,
     displayName: profile.displayName || "Jogador",
     username: profile.username || "",
     level: profile.level || 1,
     avatarUrl: profile.avatarUrl || "",
+    countryCode: userSnapshot.get("countryCode") || "",
+    currencyCode,
+    rate,
+    rateDate,
   };
 });
 
@@ -617,6 +714,69 @@ exports.transferByPixKey = onCall(async (request) => {
   const transferRef = database.collection("transfers").doc(requestId);
   const keyRef = database.collection("pixKeys").doc(pixKeyHash(normalized));
   const senderRef = database.collection("users").doc(senderUid);
+  const priorTransfer = await transferRef.get();
+  if (priorTransfer.exists) {
+    const prior = priorTransfer.data();
+    if (prior.senderUid !== senderUid) {
+      throw new HttpsError("already-exists", "Identificador já utilizado.");
+    }
+    return {
+      transferId: requestId,
+      recipientName: prior.recipientName,
+      balanceCents: prior.senderBalanceAfter,
+      amountCents: prior.amountCents,
+      amountCentsInSenderCurrency: prior.amountCentsInSenderCurrency || prior.amountCents,
+      recipientAmountCents: prior.recipientAmountCents || prior.amountCents,
+      feeCents: prior.feeCents || 0,
+      senderDebitCents: prior.senderDebitCents || prior.amountCents,
+      senderCurrencyCode: prior.senderCurrencyCode || "BRL",
+      recipientCurrencyCode: prior.recipientCurrencyCode || "BRL",
+      exchangeRate: prior.exchangeRate || 1,
+      rateDate: prior.rateDate || "",
+    };
+  }
+
+  const keySnapshot = await keyRef.get();
+  if (!keySnapshot.exists) {
+    throw new HttpsError("not-found", "Nenhuma conta encontrada para essa chave.");
+  }
+  const recipientUid = keySnapshot.get("uid");
+  if (recipientUid === senderUid) {
+    throw new HttpsError("invalid-argument", "Escolha a chave de outro usuário.");
+  }
+  const recipientRef = database.collection("users").doc(recipientUid);
+  const [senderCurrencySnapshot, recipientCurrencySnapshot] = await Promise.all([
+    senderRef.get(),
+    recipientRef.get(),
+  ]);
+  if (!senderCurrencySnapshot.exists || !recipientCurrencySnapshot.exists) {
+    throw new HttpsError("failed-precondition", "Uma das contas ainda não está pronta.");
+  }
+  const senderCurrencyCode = senderCurrencySnapshot.get("currencyCode");
+  const recipientCurrencyCode = recipientCurrencySnapshot.get("currencyCode");
+  if (!supportedCurrencyCodes.has(senderCurrencyCode || "")
+      || !supportedCurrencyCodes.has(recipientCurrencyCode || "")) {
+    throw new HttpsError("failed-precondition", "Configure a moeda das duas contas antes de transferir.");
+  }
+  const [senderQuote, recipientQuote] = await Promise.all([
+    getDailyCurrencyRate(senderCurrencyCode),
+    getDailyCurrencyRate(recipientCurrencyCode),
+  ]);
+  const settlement = calculateCurrencyTransfer(
+    amountCents,
+    senderCurrencyCode,
+    recipientCurrencyCode,
+    senderQuote.rate,
+    recipientQuote.rate,
+  );
+  const {
+    amountInBrlCents: transferAmountCents,
+    feeCents,
+    senderDebitCents,
+    recipientAmountCents,
+    exchangeRate,
+  } = settlement;
+  const rateDate = senderQuote.rateDate;
   let response;
 
   await database.runTransaction(async (transaction) => {
@@ -630,6 +790,15 @@ exports.transferByPixKey = onCall(async (request) => {
         transferId: requestId,
         recipientName: prior.recipientName,
         balanceCents: prior.senderBalanceAfter,
+        amountCents: prior.amountCents,
+        amountCentsInSenderCurrency: prior.amountCentsInSenderCurrency || prior.amountCents,
+        recipientAmountCents: prior.recipientAmountCents || prior.amountCents,
+        feeCents: prior.feeCents || 0,
+        senderDebitCents: prior.senderDebitCents || prior.amountCents,
+        senderCurrencyCode: prior.senderCurrencyCode || "BRL",
+        recipientCurrencyCode: prior.recipientCurrencyCode || "BRL",
+        exchangeRate: prior.exchangeRate || 1,
+        rateDate: prior.rateDate || "",
       };
       return;
     }
@@ -638,12 +807,13 @@ exports.transferByPixKey = onCall(async (request) => {
     if (!keySnapshot.exists) {
       throw new HttpsError("not-found", "Nenhuma conta encontrada para essa chave.");
     }
-    const recipientUid = keySnapshot.data().uid;
+    if (keySnapshot.get("uid") !== recipientUid) {
+      throw new HttpsError("failed-precondition", "A chave Pix foi alterada. Busque o destinatário novamente.");
+    }
     if (recipientUid === senderUid) {
       throw new HttpsError("invalid-argument", "Escolha a chave de outro usuário.");
     }
 
-    const recipientRef = database.collection("users").doc(recipientUid);
     const senderRankRef = database.collection("leaderboard").doc(senderUid);
     const recipientRankRef = database.collection("leaderboard").doc(recipientUid);
     const senderHistoryRef = senderRef.collection("transactions").doc(requestId);
@@ -662,14 +832,17 @@ exports.transferByPixKey = onCall(async (request) => {
 
     const sender = senderSnapshot.data();
     const recipient = recipientSnapshot.data();
+    if (sender.currencyCode !== senderCurrencyCode || recipient.currencyCode !== recipientCurrencyCode) {
+      throw new HttpsError("failed-precondition", "A moeda da conta mudou. Busque o destinatário novamente.");
+    }
     const senderBalance = sender.balanceCents || 0;
     const recipientBalance = recipient.balanceCents || 0;
-    if (senderBalance < amountCents) {
+    if (senderBalance < senderDebitCents) {
       throw new HttpsError("failed-precondition", "Saldo insuficiente.");
     }
 
-    const senderAfter = senderBalance - amountCents;
-    const recipientAfter = recipientBalance + amountCents;
+    const senderAfter = senderBalance - senderDebitCents;
+    const recipientAfter = recipientBalance + transferAmountCents;
     const senderName = sender.displayName || "Jogador";
     const recipientName = recipient.displayName || "Jogador";
     const now = FieldValue.serverTimestamp();
@@ -682,27 +855,62 @@ exports.transferByPixKey = onCall(async (request) => {
       recipientUid,
       senderName,
       recipientName,
-      amountCents,
+      amountCents: transferAmountCents,
+      amountCentsInSenderCurrency: amountCents,
+      recipientAmountCents,
+      feeCents,
+      senderDebitCents,
+      senderCurrencyCode,
+      recipientCurrencyCode,
+      exchangeRate,
+      rateDate,
       senderBalanceAfter: senderAfter,
       createdAt: now,
     });
     transaction.create(senderHistoryRef, {
-      description: `Para ${recipientName}`,
-      deltaCents: -amountCents,
+      description: feeCents > 0
+        ? `Para ${recipientName} (inclui taxa de ${feeCents} centavos)`
+        : `Para ${recipientName}`,
+      deltaCents: -senderDebitCents,
       type: "pix_transfer",
       transferId: requestId,
       counterpartyUid: recipientUid,
+      feeCents,
       createdAt: now,
     });
+    if (feeCents > 0) {
+      transaction.set(
+        database.collection("systemFinancials").doc("currencyTransferFees"),
+        {
+          totalFeeCents: FieldValue.increment(feeCents),
+          transferCount: FieldValue.increment(1),
+          updatedAt: now,
+        },
+        { merge: true },
+      );
+    }
     transaction.create(recipientHistoryRef, {
       description: `De ${senderName}`,
-      deltaCents: amountCents,
+      deltaCents: transferAmountCents,
       type: "pix_transfer",
       transferId: requestId,
       counterpartyUid: senderUid,
       createdAt: now,
     });
-    response = { transferId: requestId, recipientName, balanceCents: senderAfter };
+    response = {
+      transferId: requestId,
+      recipientName,
+      balanceCents: senderAfter,
+      amountCents: transferAmountCents,
+      amountCentsInSenderCurrency: amountCents,
+      recipientAmountCents,
+      feeCents,
+      senderDebitCents,
+      senderCurrencyCode,
+      recipientCurrencyCode,
+      exchangeRate,
+      rateDate,
+    };
   });
 
   return response;
@@ -3454,8 +3662,8 @@ exports.getPlayerProfile = onCall(async (request) => {
     gamesPlayed: Number.isSafeInteger(profile.gamesPlayed) ? profile.gamesPlayed : 0,
     wins: Number.isSafeInteger(profile.wins) ? profile.wins : 0,
     inventory: [],
-    pixKey: "",
-    pixKeyType: "",
+    pixKey: typeof profile.pixKey === "string" ? profile.pixKey : "",
+    pixKeyType: typeof profile.pixKeyType === "string" ? profile.pixKeyType : "",
     equippedFrame: typeof profile.equippedFrame === "string" ? profile.equippedFrame : "",
     equippedTitle: typeof profile.equippedTitle === "string" ? profile.equippedTitle : "",
   };
@@ -3871,6 +4079,14 @@ exports.adminDeleteUser = onCall(async (request) => {
       .doc(createHash("sha256").update(profile.whatsappLink.jid).digest("hex"));
     const linkSnapshot = await linkRef.get();
     if (linkSnapshot.exists && linkSnapshot.get("uid") === targetUid) await linkRef.delete();
+  }
+  const phoneOwners = await database.collection("whatsappPhoneOwners")
+    .where("uid", "==", targetUid)
+    .get();
+  if (!phoneOwners.empty) {
+    const batch = database.batch();
+    phoneOwners.docs.forEach((document) => batch.delete(document.ref));
+    await batch.commit();
   }
   await database.collection("whatsappLinkCodes").doc(targetUid).delete();
   const chatSnapshot = await database.collection("chats")
@@ -4639,6 +4855,7 @@ exports.getAccountSettings = onCall(async (request) => {
     whatsappLink: {
       linked: Boolean(userSnapshot.get("whatsappLink.jid")),
       linkedAtMs: userSnapshot.get("whatsappLink.linkedAtMs") || 0,
+      phoneNumber: userSnapshot.get("phoneNumber") || "",
     },
     friends,
     friendRequests: requests,
@@ -4664,6 +4881,10 @@ exports.createWhatsAppLinkCode = onCall(async (request) => {
   await database.runTransaction(async (transaction) => {
     const userSnapshot = await transaction.get(userRef);
     if (!userSnapshot.exists) throw new HttpsError("failed-precondition", "Configure sua conta antes de vincular o WhatsApp.");
+    if (!/^[A-Z]{2}$/.test(userSnapshot.get("countryCode") || "")
+        || !supportedCurrencyCodes.has(userSnapshot.get("currencyCode") || "")) {
+      throw new HttpsError("failed-precondition", "Escolha o país da sua conta antes de vincular o WhatsApp.");
+    }
     if (userSnapshot.get("whatsappLink.jid")) {
       throw new HttpsError("failed-precondition", "Já existe uma conta do WhatsApp vinculada.");
     }
@@ -4671,6 +4892,36 @@ exports.createWhatsAppLinkCode = onCall(async (request) => {
   });
 
   return { code, expiresAtMs };
+});
+
+exports.setAccountCountry = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const countryCode = String(request.data?.countryCode || "").trim().toUpperCase();
+  const currencyCode = String(request.data?.currencyCode || "").trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(countryCode) || !supportedCurrencyCodes.has(currencyCode)) {
+    throw new HttpsError("invalid-argument", "Selecione um país e uma moeda válidos.");
+  }
+  const userRef = database.collection("users").doc(uid);
+  const userSnapshot = await userRef.get();
+  if (!userSnapshot.exists) {
+    throw new HttpsError("failed-precondition", "Configure sua conta antes de escolher o país.");
+  }
+  const { rate, rateDate } = await getDailyCurrencyRate(currencyCode);
+  await userRef.update({ countryCode, currencyCode });
+  return { countryCode, currencyCode, rate, rateDate };
+});
+
+exports.getAccountCurrency = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const userSnapshot = await database.collection("users").doc(uid).get();
+  const countryCode = userSnapshot.get("countryCode");
+  const currencyCode = userSnapshot.get("currencyCode");
+  if (!/^[A-Z]{2}$/.test(countryCode || "")
+      || !supportedCurrencyCodes.has(currencyCode || "")) {
+    throw new HttpsError("failed-precondition", "Escolha o país da sua conta para consultar a moeda.");
+  }
+  const { rate, rateDate } = await getDailyCurrencyRate(currencyCode);
+  return { countryCode, currencyCode, rate, rateDate };
 });
 
 exports.unlinkWhatsAppAccount = onCall(async (request) => {
@@ -4684,9 +4935,27 @@ exports.unlinkWhatsAppAccount = onCall(async (request) => {
 
     const linkRef = database.collection("whatsappAccountLinks")
       .doc(createHash("sha256").update(jid).digest("hex"));
+    const phoneOwnerRef = jid.endsWith("@s.whatsapp.net")
+      ? database.collection("whatsappPhoneOwners")
+        .doc(createHash("sha256").update(jid).digest("hex"))
+      : null;
     const linkSnapshot = await transaction.get(linkRef);
+    const phoneOwnerSnapshot = phoneOwnerRef ? await transaction.get(phoneOwnerRef) : null;
     if (linkSnapshot.exists && linkSnapshot.get("uid") === uid) transaction.delete(linkRef);
-    transaction.update(userRef, { whatsappLink: FieldValue.delete() });
+    if (phoneOwnerRef && !phoneOwnerSnapshot?.exists) {
+      transaction.create(phoneOwnerRef, {
+        uid,
+        phoneNumber: `+${jid.split("@")[0]}`,
+        claimedAtMs: userSnapshot.get("whatsappLink.linkedAtMs") || Date.now(),
+      });
+    } else if (phoneOwnerSnapshot?.exists && phoneOwnerSnapshot.get("uid") !== uid) {
+      throw new HttpsError("already-exists", "Este número de telefone já pertence a outra conta do app.");
+    }
+    transaction.update(userRef, {
+      whatsappLink: FieldValue.delete(),
+      phoneNumber: FieldValue.delete(),
+      phoneVerifiedAtMs: FieldValue.delete(),
+    });
   });
 
   return { unlinked: true };
@@ -4739,6 +5008,295 @@ async function consultarApiBotVinculado(jid, path) {
   return economy;
 }
 
+async function migrarCarteiraWhatsApp(uid, jid, linkedAtMs) {
+  if (!Number.isSafeInteger(linkedAtMs) || linkedAtMs <= 0) {
+    throw new HttpsError("failed-precondition", "A data do vínculo do WhatsApp está inválida.");
+  }
+  const secret = process.env.WHATSAPP_LINK_SECRET;
+  const baseUrl = process.env.PIROQUINHAS_API_URL;
+  if (!secret || secret.length < 32 || !baseUrl) {
+    throw new HttpsError("failed-precondition", "A migração da carteira do bot ainda não está configurada.");
+  }
+  let apiUrl;
+  try {
+    apiUrl = new URL(baseUrl);
+  } catch {
+    throw new HttpsError("failed-precondition", "O endereço do servidor do bot está inválido.");
+  }
+  if (apiUrl.protocol !== "https:" || apiUrl.pathname !== "/" || apiUrl.search || apiUrl.hash) {
+    throw new HttpsError("failed-precondition", "O servidor do bot deve usar um endereço HTTPS válido.");
+  }
+
+  const path = "/api/integration/wallet/migrate";
+  const timestamp = String(Date.now());
+  const payload = `${timestamp}\nPOST\n${path}\n${jid}\n${linkedAtMs}`;
+  const signature = createHmac("sha256", secret).update(payload).digest("hex");
+  let response;
+  try {
+    response = await fetch(`${apiUrl.origin}${path}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-zeca-jid": jid,
+        "x-zeca-timestamp": timestamp,
+        "x-zeca-signature": signature,
+      },
+      body: JSON.stringify({ jid, linkedAtMs }),
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (error) {
+    console.error("Falha ao migrar a carteira do WhatsApp:", error);
+    throw new HttpsError("unavailable", "O servidor do WhatsApp está indisponível para migrar a carteira.");
+  }
+  if (!response.ok) {
+    console.error(`A migração da carteira no bot retornou HTTP ${response.status}.`);
+    throw new HttpsError("failed-precondition", "Não foi possível migrar a carteira do bot agora.");
+  }
+
+  let migration;
+  try {
+    migration = await response.json();
+  } catch (error) {
+    console.error("Resposta inválida da migração da carteira do WhatsApp:", error);
+    throw new HttpsError("internal", "O servidor do WhatsApp retornou uma migração inválida.");
+  }
+  const availableCents = migration?.goldCents;
+  const bankCents = migration?.bankCents;
+  const migrationId = migration?.migrationId;
+  if (!Number.isSafeInteger(availableCents) || availableCents < 0
+      || !Number.isSafeInteger(bankCents) || bankCents < 0
+      || typeof migrationId !== "string" || !/^[a-f\d]{64}$/i.test(migrationId)) {
+    throw new HttpsError("internal", "O servidor do WhatsApp retornou valores inválidos para a carteira.");
+  }
+  const amountCents = availableCents + bankCents;
+  if (!Number.isSafeInteger(amountCents)) {
+    throw new HttpsError("failed-precondition", "O saldo migrado excede o limite permitido.");
+  }
+
+  const migrationRef = database.collection("whatsappWalletMigrations").doc(migrationId);
+  const userRef = database.collection("users").doc(uid);
+  const rankRef = database.collection("leaderboard").doc(uid);
+  await database.runTransaction(async (transaction) => {
+    const [migrationSnapshot, userSnapshot, rankSnapshot] = await Promise.all([
+      transaction.get(migrationRef),
+      transaction.get(userRef),
+      transaction.get(rankRef),
+    ]);
+    if (!userSnapshot.exists) throw new HttpsError("not-found", "Conta do app não encontrada.");
+    if (!/^[A-Z]{2}$/.test(userSnapshot.get("countryCode") || "")
+        || !supportedCurrencyCodes.has(userSnapshot.get("currencyCode") || "")) {
+      throw new HttpsError("failed-precondition", "Escolha o país da sua conta antes de vincular o WhatsApp.");
+    }
+    if (userSnapshot.get("whatsappLink.jid") !== jid
+        || userSnapshot.get("whatsappLink.linkedAtMs") !== linkedAtMs) {
+      throw new HttpsError("failed-precondition", "Vincule novamente a mesma conta do WhatsApp antes de sincronizar.");
+    }
+    if (migrationSnapshot.exists) {
+      if (migrationSnapshot.get("uid") !== uid || migrationSnapshot.get("jid") !== jid) {
+        throw new HttpsError("already-exists", "Esta migração da carteira já pertence a outra conta.");
+      }
+      if (userSnapshot.get("whatsappWalletMigratedLinkedAtMs") !== linkedAtMs) {
+        transaction.update(userRef, { whatsappWalletMigratedLinkedAtMs: linkedAtMs });
+      }
+      return;
+    }
+    const balanceCents = userSnapshot.get("balanceCents") ?? 0;
+    if (!Number.isSafeInteger(balanceCents) || balanceCents < 0) {
+      throw new HttpsError("failed-precondition", "O saldo da conta está inválido.");
+    }
+    const nextBalanceCents = balanceCents + amountCents;
+    if (!Number.isSafeInteger(nextBalanceCents)) {
+      throw new HttpsError("failed-precondition", "O saldo resultante excede o limite permitido.");
+    }
+    transaction.create(migrationRef, {
+      uid,
+      jid,
+      amountCents,
+      migratedAtMs: Date.now(),
+    });
+    transaction.update(userRef, {
+      balanceCents: nextBalanceCents,
+      whatsappWalletMigratedLinkedAtMs: linkedAtMs,
+    });
+    if (rankSnapshot.exists) {
+      transaction.update(rankRef, { balanceCents: nextBalanceCents });
+    }
+  });
+}
+
+exports._operateWhatsAppWallet = async (request) => {
+  const { action, jid, recipientJid = "", requestId, deltaCents, description } = request.data || {};
+  if (typeof jid !== "string" || !/^\d+@s\.whatsapp\.net$/.test(jid)
+      || !["balance", "adjust", "transfer"].includes(action)) {
+    throw new HttpsError("invalid-argument", "Solicitação de carteira inválida.");
+  }
+  if (action === "transfer" && (typeof recipientJid !== "string"
+      || !/^\d+@s\.whatsapp\.net$/.test(recipientJid)
+      || recipientJid === jid)) {
+    throw new HttpsError("invalid-argument", "Conta de destino inválida.");
+  }
+  if (["adjust", "transfer"].includes(action) && (typeof requestId !== "string"
+      || !/^[a-f\d-]{16,64}$/i.test(requestId)
+      || !Number.isSafeInteger(deltaCents)
+      || deltaCents === 0
+      || (action === "transfer" && deltaCents < 0)
+      || Math.abs(deltaCents) > 100_000_000
+      || typeof description !== "string"
+      || !description.trim()
+      || description.length > 120)) {
+    throw new HttpsError("invalid-argument", "Movimentação de carteira inválida.");
+  }
+
+  const linkRef = database.collection("whatsappAccountLinks")
+    .doc(createHash("sha256").update(jid).digest("hex"));
+  const linkSnapshot = await linkRef.get();
+  if (!linkSnapshot.exists) return { linked: false };
+  const uid = linkSnapshot.get("uid");
+  if (typeof uid !== "string" || !uid) {
+    throw new HttpsError("failed-precondition", "O vínculo do WhatsApp está inválido.");
+  }
+  const userRef = database.collection("users").doc(uid);
+  let accountSnapshot = await userRef.get();
+  if (!accountSnapshot.exists || accountSnapshot.get("whatsappLink.jid") !== jid) {
+    return { linked: false };
+  }
+  if (accountSnapshot.get("isBlocked") === true) {
+    throw new HttpsError("permission-denied", "Esta conta do app está desativada.");
+  }
+  const linkedAtMs = accountSnapshot.get("whatsappLink.linkedAtMs");
+  if (accountSnapshot.get("whatsappWalletMigratedLinkedAtMs") !== linkedAtMs) {
+    await migrarCarteiraWhatsApp(uid, jid, linkedAtMs);
+    accountSnapshot = await userRef.get();
+  }
+  const countryCode = accountSnapshot.get("countryCode") || "BR";
+  const currencyCode = accountSnapshot.get("currencyCode") || "BRL";
+  const { rate, rateDate } = await getDailyCurrencyRate(currencyCode);
+  let balanceCents;
+  if (action === "balance") {
+    const currentLink = await linkRef.get();
+    if (currentLink.get("uid") !== uid) {
+      return { linked: false };
+    }
+    balanceCents = accountSnapshot.get("balanceCents") ?? 0;
+  } else {
+    const requestHash = createHash("sha256").update(`${uid}:${requestId}`).digest("hex");
+    const operationRef = database.collection("whatsappWalletOperations").doc(requestHash);
+    const rankRef = database.collection("leaderboard").doc(uid);
+    const recipientLinkRef = action === "transfer"
+      ? database.collection("whatsappAccountLinks")
+        .doc(createHash("sha256").update(recipientJid).digest("hex"))
+      : null;
+    const recipientLinkSnapshot = recipientLinkRef ? await recipientLinkRef.get() : null;
+    if (action === "transfer" && !recipientLinkSnapshot?.exists) {
+      return { linked: true, recipientLinked: false, balanceCents, countryCode, currencyCode, rate, rateDate };
+    }
+    const recipientUid = recipientLinkSnapshot?.get("uid");
+    const recipientRef = typeof recipientUid === "string"
+      ? database.collection("users").doc(recipientUid)
+      : null;
+    const recipientRankRef = typeof recipientUid === "string"
+      ? database.collection("leaderboard").doc(recipientUid)
+      : null;
+    let result;
+    await database.runTransaction(async (transaction) => {
+      const [operationSnapshot, userSnapshot, currentLink, rankSnapshot, recipientLink, recipientSnapshot, recipientRank] = await Promise.all([
+        transaction.get(operationRef),
+        transaction.get(userRef),
+        transaction.get(linkRef),
+        transaction.get(rankRef),
+        recipientLinkRef ? transaction.get(recipientLinkRef) : null,
+        recipientRef ? transaction.get(recipientRef) : null,
+        recipientRankRef ? transaction.get(recipientRankRef) : null,
+      ]);
+      if (currentLink.get("uid") !== uid
+          || !userSnapshot.exists
+          || userSnapshot.get("whatsappLink.jid") !== jid) {
+        throw new HttpsError("failed-precondition", "O vínculo do WhatsApp não está ativo.");
+      }
+      if (userSnapshot.get("isBlocked") === true) {
+        throw new HttpsError("permission-denied", "Esta conta do app está desativada.");
+      }
+      if (operationSnapshot.exists) {
+        if (operationSnapshot.get("deltaCents") !== deltaCents
+            || operationSnapshot.get("jid") !== jid
+            || (operationSnapshot.get("recipientJid") || "") !== (action === "transfer" ? recipientJid : "")) {
+          throw new HttpsError("already-exists", "O identificador desta movimentação já foi usado.");
+        }
+        result = operationSnapshot.get("balanceCents");
+        return;
+      }
+      const currentBalance = userSnapshot.get("balanceCents") ?? 0;
+      if (!Number.isSafeInteger(currentBalance) || currentBalance < 0) {
+        throw new HttpsError("failed-precondition", "O saldo da conta está inválido.");
+      }
+      const nextBalance = currentBalance + deltaCents;
+      if (action === "adjust" && (!Number.isSafeInteger(nextBalance) || nextBalance < 0)) {
+        throw new HttpsError("failed-precondition", "Saldo insuficiente.");
+      }
+      let recipientNextBalance;
+      if (action === "transfer") {
+        if (recipientLink?.get("uid") !== recipientUid
+            || !recipientSnapshot?.exists
+            || recipientSnapshot.get("whatsappLink.jid") !== recipientJid) {
+          throw new HttpsError("failed-precondition", "A conta de destino não está vinculada.");
+        }
+        const recipientBalance = recipientSnapshot.get("balanceCents") ?? 0;
+        if (!Number.isSafeInteger(recipientBalance) || recipientBalance < 0) {
+          throw new HttpsError("failed-precondition", "O saldo de destino está inválido.");
+        }
+        recipientNextBalance = recipientBalance + deltaCents;
+        if (!Number.isSafeInteger(recipientNextBalance) || recipientNextBalance < 0) {
+          throw new HttpsError("failed-precondition", "O saldo da conta de destino excede o limite permitido.");
+        }
+      }
+      if (action === "transfer" && currentBalance < deltaCents) {
+        throw new HttpsError("failed-precondition", "Saldo insuficiente.");
+      }
+      const senderBalanceAfter = action === "transfer" ? currentBalance - deltaCents : nextBalance;
+      transaction.create(operationRef, {
+        uid,
+        jid,
+        recipientUid: recipientUid || "",
+        recipientJid: action === "transfer" ? recipientJid : "",
+        requestId,
+        action,
+        deltaCents,
+        description: description.trim(),
+        balanceCents: senderBalanceAfter,
+        createdAtMs: Date.now(),
+      });
+      transaction.update(userRef, { balanceCents: senderBalanceAfter });
+      if (rankSnapshot.exists) transaction.update(rankRef, { balanceCents: senderBalanceAfter });
+      const transactionRef = userRef.collection("transactions").doc(requestHash);
+      transaction.create(transactionRef, {
+        type: action === "transfer" ? "whatsapp_transfer" : "whatsapp_wallet",
+        deltaCents: action === "transfer" ? -deltaCents : deltaCents,
+        description: action === "transfer" ? `Para WhatsApp ${recipientJid.split("@")[0]}` : description.trim(),
+        createdAt: FieldValue.serverTimestamp(),
+        createdAtMs: Date.now(),
+      });
+      if (action === "transfer" && recipientRef && recipientRankRef) {
+        transaction.update(recipientRef, { balanceCents: recipientNextBalance });
+        if (recipientRank?.exists) transaction.update(recipientRankRef, { balanceCents: recipientNextBalance });
+        transaction.create(recipientRef.collection("transactions").doc(requestHash), {
+          type: "whatsapp_transfer",
+          deltaCents,
+          description: `De WhatsApp ${jid.split("@")[0]}`,
+          createdAt: FieldValue.serverTimestamp(),
+          createdAtMs: Date.now(),
+        });
+      }
+      result = senderBalanceAfter;
+    });
+    balanceCents = result;
+  }
+
+  if (!Number.isSafeInteger(balanceCents) || balanceCents < 0) {
+    throw new HttpsError("failed-precondition", "O saldo da conta está inválido.");
+  }
+  return { linked: true, balanceCents, countryCode, currencyCode, rate, rateDate };
+};
+
 exports.getLinkedWhatsAppEconomy = onCall(async (request) => {
   const uid = authenticatedUid(request);
   const userRef = database.collection("users").doc(uid);
@@ -4750,23 +5308,27 @@ exports.getLinkedWhatsAppEconomy = onCall(async (request) => {
   if (typeof jid !== "string" || !/^\d+@s\.whatsapp\.net$/.test(jid)) {
     throw new HttpsError("failed-precondition", "Vincule sua conta do WhatsApp antes de consultar a economia.");
   }
+  await migrarCarteiraWhatsApp(uid, jid, profile.get("whatsappLink.linkedAtMs"));
   if (settings.get("shareBotEconomy") !== true) {
     throw new HttpsError("failed-precondition", "Ative o compartilhamento da economia do bot nas preferências de privacidade.");
   }
   const economy = await consultarApiBotVinculado(jid, "/api/integration/economy");
-  if (!Number.isSafeInteger(economy.totalGold) || economy.totalGold < 0
+  const currentProfile = await userRef.get();
+  const balanceCents = currentProfile.get("balanceCents");
+  if (!Number.isSafeInteger(balanceCents) || balanceCents < 0
+      || !Number.isSafeInteger(economy.totalGold) || economy.totalGold < 0
       || !Number.isSafeInteger(economy.totalBankGold) || economy.totalBankGold < 0
       || !Array.isArray(economy.groups) || !Array.isArray(economy.history)) {
     throw new HttpsError("internal", "O servidor do WhatsApp retornou dados de economia inválidos.");
   }
-  return economy;
+  return { ...economy, totalGold: balanceCents, totalBankGold: 0 };
 });
 
 const WHATSAPP_DAILY_MISSIONS = Object.freeze({
   xp100: { title: "Ganhe 100 XP no WhatsApp", target: 100, points: 10 },
   msg50: { title: "Envie 50 mensagens no WhatsApp", target: 50, points: 10 },
   quiz5: { title: "Acerte 5 quizzes no WhatsApp", target: 5, points: 10 },
-  gold500: { title: "Ganhe 500 gold no WhatsApp", target: 500, points: 10 },
+  gold500: { title: "Ganhe saldo no WhatsApp", target: 500, points: 10 },
   pet10: { title: "Cuide do pet 10 vezes no WhatsApp", target: 10, points: 10 },
   roubo3: { title: "Conclua 3 atividades no WhatsApp", target: 3, points: 10 },
 });
@@ -4783,6 +5345,7 @@ exports.getLinkedWhatsAppDashboard = onCall(async (request) => {
     throw new HttpsError("failed-precondition", "Vincule sua conta do WhatsApp antes de sincronizar dados.");
   }
   const settings = { ...ACCOUNT_SETTING_DEFAULTS, ...(settingsSnapshot.data() || {}) };
+  await migrarCarteiraWhatsApp(uid, jid, profile.get("whatsappLink.linkedAtMs"));
   const sections = [
     settings.shareBotProfile && "profile",
     settings.shareBotPetInventory && "pets",
@@ -4901,7 +5464,7 @@ exports._completeWhatsAppLink = async (request) => {
   if (typeof rawJid !== "string") throw new HttpsError("invalid-argument", "Conta do WhatsApp inválida.");
 
   const jid = rawJid.trim().toLowerCase().split(":")[0];
-  if (!/^\d+@(s\.whatsapp\.net|lid)$/.test(jid)) {
+  if (!/^\d+@s\.whatsapp\.net$/.test(jid)) {
     throw new HttpsError("invalid-argument", "Use o comando em uma conversa privada com o bot.");
   }
   const code = rawCode.toUpperCase();
@@ -4917,19 +5480,26 @@ exports._completeWhatsAppLink = async (request) => {
   const userRef = database.collection("users").doc(uid);
   const linkRef = database.collection("whatsappAccountLinks")
     .doc(createHash("sha256").update(jid).digest("hex"));
+  const phoneOwnerRef = database.collection("whatsappPhoneOwners")
+    .doc(createHash("sha256").update(jid).digest("hex"));
   const nowMs = Date.now();
 
   await database.runTransaction(async (transaction) => {
-    const [codeSnapshot, userSnapshot, linkSnapshot] = await Promise.all([
+    const [codeSnapshot, userSnapshot, linkSnapshot, phoneOwnerSnapshot] = await Promise.all([
       transaction.get(codeRef),
       transaction.get(userRef),
       transaction.get(linkRef),
+      transaction.get(phoneOwnerRef),
     ]);
     if (!codeSnapshot.exists || codeSnapshot.get("codeHash") !== codeHash
         || codeSnapshot.get("expiresAtMs") <= nowMs) {
       throw new HttpsError("not-found", "Código inválido ou expirado. Gere outro código no app.");
     }
     if (!userSnapshot.exists) throw new HttpsError("not-found", "Conta do app não encontrada.");
+    if (!/^[A-Z]{2}$/.test(userSnapshot.get("countryCode") || "")
+        || !supportedCurrencyCodes.has(userSnapshot.get("currencyCode") || "")) {
+      throw new HttpsError("failed-precondition", "Escolha o país da sua conta antes de vincular o WhatsApp.");
+    }
     if (userSnapshot.get("isBlocked") === true) {
       throw new HttpsError("permission-denied", "Esta conta do app está desativada.");
     }
@@ -4939,9 +5509,23 @@ exports._completeWhatsAppLink = async (request) => {
     if (linkSnapshot.exists && linkSnapshot.get("uid") !== uid) {
       throw new HttpsError("already-exists", "Esta conta do WhatsApp já está vinculada a outro perfil.");
     }
+    if (phoneOwnerSnapshot.exists && phoneOwnerSnapshot.get("uid") !== uid) {
+      throw new HttpsError("already-exists", "Este número de telefone já pertence a outra conta do app.");
+    }
 
     transaction.set(linkRef, { uid, linkedAtMs: nowMs });
-    transaction.update(userRef, { whatsappLink: { jid, linkedAtMs: nowMs } });
+    if (!phoneOwnerSnapshot.exists) {
+      transaction.create(phoneOwnerRef, {
+        uid,
+        phoneNumber: `+${jid.split("@")[0]}`,
+        claimedAtMs: nowMs,
+      });
+    }
+    transaction.update(userRef, {
+      whatsappLink: { jid, linkedAtMs: nowMs },
+      phoneNumber: `+${jid.split("@")[0]}`,
+      phoneVerifiedAtMs: nowMs,
+    });
     transaction.delete(codeRef);
   });
 

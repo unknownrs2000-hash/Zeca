@@ -28,6 +28,7 @@ import java.math.BigDecimal
 import java.text.NumberFormat
 import java.util.Date
 import java.util.Locale
+import java.util.Currency
 import java.util.UUID
 
 data class PerfilJogador(
@@ -139,6 +140,10 @@ data class JogadorDestino(
     val apelido: String,
     val nivel: Int,
     val avatarUrl: String,
+    val countryCode: String = "",
+    val currencyCode: String = "BRL",
+    val currencyRate: Double = 1.0,
+    val rateDate: String = "",
     val avatarItensEquipados: List<String> = emptyList(),
     val avatarComoFotoPerfil: Boolean = false,
 )
@@ -166,6 +171,12 @@ data class ResultadoTransferencia(
     val id: String,
     val nomeDestino: String,
     val saldoCentavos: Long,
+    val valorTransferidoCentavos: Long,
+    val taxaCentavos: Long,
+    val moedaRemetente: String,
+    val moedaDestinatario: String,
+    val cotacao: Double,
+    val dataCotacao: String,
 )
 
 data class ResultadoJogo(
@@ -553,7 +564,11 @@ data class AmigoConta(
 data class AlteracaoConta(val id: String, val fields: List<String>, val createdAtMs: Long)
 data class AvisoApp(val id: String, val title: String, val details: String, val type: String, val expiresAtMs: Long)
 data class RecomendacaoJogo(val gameId: String, val played: Int, val wins: Int)
-data class VinculoWhatsAppConta(val linked: Boolean = false, val linkedAtMs: Long = 0L)
+data class VinculoWhatsAppConta(
+    val linked: Boolean = false,
+    val linkedAtMs: Long = 0L,
+    val phoneNumber: String = "",
+)
 data class GrupoEconomiaWhatsApp(val name: String, val gold: Long, val bankGold: Long)
 data class HistoricoGoldWhatsApp(
     val groupName: String,
@@ -621,6 +636,51 @@ data class PainelConta(
 
 object FirebaseRepository {
     val auth: FirebaseAuth by lazy { FirebaseAuth.getInstance() }
+
+    fun getAccountCurrency(callback: (com.example.zeca.ui.AccountCurrencyInfo?, Exception?) -> Unit) {
+        val usuario = auth.currentUser
+        if (usuario == null) {
+            callback(null, IllegalStateException("Entre na sua conta para continuar."))
+            return
+        }
+        chamarFunction("getAccountCurrency", emptyMap()) { data, erro ->
+            if (erro != null) {
+                callback(null, erro)
+                return@chamarFunction
+            }
+            val account = data?.let { raw ->
+                val countryCode = raw["countryCode"] as? String ?: ""
+                val currencyCode = raw["currencyCode"] as? String ?: runCatching {
+                    if (countryCode.isBlank()) "BRL" else Currency.getInstance(Locale("", countryCode)).currencyCode
+                }.getOrDefault("BRL")
+                com.example.zeca.ui.AccountCurrencyInfo(
+                    countryCode = countryCode,
+                    currencyCode = currencyCode,
+                    rate = (raw["rate"] as? Number)?.toDouble() ?: 1.0,
+                    rateDate = raw["rateDate"] as? String ?: "",
+                )
+            } ?: com.example.zeca.ui.AccountCurrencyInfo()
+            callback(account, null)
+        }
+    }
+
+    fun setAccountCountry(countryCode: String, currencyCode: String, callback: (Exception?) -> Unit) {
+        val usuario = auth.currentUser
+        if (usuario == null) {
+            callback(IllegalStateException("Entre na sua conta para continuar."))
+            return
+        }
+        val normalizedCountry = countryCode.trim().uppercase(Locale.ROOT)
+        val normalizedCurrency = currencyCode.trim().uppercase(Locale.ROOT)
+            .ifBlank {
+                runCatching { Currency.getInstance(Locale("", normalizedCountry)).currencyCode }
+                    .getOrDefault("BRL")
+            }
+        chamarFunction("setAccountCountry", mapOf("countryCode" to normalizedCountry, "currencyCode" to normalizedCurrency)) { _, erro ->
+            callback(erro)
+        }
+    }
+
     private val database by lazy { FirebaseFirestore.getInstance() }
     private const val SERVER_URL = "https://zeca-jvic.onrender.com"
     private const val CLOUDINARY_CLOUD_NAME = "vwctfu9u"
@@ -1430,6 +1490,10 @@ object FirebaseRepository {
                     apelido = it["displayName"] as? String ?: "Jogador",
                     nivel = (it["level"] as? Number)?.toInt() ?: 1,
                     avatarUrl = it["avatarUrl"] as? String ?: "",
+                    countryCode = it["countryCode"] as? String ?: "",
+                    currencyCode = it["currencyCode"] as? String ?: "BRL",
+                    currencyRate = (it["rate"] as? Number)?.toDouble() ?: 1.0,
+                    rateDate = it["rateDate"] as? String ?: "",
                     avatarItensEquipados = (it["equippedAvatarItems"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
                     avatarComoFotoPerfil = it["avatarAsProfilePhoto"] as? Boolean ?: false,
                 )
@@ -1474,6 +1538,12 @@ object FirebaseRepository {
                     id = it["transferId"] as? String ?: requestId,
                     nomeDestino = it["recipientName"] as? String ?: "Jogador",
                     saldoCentavos = (it["balanceCents"] as? Number)?.toLong() ?: 0L,
+                    valorTransferidoCentavos = (it["amountCents"] as? Number)?.toLong() ?: valorCentavos,
+                    taxaCentavos = (it["feeCents"] as? Number)?.toLong() ?: 0L,
+                    moedaRemetente = it["senderCurrencyCode"] as? String ?: "BRL",
+                    moedaDestinatario = it["recipientCurrencyCode"] as? String ?: "BRL",
+                    cotacao = (it["exchangeRate"] as? Number)?.toDouble() ?: 1.0,
+                    dataCotacao = it["rateDate"] as? String ?: "",
                 )
             }
             callback(resultado, erro)
@@ -2190,6 +2260,7 @@ object FirebaseRepository {
                         VinculoWhatsAppConta(
                             linked = link["linked"] as? Boolean ?: false,
                             linkedAtMs = (link["linkedAtMs"] as? Number)?.toLong() ?: 0L,
+                            phoneNumber = link["phoneNumber"] as? String ?: "",
                         )
                     } ?: VinculoWhatsAppConta(),
                 ),

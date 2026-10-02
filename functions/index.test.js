@@ -25,7 +25,10 @@ const {
   publishAppAnnouncement,
   createSupportTicket,
   createWhatsAppLinkCode,
+  getAccountCurrency,
+  setAccountCountry,
   getLinkedWhatsAppEconomy,
+  _operateWhatsAppWallet,
   unlinkWhatsAppAccount,
   _completeWhatsAppLink,
   adminListSupportTickets,
@@ -48,7 +51,57 @@ const {
   startSoloChallenge,
   submitPlayerReport,
   submitJokenpoChoice,
+  _calculateCurrencyTransfer,
+  transferByPixKey,
 } = require("./index");
+
+test("cross-currency transfers convert by daily rates and add a 1% sender fee", () => {
+  assert.deepEqual(
+    _calculateCurrencyTransfer(10_000, "USD", "EUR", 0.2, 0.18),
+    {
+      amountInBrlCents: 50_000,
+      feeCents: 500,
+      senderDebitCents: 50_500,
+      recipientAmountCents: 9_000,
+      exchangeRate: 0.9,
+    },
+  );
+});
+
+test("same-currency transfers convert to the shared BRL balance without a fee", () => {
+  assert.deepEqual(
+    _calculateCurrencyTransfer(10_000, "USD", "USD", 0.2, 0.2),
+    {
+      amountInBrlCents: 50_000,
+      feeCents: 0,
+      senderDebitCents: 50_000,
+      recipientAmountCents: 10_000,
+      exchangeRate: 1,
+    },
+  );
+});
+
+test("currency transfer rejects unauthenticated and invalid requests before accessing Firestore", async () => {
+  await assert.rejects(
+    transferByPixKey({ auth: null, data: {} }),
+    (error) => error.code === "unauthenticated",
+  );
+  const player = { auth: { uid: "player", token: {} } };
+  await assert.rejects(
+    transferByPixKey({
+      ...player,
+      data: { key: "player@example.com", amountCents: 0, requestId: "123e4567-e89b-42d3-a456-426614174000" },
+    }),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    transferByPixKey({
+      ...player,
+      data: { key: "player@example.com", amountCents: 100, requestId: "invalid" },
+    }),
+    (error) => error.code === "invalid-argument",
+  );
+});
 
 test("admin callables reject unauthenticated and non-admin requests", async () => {
   await assert.rejects(
@@ -245,6 +298,8 @@ test("room presets and game chat validate authentication and payloads before dat
 
 test("account, friendship, announcement and support callables authenticate and validate requests", async () => {
   await assert.rejects(getAccountSettings({ auth: null, data: {} }), (error) => error.code === "unauthenticated");
+  await assert.rejects(getAccountCurrency({ auth: null, data: {} }), (error) => error.code === "unauthenticated");
+  await assert.rejects(setAccountCountry({ auth: null, data: {} }), (error) => error.code === "unauthenticated");
   await assert.rejects(manageFriend({ auth: null, data: {} }), (error) => error.code === "unauthenticated");
   await assert.rejects(saveAccountSettings({ auth: null, data: {} }), (error) => error.code === "unauthenticated");
   await assert.rejects(createSupportTicket({ auth: null, data: {} }), (error) => error.code === "unauthenticated");
@@ -252,6 +307,14 @@ test("account, friendship, announcement and support callables authenticate and v
   await assert.rejects(publishAppAnnouncement({ auth: null, data: {} }), (error) => error.code === "unauthenticated");
 
   const player = { auth: { uid: "player", token: {} }, data: {} };
+  await assert.rejects(
+    setAccountCountry({ ...player, data: { countryCode: "USA", currencyCode: "USD" } }),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    setAccountCountry({ ...player, data: { countryCode: "US", currencyCode: "ZZZ" } }),
+    (error) => error.code === "invalid-argument",
+  );
   await assert.rejects(manageFriend({ ...player, data: { action: "not-an-action" } }), (error) => error.code === "invalid-argument");
   await assert.rejects(
     saveAccountSettings({ ...player, data: { settings: { profileVisibility: "world" } } }),
@@ -304,6 +367,24 @@ test("WhatsApp account linking requires an authenticated app account and validat
   );
   await assert.rejects(
     _completeWhatsAppLink({ data: { code: "A1B2C3D4E5F6", jid: "123456789@g.us" } }),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    _completeWhatsAppLink({ data: { code: "A1B2C3D4E5F6", jid: "123456789@lid" } }),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    _operateWhatsAppWallet({ data: { action: "adjust", jid: "invalid" } }),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    _operateWhatsAppWallet({
+      data: {
+        action: "transfer",
+        jid: "5511999999999@s.whatsapp.net",
+        recipientJid: "5511999999999@s.whatsapp.net",
+      },
+    }),
     (error) => error.code === "invalid-argument",
   );
 });

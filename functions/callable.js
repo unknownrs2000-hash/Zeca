@@ -14,6 +14,7 @@ const STATUS = {
   "permission-denied": 403,
   "not-found": 404,
   "already-exists": 409,
+  unavailable: 503,
   "resource-exhausted": 429,
   internal: 500,
 };

@@ -98,8 +98,111 @@ import java.io.FileOutputStream
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.text.NumberFormat
+import java.util.Currency
 import java.util.Locale
 import java.util.UUID
+
+@Composable
+fun PaisObrigatorio(onSalvar: (String, String) -> Unit) {
+    data class PaisOpcao(
+        val codigo: String,
+        val nome: String,
+        val moeda: String,
+    )
+
+    val paises = remember {
+        Locale.getISOCountries()
+            .mapNotNull { codigo ->
+                val locale = Locale("", codigo)
+                val nome = locale.getDisplayCountry(Locale("pt", "BR")).takeIf { it.isNotBlank() }
+                    ?: locale.getDisplayCountry(Locale.ENGLISH)
+                val moeda = runCatching { Currency.getInstance(locale).currencyCode }.getOrNull()
+                if (nome.isBlank() || moeda.isNullOrBlank()) null else PaisOpcao(codigo, nome, moeda)
+            }
+            .sortedBy { it.nome }
+    }
+    var busca by rememberSaveable { mutableStateOf("") }
+    var selecionado by rememberSaveable { mutableStateOf<PaisOpcao?>(null) }
+    val filtrados = remember(busca, paises) {
+        if (busca.isBlank()) paises else paises.filter {
+            it.nome.contains(busca, ignoreCase = true) ||
+                it.codigo.contains(busca, ignoreCase = true) ||
+                it.moeda.contains(busca, ignoreCase = true)
+        }
+    }
+
+    Dialog(
+        onDismissRequest = {},
+        properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
+    ) {
+        Box(
+            modifier = Modifier
+                .background(Color(0xFF12191D), RoundedCornerShape(24.dp))
+                .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(24.dp))
+                .padding(20.dp),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Selecione seu país", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Black)
+                Text(
+                    "Precisamos do seu país para ajustar a moeda e o câmbio antes de você entrar.",
+                    color = Color.White.copy(alpha = 0.7f),
+                    fontSize = 13.sp,
+                )
+                OutlinedTextField(
+                    value = busca,
+                    onValueChange = { busca = it },
+                    label = { Text("Buscar país") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 360.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    if (filtrados.isEmpty()) {
+                        Text("Nenhum país encontrado.", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
+                    } else {
+                        filtrados.forEach { pais ->
+                            val ativo = selecionado?.codigo == pais.codigo
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (ativo) Cores.Verde.copy(alpha = 0.19f) else Color.White.copy(alpha = 0.04f))
+                                    .border(1.dp, if (ativo) Cores.Verde else Color.White.copy(alpha = 0.12f), RoundedCornerShape(12.dp))
+                                    .clickable { selecionado = pais }
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(pais.nome, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                                    Text("${pais.codigo} · ${pais.moeda}", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
+                                }
+                                if (ativo) {
+                                    Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Cores.Verde)
+                                }
+                            }
+                        }
+                    }
+                }
+                Button(
+                    onClick = {
+                        val pais = selecionado ?: return@Button
+                        onSalvar(pais.codigo, pais.moeda)
+                    },
+                    enabled = selecionado != null,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Cores.Verde),
+                ) {
+                    Text("Salvar país")
+                }
+            }
+        }
+    }
+}
 
 @Composable
 fun TelaConfigurarPerfil(
@@ -199,8 +302,74 @@ fun TelaConfigurarPerfil(
     }
 }
 
-fun formatarReais(centavos: Long): String =
-    NumberFormat.getCurrencyInstance(Locale.forLanguageTag("pt-BR")).format(BigDecimal.valueOf(centavos, 2))
+data class AccountCurrencyInfo(
+    val countryCode: String = "",
+    val currencyCode: String = "BRL",
+    val rate: Double = 1.0,
+    val rateDate: String = "",
+)
+
+object AppCurrencyFormatter {
+    private val state = androidx.compose.runtime.mutableStateOf(AccountCurrencyInfo())
+
+    val current: androidx.compose.runtime.State<AccountCurrencyInfo>
+        get() = state
+
+    fun update(info: AccountCurrencyInfo?) {
+        state.value = info ?: AccountCurrencyInfo()
+    }
+
+    fun format(centavos: Long): String {
+        val info = state.value
+        val currencyCode = info.currencyCode.takeIf { it.isNotBlank() }
+            ?.uppercase(Locale.ROOT)
+            ?: currencyCodeFromCountry(info.countryCode)
+            ?: "BRL"
+        val locale = localeFromCountry(info.countryCode)
+        val rate = info.rate.takeIf { it > 0.0 } ?: 1.0
+        val amount = BigDecimal.valueOf(centavos, 2).multiply(BigDecimal.valueOf(rate)).setScale(2, RoundingMode.HALF_UP)
+        val currency = runCatching { Currency.getInstance(currencyCode) }.getOrNull() ?: Currency.getInstance("BRL")
+        val formatter = NumberFormat.getCurrencyInstance(locale)
+        formatter.currency = currency
+        val fractionDigits = currency.defaultFractionDigits.coerceAtLeast(2)
+        formatter.minimumFractionDigits = fractionDigits
+        formatter.maximumFractionDigits = fractionDigits
+        return formatter.format(amount)
+    }
+
+    private fun localeFromCountry(countryCode: String): Locale {
+        val normalized = countryCode.trim().uppercase(Locale.ROOT)
+        if (normalized.isBlank()) return Locale.forLanguageTag("pt-BR")
+        return runCatching { Locale.Builder().setLanguage("pt").setRegion(normalized).build() }
+            .getOrElse { Locale("pt", normalized) }
+    }
+
+    private fun currencyCodeFromCountry(countryCode: String): String? {
+        val normalized = countryCode.trim().uppercase(Locale.ROOT)
+        if (normalized.isBlank()) return "BRL"
+        return runCatching { Currency.getInstance(Locale("", normalized)).currencyCode }.getOrNull()
+    }
+}
+
+fun formatarReais(centavos: Long): String = AppCurrencyFormatter.format(centavos)
+
+fun formatarValorNaMoeda(moeda: String, pais: String, centavos: Long): String {
+    val currency = runCatching { Currency.getInstance(moeda) }.getOrElse { Currency.getInstance("BRL") }
+    val locale = runCatching {
+        Locale.Builder().setLanguage("pt").setRegion(pais.uppercase(Locale.ROOT)).build()
+    }.getOrElse { Locale.forLanguageTag("pt-BR") }
+    return NumberFormat.getCurrencyInstance(locale).apply {
+        this.currency = currency
+        minimumFractionDigits = 2
+        maximumFractionDigits = 2
+    }.format(BigDecimal.valueOf(centavos, 2))
+}
+
+private fun formatarCotacao(cotacao: Double): String =
+    NumberFormat.getNumberInstance(Locale.forLanguageTag("pt-BR")).apply {
+        minimumFractionDigits = 4
+        maximumFractionDigits = 8
+    }.format(cotacao)
 
 private data class ComprovantePix(
     val id: String,
@@ -209,6 +378,7 @@ private data class ComprovantePix(
     val horario: String,
     val recebimento: Boolean,
     val saldoAposCentavos: Long? = null,
+    val taxaCentavos: Long = 0L,
 )
 
 private fun criarQrCode(conteudo: String): Bitmap? = runCatching {
@@ -249,15 +419,20 @@ private fun compartilharComprovanteImagem(context: android.content.Context, reci
     drawText(if (recibo.recebimento) "Recebimento concluído" else "Pagamento concluído", 265f, 52f, white, true)
     drawText(formatarReais(recibo.valorCentavos), 430f, 82f, white, true)
     canvas.drawRect(112f, 500f, 968f, 503f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.rgb(66, 82, 85) })
-    drawText(if (recibo.recebimento) "RECEBIDO DE" else "ENVIADO PARA", 580f, 25f, muted, true)
-    drawText(recibo.contraparte, 630f, 36f, white)
-    drawText("ORIGEM / DESTINO", 735f, 25f, muted, true)
-    drawText(if (recibo.recebimento) "Carteira Zeca" else "Seu saldo Zeca", 785f, 34f, white)
-    drawText("DATA", 890f, 25f, muted, true)
-    drawText(recibo.horario, 940f, 34f, white)
-    drawText("IDENTIFICADOR", 1045f, 25f, muted, true)
-    drawText(recibo.id, 1095f, 29f, white)
-    recibo.saldoAposCentavos?.let { drawText("Saldo após: ${formatarReais(it)}", 1170f, 28f, green, true) }
+    var detalheY = 550f
+    if (recibo.taxaCentavos > 0) {
+        drawText("Taxa cambial: ${formatarReais(recibo.taxaCentavos)}", detalheY, 28f, muted)
+        detalheY += 55f
+    }
+    drawText(if (recibo.recebimento) "RECEBIDO DE" else "ENVIADO PARA", detalheY, 25f, muted, true)
+    drawText(recibo.contraparte, detalheY + 50f, 36f, white)
+    drawText("ORIGEM / DESTINO", detalheY + 155f, 25f, muted, true)
+    drawText(if (recibo.recebimento) "Carteira Zeca" else "Seu saldo Zeca", detalheY + 205f, 34f, white)
+    drawText("DATA", detalheY + 310f, 25f, muted, true)
+    drawText(recibo.horario, detalheY + 360f, 34f, white)
+    drawText("IDENTIFICADOR", detalheY + 465f, 25f, muted, true)
+    drawText(recibo.id, detalheY + 515f, 29f, white)
+    recibo.saldoAposCentavos?.let { drawText("Saldo após: ${formatarReais(it)}", detalheY + 590f, 28f, green, true) }
     drawText("Saldo interno do Zeca · não é liquidação bancária Pix", 1250f, 23f, muted)
 
     val directory = File(context.cacheDir, "receipts").apply { mkdirs() }
@@ -291,6 +466,7 @@ fun TelaCarteira(
     onTransferir: (String, Long, String, (ResultadoTransferencia?, String?) -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
+    val moedaDaConta = AppCurrencyFormatter.current.value
     var areaCarteira by rememberSaveable { mutableStateOf("Cobrar") }
     var tipoEdicao by rememberSaveable { mutableStateOf(tipoChavePix.ifBlank { "E-mail" }) }
     var chaveEditavel by rememberSaveable { mutableStateOf(chavePix) }
@@ -312,14 +488,21 @@ fun TelaCarteira(
         else -> Regex("^[A-Fa-f0-9]{32}$").matches(chaveEditavel.trim())
     }
     val valorQrCentavos = if (valorCobranca.isBlank()) null else parseValorCentavos(valorCobranca)
+    val valorQrBaseCentavos = valorQrCentavos?.let {
+        BigDecimal.valueOf(it).divide(
+            BigDecimal.valueOf(moedaDaConta.rate.takeIf { rate -> rate > 0.0 } ?: 1.0),
+            0,
+            RoundingMode.HALF_UP,
+        ).longValueExact()
+    }
     val valorQrInvalido = valorCobranca.isNotBlank()
         && (valorQrCentavos == null || valorQrCentavos !in 1..1_000_000)
-    val conteudoQr = remember(chavePix, valorQrCentavos) {
+    val conteudoQr = remember(chavePix, valorQrBaseCentavos) {
         Uri.Builder()
             .scheme("zeca")
             .authority("pix")
             .appendQueryParameter("key", chavePix)
-            .apply { valorQrCentavos?.let { appendQueryParameter("amount", it.toString()) } }
+            .apply { valorQrBaseCentavos?.let { appendQueryParameter("amount", it.toString()) } }
             .build()
             .toString()
     }
@@ -327,12 +510,19 @@ fun TelaCarteira(
         if (mostrarQr && chavePix.isNotBlank()) criarQrCode(conteudoQr) else null
     }
 
-    fun buscarDestinatario(chave: String) {
+    fun buscarDestinatario(chave: String, valorFixoBaseCentavos: Long? = null) {
         transferenciaOcupada = true
         mensagemTransferencia = ""
         onBuscarDestinatario(chave) { encontrado, erro ->
             transferenciaOcupada = false
             destinatario = encontrado
+            if (encontrado != null && valorFixoBaseCentavos != null) {
+                val valorNaMoedaRemetente = BigDecimal.valueOf(valorFixoBaseCentavos)
+                    .multiply(BigDecimal.valueOf(moedaDaConta.rate.takeIf { it > 0.0 } ?: 1.0))
+                    .setScale(0, RoundingMode.HALF_UP)
+                    .longValueExact()
+                valorTransferencia = BigDecimal.valueOf(valorNaMoedaRemetente, 2).toPlainString().replace('.', ',')
+            }
             mensagemTransferencia = erro
                 ?: if (encontrado != null) "Confira o destinatário antes de continuar." else "Conta não encontrada."
         }
@@ -345,13 +535,12 @@ fun TelaCarteira(
                 val chave = uri?.getQueryParameter("key").orEmpty()
                 val valor = uri?.getQueryParameter("amount")?.toLongOrNull()
                 if (uri?.scheme != "zeca" || uri.host != "pix" || chave.isBlank()
-                    || (uri.getQueryParameter("amount") != null && (valor == null || valor <= 0L))) {
+                    || (uri.getQueryParameter("amount") != null && (valor == null || valor !in 1..100_000_000))) {
                     mensagemTransferencia = "QR inválido. Use um QR de cobrança do Zeca."
                 } else {
                     chaveDestinatario = chave
                     destinatario = null
-                    valor?.let { valorTransferencia = BigDecimal.valueOf(it, 2).toPlainString().replace('.', ',') }
-                    buscarDestinatario(chave)
+                    buscarDestinatario(chave, valor)
                 }
             }
             .addOnFailureListener { mensagemTransferencia = "Não foi possível ler o QR code. Tente novamente." }
@@ -364,15 +553,14 @@ fun TelaCarteira(
         val amountParameter = uri?.getQueryParameter("amount")
         val valor = amountParameter?.toLongOrNull()
         if (uri?.scheme != "zeca" || uri.host != "pix" || chave.isBlank()
-            || (amountParameter != null && (valor == null || valor !in 1..1_000_000))) {
+            || (amountParameter != null && (valor == null || valor !in 1..100_000_000))) {
             areaCarteira = "Enviar"
             mensagemTransferencia = "Link de pagamento inválido."
         } else {
             areaCarteira = "Enviar"
             chaveDestinatario = chave
             destinatario = null
-            valor?.let { valorTransferencia = BigDecimal.valueOf(it, 2).toPlainString().replace('.', ',') }
-            buscarDestinatario(chave)
+            buscarDestinatario(chave, valor)
         }
         onLinkPagamentoRecebido()
     }
@@ -398,7 +586,7 @@ fun TelaCarteira(
                     onValueChange = { valorCobranca = it; mensagemQr = ""; mostrarQr = false },
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("Valor fixo (opcional)") },
-                    prefix = { Text("R$ ") },
+                    prefix = { Text("${moedaDaConta.currencyCode} ") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 )
@@ -406,7 +594,7 @@ fun TelaCarteira(
                     onClick = {
                         mostrarQr = !valorQrInvalido
                         mensagemQr = if (valorQrInvalido) {
-                            "Informe um valor entre R$ 0,01 e R$ 10.000,00."
+                            "Informe um valor entre 0,01 e 10.000,00 ${moedaDaConta.currencyCode}."
                         } else ""
                     },
                     enabled = chavePix.isNotBlank(),
@@ -419,7 +607,7 @@ fun TelaCarteira(
                         modifier = Modifier.align(Alignment.CenterHorizontally).size(220.dp),
                     )
                     Text("Chave: $chavePix", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
-                    valorQrCentavos?.let {
+                    valorQrBaseCentavos?.let {
                         Text("Valor: ${formatarReais(it)}", color = Cores.Verde, fontWeight = FontWeight.Bold)
                     }
                     Row(
@@ -438,7 +626,7 @@ fun TelaCarteira(
                             onClick = {
                                 val texto = buildString {
                                     append("Cobrança Zeca")
-                                    valorQrCentavos?.let { append(" · ${formatarReais(it)}") }
+                                    valorQrBaseCentavos?.let { append(" · ${formatarReais(it)}") }
                                     append("\n$conteudoQr")
                                 }
                                 val shareIntent = Intent(Intent.ACTION_SEND).apply {
@@ -482,12 +670,65 @@ fun TelaCarteira(
                         value = valorTransferencia,
                         onValueChange = { valorTransferencia = it; mensagemTransferencia = "" },
                         modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Valor da transferência") },
-                        prefix = { Text("R$ ") },
+                        label = { Text("Valor a enviar (${moedaDaConta.currencyCode})") },
+                        prefix = { Text("${moedaDaConta.currencyCode} ") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     )
                     val valorEnvio = parseValorCentavos(valorTransferencia)
+                    val taxaCambial = moedaDaConta.currencyCode != jogador.currencyCode
+                    val cotacaoRemetente = moedaDaConta.rate.takeIf { it > 0.0 } ?: 1.0
+                    val cotacaoDestinatario = jogador.currencyRate.takeIf { it > 0.0 } ?: 1.0
+                    val valorBaseCentavos = valorEnvio?.let {
+                        BigDecimal.valueOf(it).divide(BigDecimal.valueOf(cotacaoRemetente), 0, RoundingMode.HALF_UP).longValueExact()
+                    }
+                    val taxaBaseCentavos = if (taxaCambial && valorBaseCentavos != null) {
+                        BigDecimal.valueOf(valorBaseCentavos).divide(BigDecimal.valueOf(100), 0, RoundingMode.HALF_UP).longValueExact()
+                    } else 0L
+                    val taxaNaMoedaRemetente = BigDecimal.valueOf(taxaBaseCentavos)
+                        .multiply(BigDecimal.valueOf(cotacaoRemetente))
+                        .setScale(0, RoundingMode.HALF_UP)
+                        .longValueExact()
+                    val valorRecebidoCentavos = valorBaseCentavos?.let {
+                        BigDecimal.valueOf(it).multiply(BigDecimal.valueOf(cotacaoDestinatario))
+                            .setScale(0, RoundingMode.HALF_UP).longValueExact()
+                    }
+                    val cambioDireto = cotacaoDestinatario / cotacaoRemetente
+                    if (valorEnvio != null && valorBaseCentavos != null && valorRecebidoCentavos != null) {
+                        Text(
+                            "Você envia ${formatarValorNaMoeda(moedaDaConta.currencyCode, moedaDaConta.countryCode, valorEnvio)}.",
+                            color = Color.White.copy(alpha = 0.78f),
+                            fontSize = 12.sp,
+                        )
+                        Text(
+                            "Destinatário recebe ${formatarValorNaMoeda(jogador.currencyCode, jogador.countryCode, valorRecebidoCentavos)}.",
+                            color = Cores.Verde,
+                            fontSize = 13.sp,
+                        )
+                        if (taxaCambial) {
+                            Text(
+                                "Cotação diária: 1 ${moedaDaConta.currencyCode} = ${
+                                    formatarCotacao(cambioDireto)
+                                } ${jogador.currencyCode} · ${jogador.rateDate}",
+                                color = Color.White.copy(alpha = 0.7f),
+                                fontSize = 12.sp,
+                            )
+                            Text(
+                                "Taxa de 1%: ${formatarValorNaMoeda(moedaDaConta.currencyCode, moedaDaConta.countryCode, taxaNaMoedaRemetente)} · " +
+                                    "total debitado: ${formatarValorNaMoeda(moedaDaConta.currencyCode, moedaDaConta.countryCode, valorEnvio + taxaNaMoedaRemetente)}",
+                                color = Cores.Laranja,
+                                fontSize = 12.sp,
+                            )
+                        } else {
+                            Text("Sem taxa cambial: as duas contas usam ${moedaDaConta.currencyCode}.", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                        }
+                    }
+                    val debitoBaseCentavos = valorBaseCentavos?.let { it + taxaBaseCentavos } ?: Long.MAX_VALUE
+                    if (valorEnvio != null && valorEnvio !in 1..1_000_000) {
+                        Text("O limite por transferência é 10.000,00 ${moedaDaConta.currencyCode}.", color = Cores.Laranja, fontSize = 12.sp)
+                    } else if (debitoBaseCentavos > saldoCentavos) {
+                        Text("Saldo insuficiente para cobrir o valor e a taxa.", color = Cores.Laranja, fontSize = 12.sp)
+                    }
                     Button(
                         onClick = {
                             val valor = valorEnvio ?: return@Button
@@ -498,21 +739,29 @@ fun TelaCarteira(
                                     comprovante = ComprovantePix(
                                         id = resultado.id,
                                         contraparte = resultado.nomeDestino,
-                                        valorCentavos = valor,
+                                        valorCentavos = resultado.valorTransferidoCentavos,
                                         horario = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.forLanguageTag("pt-BR"))
                                             .format(java.util.Date()),
                                         recebimento = false,
                                         saldoAposCentavos = resultado.saldoCentavos,
+                                        taxaCentavos = resultado.taxaCentavos,
                                     )
                                     destinatario = null
-                                    mensagemTransferencia = "Transferência concluída para ${resultado.nomeDestino}."
+                                    mensagemTransferencia = "Transferência concluída para ${resultado.nomeDestino}. " +
+                                        (if (resultado.taxaCentavos > 0) {
+                                            "Taxa: ${formatarReais(resultado.taxaCentavos)}. "
+                                        } else "") +
+                                        "Cotação: 1 ${resultado.moedaRemetente} = ${formatarCotacao(resultado.cotacao)} ${resultado.moedaDestinatario}."
                                     chaveDestinatario = ""
                                 } else {
                                     mensagemTransferencia = erro ?: "Não foi possível concluir a transferência."
                                 }
                             }
                         },
-                        enabled = valorEnvio != null && valorEnvio > 0 && !transferenciaOcupada,
+                        enabled = valorEnvio != null
+                            && valorEnvio in 1..1_000_000
+                            && debitoBaseCentavos <= saldoCentavos
+                            && !transferenciaOcupada,
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text(if (transferenciaOcupada) "Enviando..." else "Confirmar envio") }
                 }
