@@ -15,19 +15,12 @@ const {
   createMinefield,
   diceGuessResult,
   footballShotResult,
-  higherLowerResult,
   isBlackjack,
-  luckyDoorsResult,
-  luckyNumberResult,
   minesCashoutPayout,
-  cardPairResult,
-  colorWheelResult,
-  diceSumResult,
-  rangePickResult,
-  doubleCoinResult,
-  tripleDiceResult,
-  luckySuitResult,
-  safeVaultResult,
+  memoryChallengeResult,
+  quizChallengeResult,
+  codebreakerChallengeResult,
+  mazeChallengeResult,
   rockPaperScissorsResult,
   parityDiceResult,
   rouletteResult,
@@ -68,6 +61,8 @@ const GAME_COOLDOWN_MS = 250;
 const CHAT_COOLDOWN_MS = 300;
 const DEFAULT_MINES_RTP_BPS = 9_800;
 const JOKENPO_QUEUE_TTL_MS = 90_000;
+const SOLO_CHALLENGE_TTL_MS = 5 * 60_000;
+const SOLO_CHALLENGE_GAMES = new Set(["memorySequence", "quizSprint", "codebreaker", "mazeRunner"]);
 const CLOUDINARY_CLOUD_NAME = "vwctfu9u";
 const COSMETICS = {
   frame_aurora: { name: "Moldura Aurora", priceCents: 1_299 },
@@ -628,8 +623,8 @@ exports.playGame = onCall(async (request) => {
   }
   if (!new Set([
     "slots", "roulette", "coin", "dice", "parity", "scratch", "football",
-    "rps", "higherLower", "luckyNumber", "luckyDoors", "diceSum", "cardPair", "colorWheel", "rangePick",
-    "doubleCoin", "tripleDice", "luckySuit", "safeVault",
+    "rps",
+    "memorySequence", "quizSprint", "codebreaker", "mazeRunner",
   ]).has(game)
       || typeof requestId !== "string"
       || !/^[a-f0-9-]{36}$/i.test(requestId)) {
@@ -640,6 +635,7 @@ exports.playGame = onCall(async (request) => {
   const rankRef = database.collection("leaderboard").doc(uid);
   const requestRef = userRef.collection("gameRequests").doc(requestId);
   const transactionRef = userRef.collection("transactions").doc(requestId);
+  const challengeRef = userRef.collection("soloChallenges").doc("current");
   let response;
 
   await database.runTransaction(async (transaction) => {
@@ -648,14 +644,26 @@ exports.playGame = onCall(async (request) => {
       response = previousRequest.data().response;
       return;
     }
-    const [userSnapshot, rankSnapshot] = await Promise.all([
+    const [userSnapshot, rankSnapshot, challengeSnapshot] = await Promise.all([
       transaction.get(userRef),
       transaction.get(rankRef),
+      transaction.get(challengeRef),
     ]);
     if (!userSnapshot.exists || !rankSnapshot.exists) {
       throw new HttpsError("failed-precondition", "Perfil ainda não foi criado.");
     }
     const profile = userSnapshot.data();
+    if (SOLO_CHALLENGE_GAMES.has(game)) {
+      const challenge = challengeSnapshot.exists ? challengeSnapshot.data() : null;
+      const submittedSeed = typeof request.data?.selection === "string"
+        ? request.data.selection.split(":", 1)[0]
+        : "";
+      if (!challenge || challenge.status !== "active" || challenge.game !== game
+          || challenge.amountCents !== amountCents || challenge.seed !== submittedSeed
+          || Date.now() - challenge.createdAtMs > SOLO_CHALLENGE_TTL_MS) {
+        throw new HttpsError("failed-precondition", "Desafio expirado ou inválido. Inicie uma nova rodada.");
+      }
+    }
     const actionAtMs = Date.now();
     enforceGameCooldown(profile, actionAtMs);
     const balance = profile.balanceCents || 0;
@@ -687,17 +695,10 @@ exports.playGame = onCall(async (request) => {
         else if (game === "parity") result = parityDiceResult(request.data?.selection, amountCents);
         else if (game === "football") result = footballShotResult(request.data?.selection, amountCents);
         else if (game === "rps") result = rockPaperScissorsResult(request.data?.selection, amountCents);
-        else if (game === "higherLower") result = higherLowerResult(request.data?.selection, amountCents);
-        else if (game === "luckyNumber") result = luckyNumberResult(request.data?.selection, amountCents);
-        else if (game === "luckyDoors") result = luckyDoorsResult(request.data?.selection, amountCents);
-        else if (game === "diceSum") result = diceSumResult(request.data?.selection, amountCents);
-        else if (game === "cardPair") result = cardPairResult(request.data?.selection, amountCents);
-        else if (game === "colorWheel") result = colorWheelResult(request.data?.selection, amountCents);
-        else if (game === "rangePick") result = rangePickResult(request.data?.selection, amountCents);
-        else if (game === "doubleCoin") result = doubleCoinResult(request.data?.selection, amountCents);
-        else if (game === "tripleDice") result = tripleDiceResult(request.data?.selection, amountCents);
-        else if (game === "luckySuit") result = luckySuitResult(request.data?.selection, amountCents);
-        else if (game === "safeVault") result = safeVaultResult(request.data?.selection, amountCents);
+        else if (game === "memorySequence") result = memoryChallengeResult(request.data?.selection, amountCents);
+        else if (game === "quizSprint") result = quizChallengeResult(request.data?.selection, amountCents);
+        else if (game === "codebreaker") result = codebreakerChallengeResult(request.data?.selection, amountCents);
+        else if (game === "mazeRunner") result = mazeChallengeResult(request.data?.selection, amountCents);
         else result = scratchCardResult(amountCents);
         returnedCents = result.payoutCents;
       } catch {
@@ -725,17 +726,10 @@ exports.playGame = onCall(async (request) => {
       scratch: "Raspadinha",
       football: "Futebol",
       rps: "Pedra, papel e tesoura",
-      higherLower: "Maior ou menor",
-      luckyNumber: "Número secreto",
-      luckyDoors: "Portas da sorte",
-      diceSum: "Soma dos dados",
-      cardPair: "Duas cartas",
-      colorWheel: "Roda colorida",
-      rangePick: "Faixa premiada",
-      doubleCoin: "Moedas gêmeas",
-      tripleDice: "Trio de dados",
-      luckySuit: "Naipe secreto",
-      safeVault: "Cofre numerado",
+      memorySequence: "Memória em sequência",
+      quizSprint: "Desafio relâmpago",
+      codebreaker: "Quebra-código",
+      mazeRunner: "Labirinto",
     };
     const description = game === "slots"
       ? `Slots · ${result.reels.join(" ")}`
@@ -753,6 +747,9 @@ exports.playGame = onCall(async (request) => {
       ...profitTotals(deltaCents),
     });
     transaction.update(rankRef, { balanceCents: balanceFinal, level: progression.level });
+    if (SOLO_CHALLENGE_GAMES.has(game)) {
+      transaction.update(challengeRef, { status: "completed", completedAtMs: actionAtMs });
+    }
     transaction.create(transactionRef, {
       description,
       deltaCents,
@@ -782,12 +779,59 @@ exports.playGame = onCall(async (request) => {
   return response;
 });
 
+exports.startSoloChallenge = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const game = request.data?.game;
+  const amountCents = request.data?.amountCents;
+  const requestId = request.data?.requestId;
+  if (!SOLO_CHALLENGE_GAMES.has(game) || !validateWager(amountCents, MAX_TRANSFER_CENTS)
+      || typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)) {
+    throw new HttpsError("invalid-argument", "Desafio, aposta ou identificador inválido.");
+  }
+  const userRef = database.collection("users").doc(uid);
+  const challengeRef = userRef.collection("soloChallenges").doc("current");
+  let response;
+  await database.runTransaction(async (transaction) => {
+    const [profile, current] = await Promise.all([
+      transaction.get(userRef),
+      transaction.get(challengeRef),
+    ]);
+    if (!profile.exists || profile.get("isBlocked") === true) {
+      throw new HttpsError("failed-precondition", "Perfil indisponível para jogar.");
+    }
+    const balanceCents = profile.get("balanceCents") || 0;
+    if (balanceCents < amountCents) {
+      throw new HttpsError("failed-precondition", "Saldo insuficiente.");
+    }
+    if (current.exists && current.get("status") === "active"
+        && Date.now() - current.get("createdAtMs") <= SOLO_CHALLENGE_TTL_MS) {
+      const challenge = current.data();
+      if (challenge.game !== game || challenge.amountCents !== amountCents) {
+        throw new HttpsError("failed-precondition", "Conclua o desafio ativo com a mesma aposta antes de trocar de jogo.");
+      }
+      response = { game: challenge.game, challengeId: challenge.requestId, seed: challenge.seed, resumed: true };
+      return;
+    }
+    const seed = randomUUID();
+    transaction.set(challengeRef, {
+      game,
+      requestId,
+      seed,
+      amountCents,
+      status: "active",
+      createdAtMs: Date.now(),
+    });
+    response = { game, challengeId: requestId, seed };
+  });
+  return response;
+});
+
 exports.queueJokenpoMatch = onCall(async (request) => {
   const uid = authenticatedUid(request);
   const requestId = request.data?.requestId;
   const gameId = request.data?.gameId || "rps";
   if (typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)
-      || !["rps", "duelParity", "duelCoin", "duelCards"].includes(gameId)) {
+      || !["rps", "duelParity", "duelCoin", "duelMemory", "duelQuiz", "duelTarget"].includes(gameId)) {
     throw new HttpsError("invalid-argument", "Identificador de busca inválido.");
   }
 
@@ -901,7 +945,11 @@ exports.submitJokenpoChoice = onCall(async (request) => {
   const matchId = request.data?.matchId;
   const choice = request.data?.choice;
   const requestId = request.data?.requestId;
-  const choiceSupported = ["rock", "paper", "scissors", "even", "odd", "heads", "tails", "1", "2", "3", "4", "5", "6"].includes(String(choice));
+  const choiceSupported = typeof choice === "string" && choice.length <= 40
+    && (/^(rock|paper|scissors|even|odd|heads|tails)(,(even|odd|heads|tails)){0,4}$/.test(choice)
+      || /^[0-3]{7}$/.test(choice)
+      || /^[0-3](,[0-3]){4}$/.test(choice)
+      || /^[0-9](,[0-9]){4}$/.test(choice));
   if (typeof matchId !== "string" || !/^[a-f0-9-]{36}$/i.test(matchId)
       || typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)
       || !choiceSupported) {
@@ -931,10 +979,14 @@ exports.submitJokenpoChoice = onCall(async (request) => {
     const validChoice = gameId === "rps"
       ? ["rock", "paper", "scissors"].includes(choice)
       : gameId === "duelParity"
-        ? ["even", "odd"].includes(choice)
+        ? /^(even|odd)$|^(even|odd)(,(even|odd)){4}$/.test(choice)
         : gameId === "duelCoin"
-          ? ["heads", "tails"].includes(choice)
-          : gameId === "duelCards" && /^[1-6]$/.test(String(choice));
+          ? /^(heads|tails)$|^(heads|tails)(,(heads|tails)){4}$/.test(choice)
+          : gameId === "duelMemory"
+            ? /^[0-3]{7}$/.test(choice)
+            : gameId === "duelQuiz"
+              ? /^[0-3](,[0-3]){4}$/.test(choice)
+              : gameId === "duelTarget" && /^[0-9](,[0-9]){4}$/.test(choice);
     if (!validChoice) throw new HttpsError("invalid-argument", "Jogada inválida para este minijogo.");
     const playerUids = Array.isArray(match.playerUids) ? match.playerUids : [];
     if (!playerUids.includes(uid)) throw new HttpsError("permission-denied", "Você não participa desta partida.");
@@ -959,7 +1011,7 @@ exports.submitJokenpoChoice = onCall(async (request) => {
         [opponentUid]: opponentMoveSnapshot.get("choice"),
       };
       const orderedChoices = playerUids.map((playerUid) => choices[playerUid]);
-      const result = resolveOnlineDuel(gameId, orderedChoices[0], orderedChoices[1]);
+      const result = resolveOnlineDuel(gameId, orderedChoices[0], orderedChoices[1], randomInt, matchId);
       const winnerUid = result.winnerIndex < 0 ? "" : playerUids[result.winnerIndex];
       const resultText = `${result.result.displayText}${winnerUid ? "" : " · Empate"}`;
       transaction.update(matchRef, {
@@ -1602,7 +1654,7 @@ function tugGameName(gameId) {
     tug: "Cabo de guerra",
     teamRace: "Corrida em equipe",
     teamRelay: "Revezamento",
-    teamBlitz: "Toque relâmpago",
+    teamBlitz: "Quiz relâmpago",
   })[gameId] || "Cabo de guerra";
 }
 

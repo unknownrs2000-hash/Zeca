@@ -23,6 +23,7 @@ const {
   sendChatMessage,
   signChatAudioUpload,
   startMines,
+  startSoloChallenge,
   submitJokenpoChoice,
 } = require("./index");
 
@@ -79,6 +80,13 @@ test("Jokenpô matchmaking validates request IDs and choices before Firestore ac
     (error) => error.code === "invalid-argument",
   );
   await assert.rejects(
+    queueJokenpoMatch({
+      ...player,
+      data: { gameId: "duelCards", requestId: "123e4567-e89b-42d3-a456-426614174000" },
+    }),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
     submitJokenpoChoice({
       ...player,
       data: {
@@ -86,6 +94,34 @@ test("Jokenpô matchmaking validates request IDs and choices before Firestore ac
         choice: "lizard",
         requestId: "123e4567-e89b-42d3-a456-426614174001",
       },
+    }),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    submitJokenpoChoice({
+      ...player,
+      data: {
+        matchId: "123e4567-e89b-42d3-a456-426614174000",
+        choice: "2",
+        requestId: "123e4567-e89b-42d3-a456-426614174001",
+      },
+    }),
+    (error) => error.code === "invalid-argument",
+  );
+});
+
+test("solo challenge callable rejects removed random and card games", async () => {
+  await assert.rejects(
+    startSoloChallenge({
+      auth: { uid: "player", token: {} },
+      data: { game: "cardPair", amountCents: 100, requestId: "123e4567-e89b-42d3-a456-426614174000" },
+    }),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    startSoloChallenge({
+      auth: { uid: "player", token: {} },
+      data: { game: "luckyNumber", amountCents: 100, requestId: "123e4567-e89b-42d3-a456-426614174000" },
     }),
     (error) => error.code === "invalid-argument",
   );

@@ -2,7 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { applyTugPull } = require("./tug-logic");
+const { applyTugPull, teamQuizQuestion } = require("./tug-logic");
 
 test("tug pulls are restricted to active room members and rate limited", () => {
   const room = {
@@ -104,12 +104,25 @@ test("team race and blitz use their own score targets", () => {
   assert.equal(race.winnerTeam, "A");
   assert.equal(race.teamAPulls, 24);
 
-  let blitz = { ...race, status: "active", gameId: "teamBlitz", teamAPulls: 0, teamBPulls: 0, lastPullAtMs: {} };
-  for (let pull = 0; pull < 18; pull += 1) {
-    blitz = { ...blitz, ...applyTugPull(blitz, "a1", 1_120 + pull * 121) };
+  let blitz = {
+    ...race,
+    status: "active",
+    gameId: "teamBlitz",
+    teamAPulls: 0,
+    teamBPulls: 0,
+    startedAtMs: 1_000,
+    lastPullAtMs: {},
+  };
+  const missedAnswer = applyTugPull(blitz, "a1", 1_120, 1);
+  assert.equal(missedAnswer.acceptedPulls, 0);
+  assert.equal(missedAnswer.teamAPulls, 0);
+  assert.throws(() => applyTugPull(blitz, "a1", 1_120, 5), /invalid-quiz-answer/);
+  for (let question = 0; question < 10; question += 1) {
+    const correctAnswer = teamQuizQuestion(question).correct + 1;
+    blitz = { ...blitz, ...applyTugPull(blitz, "a1", 1_120 + question * 121, correctAnswer) };
   }
   assert.equal(blitz.status, "settled");
-  assert.equal(blitz.teamAPulls, 36);
+  assert.equal(blitz.teamAPulls, 20);
 });
 
 test("relay requires teammates to alternate before each side scores", () => {

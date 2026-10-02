@@ -11,18 +11,14 @@ const {
   createMinefield,
   diceGuessResult,
   footballShotResult,
-  higherLowerResult,
-  luckyDoorsResult,
-  luckyNumberResult,
   rouletteResult,
-  cardPairResult,
-  colorWheelResult,
-  diceSumResult,
-  rangePickResult,
-  doubleCoinResult,
-  tripleDiceResult,
-  luckySuitResult,
-  safeVaultResult,
+  memoryChallengeResult,
+  quizChallengeResult,
+  codebreakerChallengeResult,
+  mazeChallengeResult,
+  generateMemoryPattern,
+  QUIZ_QUESTIONS,
+  duelQuizQuestionIndexes,
   resolveRockPaperScissors,
   resolveOnlineDuel,
   rockPaperScissorsResult,
@@ -160,78 +156,79 @@ test("online rock-paper-scissors resolves server-submitted choices deterministic
   assert.throws(() => resolveRockPaperScissors("lizard", "paper"), RangeError);
 });
 
-test("online duel variants resolve coin, parity, and card choices on the server", () => {
+test("online duel variants resolve five scored rounds on the server", () => {
+  const parRolls = [1, 1, 1, 1, 1];
+  assert.equal(resolveOnlineDuel(
+    "duelParity", "even,even,even,even,even", "odd,odd,odd,odd,odd", () => parRolls.shift(),
+  ).winnerIndex, 0);
+  const coinRolls = [1, 1, 1, 1, 1];
+  assert.equal(resolveOnlineDuel(
+    "duelCoin", "heads,heads,heads,heads,heads", "tails,tails,tails,tails,tails", () => coinRolls.shift(),
+  ).winnerIndex, 1);
+  const drawRolls = [0, 0, 1, 0, 1];
+  assert.equal(resolveOnlineDuel(
+    "duelParity", "even,even,even,even,even", "even,odd,odd,odd,odd", () => drawRolls.shift(),
+  ).winnerIndex, -1);
   assert.equal(resolveOnlineDuel("duelParity", "even", "odd", () => 1).winnerIndex, 0);
-  assert.equal(resolveOnlineDuel("duelCoin", "heads", "tails", () => 1).winnerIndex, 1);
-  assert.equal(resolveOnlineDuel("duelCards", "6", "4").winnerIndex, 0);
-  assert.equal(resolveOnlineDuel("duelCards", "3", "3").winnerIndex, -1);
-  assert.throws(() => resolveOnlineDuel("duelCards", "7", "3"), RangeError);
+  const memorySeed = "12345678-1234-1234-1234-123456789012";
+  const sequence = generateMemoryPattern(memorySeed);
+  const partial = sequence.slice(0, 3) + [...sequence.slice(3)].map((digit) => String((Number(digit) + 1) % 4)).join("");
+  assert.equal(resolveOnlineDuel("duelMemory", sequence, partial, undefined, memorySeed).winnerIndex, 0);
+  assert.throws(() => resolveOnlineDuel("duelMemory", "bad", "bad", undefined, memorySeed), RangeError);
+
+  const quizSeed = "87654321-1234-1234-1234-123456789012";
+  const quizIndexes = duelQuizQuestionIndexes(quizSeed);
+  const correctAnswers = quizIndexes.map((index) => QUIZ_QUESTIONS[index].correct).join(",");
+  const wrongAnswers = quizIndexes.map((index) => (QUIZ_QUESTIONS[index].correct + 1) % 4).join(",");
+  assert.equal(resolveOnlineDuel("duelQuiz", correctAnswers, wrongAnswers, undefined, quizSeed).winnerIndex, 0);
+  assert.throws(() => resolveOnlineDuel("duelQuiz", "0,1", "2,3", undefined, quizSeed), RangeError);
+
+  const targetRolls = Array(5).fill(5);
+  assert.equal(resolveOnlineDuel("duelTarget", "5,5,5,5,5", "0,0,0,0,0", () => targetRolls.shift()).winnerIndex, 0);
+  assert.throws(() => resolveOnlineDuel("duelTarget", "1,2", "3,4", () => 5), RangeError);
 });
 
-test("higher-lower cards push on ties and pay only correct predictions", () => {
-  const higherSequence = [4, 8];
-  assert.equal(higherLowerResult("higher", 1_000, () => higherSequence.shift()).payoutCents, 1_900);
-  assert.equal(higherLowerResult("lower", 1_000, () => 4).payoutCents, 1_000);
-  const lowerSequence = [8, 2];
-  assert.equal(higherLowerResult("higher", 1_000, () => lowerSequence.shift()).payoutCents, 0);
-  assert.throws(() => higherLowerResult("same", 1_000, () => 0), RangeError);
+test("multi-action solo challenges score the submitted play instead of trusting client scores", () => {
+  const seed = "12345678-1234-1234-1234-123456789012";
+  const memoryPreview = memoryChallengeResult(`${seed}:0000000`, 1_000);
+  const pattern = memoryPreview.displayText.match(/Sequência: ([0-3](?: · [0-3]){6})/)[1].replaceAll(" · ", "");
+  const memoryWin = memoryChallengeResult(`${seed}:${pattern}`, 1_000);
+  assert.equal(memoryWin.score, 7);
+  assert.equal(memoryWin.payoutCents, 2_000);
+  assert.throws(() => memoryChallengeResult(`${seed}:bad`, 1_000), RangeError);
+
+  const quizPreview = quizChallengeResult(`${seed}:00000`, 1_000);
+  const perfectAnswers = quizPreview.questionIndexes
+    .map((index) => String(QUIZ_QUESTIONS[index].correct))
+    .join("");
+  const quizWin = quizChallengeResult(`${seed}:${perfectAnswers}`, 1_000);
+  assert.equal(quizWin.score, 5);
+  assert.equal(quizWin.payoutCents, 2_000);
+  assert.throws(() => quizChallengeResult(`${seed}:00`, 1_000), RangeError);
+
+  const code = codebreakerChallengeResult(`${seed}:0000`, 1_000).displayText.match(/Código (\d{4})/)[1];
+  const codeWin = codebreakerChallengeResult(`${seed}:${code}`, 1_000);
+  assert.equal(codeWin.score, 8);
+  assert.equal(codeWin.payoutCents, 8_000);
+  assert.equal(codebreakerChallengeResult(`${seed}:1111`, 1_000).payoutCents, 0);
+  assert.throws(() => codebreakerChallengeResult(`${seed}:123`, 1_000), RangeError);
 });
 
-test("lucky number and doors enforce choices and fixed server payouts", () => {
-  assert.equal(luckyNumberResult("5", 1_000, () => 5).payoutCents, 9_500);
-  assert.equal(luckyNumberResult("4", 1_000, () => 5).payoutCents, 0);
-  assert.equal(luckyDoorsResult("3", 1_000, () => 2).payoutCents, 3_800);
-  assert.equal(luckyDoorsResult("1", 1_000, () => 2).payoutCents, 0);
-  assert.throws(() => luckyDoorsResult("5", 1_000, () => 0), RangeError);
-});
-
-test("dice sums refund ties and settle high or low picks", () => {
-  assert.equal(diceSumResult("high", 1_000, (max) => max - 1).payoutCents, 1_880);
-  const tieSequence = [2, 3];
-  assert.equal(diceSumResult("low", 1_000, () => tieSequence.shift()).payoutCents, 1_000);
-  assert.equal(diceSumResult("high", 1_000, () => 2).payoutCents, 0);
-  assert.throws(() => diceSumResult("middle", 1_000, () => 0), RangeError);
-});
-
-test("card pairs support match and different predictions", () => {
-  assert.equal(cardPairResult("match", 1_000, () => 0).payoutCents, 12_350);
-  const differentSequence = [0, 1];
-  assert.equal(cardPairResult("different", 1_000, () => differentSequence.shift()).payoutCents, 1_020);
-  const nonMatchingSequence = [0, 1];
-  assert.equal(cardPairResult("match", 1_000, () => nonMatchingSequence.shift()).payoutCents, 0);
-  assert.throws(() => cardPairResult("similar", 1_000, () => 0), RangeError);
-});
-
-test("color wheel uses weighted server outcomes and fixed payouts", () => {
-  assert.equal(colorWheelResult("gold", 1_000, () => 99).payoutCents, 9_500);
-  assert.equal(colorWheelResult("red", 1_000, () => 0).payoutCents, 2_110);
-  assert.equal(colorWheelResult("black", 1_000, () => 45).payoutCents, 2_110);
-  assert.throws(() => colorWheelResult("blue", 1_000, () => 0), RangeError);
-});
-
-test("range picks pay according to the selected range probability", () => {
-  assert.equal(rangePickResult("low", 1_000, () => 0).payoutCents, 2_380);
-  assert.equal(rangePickResult("middle", 1_000, () => 4).payoutCents, 4_750);
-  assert.equal(rangePickResult("high", 1_000, () => 9).payoutCents, 2_380);
-  assert.equal(rangePickResult("high", 1_000, () => 0).payoutCents, 0);
-  assert.throws(() => rangePickResult("other", 1_000, () => 0), RangeError);
-});
-
-test("new solo mini-games validate selections and calculate fixed payouts", () => {
-  assert.equal(doubleCoinResult("same", 1_000, () => 0).payoutCents, 1_900);
-  assert.equal(doubleCoinResult("different", 1_000, () => 0).payoutCents, 0);
-  assert.throws(() => doubleCoinResult("heads", 1_000, () => 0), RangeError);
-
-  assert.equal(tripleDiceResult("low", 1_000, () => 0).payoutCents, 5_980);
-  assert.equal(tripleDiceResult("middle", 1_000, () => 2).payoutCents, 1_430);
-  assert.equal(tripleDiceResult("high", 1_000, () => 5).payoutCents, 5_980);
-  assert.throws(() => tripleDiceResult("seven", 1_000, () => 0), RangeError);
-
-  assert.equal(luckySuitResult("spades", 1_000, () => 0).payoutCents, 3_800);
-  assert.equal(luckySuitResult("clubs", 1_000, () => 0).payoutCents, 0);
-  assert.throws(() => luckySuitResult("joker", 1_000, () => 0), RangeError);
-
-  assert.equal(safeVaultResult("3", 1_000, () => 2).payoutCents, 4_750);
-  assert.equal(safeVaultResult("2", 1_000, () => 2).payoutCents, 0);
-  assert.throws(() => safeVaultResult("0", 1_000, () => 0), RangeError);
+test("maze challenge validates legal connected paths and grants higher prizes for shorter paths", () => {
+  const paths = [
+    "0,1,6,11,16,17,18,23,24",
+    "0,5,10,15,20,21,22,23,24",
+    "0,1,2,3,4,9,14,19,24",
+  ];
+  let completed;
+  for (let index = 1; index < 200 && !completed; index += 1) {
+    const seed = index.toString(16).padStart(8, "0");
+    completed = paths.map((path) => mazeChallengeResult(`${seed}:${path}`, 1_000))
+      .find((result) => result.payoutCents > 0);
+  }
+  assert.ok(completed);
+  assert.equal(completed.payoutCents, 1_500);
+  assert.equal(mazeChallengeResult("00000001:0,1,2", 1_000).payoutCents, 0);
+  assert.equal(mazeChallengeResult("00000001:0,5,10,15,20,21,22,23,24,19", 1_000).payoutCents, 0);
+  assert.throws(() => mazeChallengeResult("00000001:0,1,26", 1_000), RangeError);
 });

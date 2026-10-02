@@ -20,9 +20,11 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -39,6 +41,7 @@ import com.example.zeca.PartidaJokenpo
 import com.example.zeca.ResultadoJokenpo
 import com.example.zeca.ui.theme.Cores
 import com.google.firebase.firestore.ListenerRegistration
+import kotlinx.coroutines.delay
 import java.util.UUID
 
 @Composable
@@ -58,6 +61,8 @@ internal fun JogoJokenpoOnline(
     var partida by remember { mutableStateOf<PartidaJokenpo?>(null) }
     var ocupado by remember { mutableStateOf(false) }
     var erro by rememberSaveable { mutableStateOf("") }
+    val escolhasDuelo = remember(matchId) { mutableStateListOf<String>() }
+    var sequenciaMemoriaVisivel by remember(matchId) { mutableStateOf(true) }
     val observarFilaAtual by rememberUpdatedState(onObservarFila)
     val observarPartidaAtual by rememberUpdatedState(onObservarPartida)
 
@@ -90,6 +95,8 @@ internal fun JogoJokenpoOnline(
     val adversarioUid = partida?.jogadorUids?.firstOrNull { it != uidAtual }.orEmpty()
     val statusPartida = partida?.status.orEmpty()
     val partidaConcluida = statusPartida == "completed"
+    val sequenceMemory = remember(matchId) { memoryPattern(matchId) }
+    val quizQuestionIndexes = remember(matchId) { shuffledQuestionIndexes(matchId) }
     val resultadoPessoal = when {
         !partidaConcluida -> ""
         partida?.vencedorUid.isNullOrBlank() -> "Empate"
@@ -97,16 +104,29 @@ internal fun JogoJokenpoOnline(
         else -> "Seu adversário venceu"
     }
     val gameIdPartida = partida?.gameId ?: gameId
+    LaunchedEffect(matchId, gameIdPartida, sequenciaMemoriaVisivel) {
+        if (matchId.isNotBlank() && gameIdPartida == "duelMemory" && sequenciaMemoriaVisivel) {
+            delay(5_000)
+            sequenciaMemoriaVisivel = false
+        }
+    }
     val opcoes = when (gameIdPartida) {
         "duelParity" -> listOf("even" to "Par", "odd" to "Ímpar")
         "duelCoin" -> listOf("heads" to "Cara", "tails" to "Coroa")
-        "duelCards" -> (1..6).map { it.toString() to it.toString() }
+        "duelMemory" -> (0..3).map { it.toString() to "Sinal ${it + 1}" }
+        "duelQuiz" -> {
+            val questionIndex = quizQuestionIndexes.getOrNull(escolhasDuelo.size) ?: quizQuestionIndexes.last()
+            soloQuestions[questionIndex].answers.mapIndexed { index, answer -> index.toString() to answer }
+        }
+        "duelTarget" -> (0..9).map { it.toString() to it.toString() }
         else -> listOf("rock" to "Pedra", "paper" to "Papel", "scissors" to "Tesoura")
     }
     val instrucoes = when (gameIdPartida) {
-        "duelParity" -> "Escolham par ou ímpar; um dado decide. Se ambos acertarem ou errarem, empata."
-        "duelCoin" -> "Escolham cara ou coroa. A moeda decide; só uma previsão certa vence."
-        "duelCards" -> "Escolha uma carta de 1 a 6. A carta mais alta vence."
+        "duelParity" -> "Melhor de cinco rodadas: adivinhe a paridade de cada dado. Só a previsão exclusiva marca ponto."
+        "duelCoin" -> "Melhor de cinco rodadas: preveja cada lançamento. Só a previsão exclusiva marca ponto."
+        "duelMemory" -> "Memorize a sequência exibida por cinco segundos e repita-a. O servidor compara os acertos."
+        "duelQuiz" -> "Responda cinco perguntas; o servidor verifica as respostas e compara a pontuação."
+        "duelTarget" -> "Em cinco rodadas, escolha o número mais próximo do alvo oculto."
         else -> "Partida amistosa · sem aposta"
     }
 
@@ -171,18 +191,57 @@ internal fun JogoJokenpoOnline(
                         Text("Jogada enviada · aguardando o adversário", color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp)
                     }
                 } else {
-                    Text("Escolha sua jogada", color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp)
+                    val multiRound = gameIdPartida in setOf("duelParity", "duelCoin", "duelQuiz", "duelTarget")
+                    val memoryGame = gameIdPartida == "duelMemory"
+                    Text(
+                        when {
+                            memoryGame -> "Memorize a sequência de sete sinais"
+                            multiRound -> "Rodada ${escolhasDuelo.size + 1}/5"
+                            else -> "Escolha sua jogada"
+                        },
+                        color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp,
+                    )
+                    if (memoryGame) {
+                        Text(
+                            if (sequenciaMemoriaVisivel) sequenceMemory.joinToString("  ") { "●${it + 1}" }
+                            else "A sequência sumiu · ${escolhasDuelo.size}/7",
+                            modifier = Modifier.fillMaxWidth(),
+                            color = Cores.Turquesa, fontSize = 22.sp, fontWeight = FontWeight.Black,
+                        )
+                    }
+                    if (gameIdPartida == "duelQuiz") {
+                        val questionIndex = quizQuestionIndexes.getOrNull(escolhasDuelo.size) ?: quizQuestionIndexes.last()
+                        Text(soloQuestions[questionIndex].text, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                    }
+                    if (gameIdPartida == "duelTarget") {
+                        Text("Escolha o valor mais próximo do alvo desta rodada.", color = Color.White.copy(alpha = 0.72f), fontSize = 12.sp)
+                    }
+                    if (multiRound && escolhasDuelo.isNotEmpty()) {
+                        Text("Suas previsões: ${escolhasDuelo.size}", color = Color.White.copy(alpha = 0.58f), fontSize = 11.sp)
+                    }
                     opcoes.chunked(3).forEach { linha ->
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             linha.forEach { (value, label) ->
                                 Button(
                                     onClick = {
+                                        if (multiRound || memoryGame) escolhasDuelo.add(value)
+                                        val submittedChoice = when {
+                                            memoryGame -> escolhasDuelo.joinToString("")
+                                            multiRound -> escolhasDuelo.joinToString(",")
+                                            else -> value
+                                        }
+                                        if ((multiRound && escolhasDuelo.size < 5)
+                                            || (memoryGame && escolhasDuelo.size < 7)) return@Button
                                         ocupado = true
                                         erro = ""
-                                        onJogar(matchId, value, UUID.randomUUID().toString()) { result, error ->
+                                        onJogar(matchId, submittedChoice, UUID.randomUUID().toString()) { result, error ->
                                             ocupado = false
                                             if (error != null || result == null) {
                                                 erro = error?.localizedMessage ?: "Não foi possível enviar sua jogada."
+                                                if (multiRound || memoryGame) {
+                                                    escolhasDuelo.clear()
+                                                    sequenciaMemoriaVisivel = true
+                                                }
                                             } else {
                                                 jaEscolheu = true
                                                 if (result.status == "completed") {
@@ -195,13 +254,17 @@ internal fun JogoJokenpoOnline(
                                             }
                                         }
                                     },
-                                    enabled = !ocupado,
+                                    enabled = !ocupado && (!memoryGame || !sequenciaMemoriaVisivel),
                                     modifier = Modifier.weight(1f),
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = if (ocupado) Color.White.copy(alpha = 0.1f) else Cores.Turquesa.copy(alpha = 0.9f),
                                     ),
                                 ) {
-                                    Text(label, color = Color(0xFF10201D), fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                                    Text(
+                                        if (multiRound && ocupado) "Enviando…" else label,
+                                        color = Color(0xFF10201D), fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold, maxLines = 1,
+                                    )
                                 }
                             }
                             repeat(3 - linha.size) { Spacer(Modifier.weight(1f)) }

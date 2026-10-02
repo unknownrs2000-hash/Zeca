@@ -176,245 +176,264 @@ function resolveRockPaperScissors(firstChoice, secondChoice) {
   return { winnerChoice: firstWins ? firstChoice : secondChoice, outcome: "win" };
 }
 
-function resolveOnlineDuel(gameId, firstChoice, secondChoice, secureRandomInt = randomInt) {
+function resolveOnlineDuel(gameId, firstChoice, secondChoice, secureRandomInt = randomInt, challengeSeed = "") {
   if (gameId === "rps") {
     const result = resolveRockPaperScissors(firstChoice, secondChoice);
     return { winnerIndex: result.outcome === "draw" ? -1 : result.winnerChoice === firstChoice ? 0 : 1, result };
   }
   if (gameId === "duelParity") {
-    const choices = ["even", "odd"];
-    if (!choices.includes(firstChoice) || !choices.includes(secondChoice)) throw new RangeError("Invalid parity choice.");
-    const roll = secureRandomInt(6) + 1;
-    const outcome = roll % 2 === 0 ? "even" : "odd";
-    const firstCorrect = firstChoice === outcome;
-    const secondCorrect = secondChoice === outcome;
-    const winnerIndex = firstCorrect === secondCorrect ? -1 : firstCorrect ? 0 : 1;
+    const firstChoices = String(firstChoice).split(",");
+    const secondChoices = String(secondChoice).split(",");
+    if (firstChoices.length === 1) firstChoices.push(...Array(4).fill(firstChoices[0]));
+    if (secondChoices.length === 1) secondChoices.push(...Array(4).fill(secondChoices[0]));
+    if (firstChoices.length !== 5 || secondChoices.length !== 5
+        || [...firstChoices, ...secondChoices].some((choice) => !["even", "odd"].includes(choice))) {
+      throw new RangeError("Submit five valid parity guesses.");
+    }
+    let firstScore = 0;
+    let secondScore = 0;
+    for (let round = 0; round < 5; round += 1) {
+      const outcome = (secureRandomInt(6) + 1) % 2 === 0 ? "even" : "odd";
+      const firstCorrect = firstChoices[round] === outcome;
+      const secondCorrect = secondChoices[round] === outcome;
+      if (firstCorrect !== secondCorrect) {
+        if (firstCorrect) firstScore += 1;
+        else secondScore += 1;
+      }
+    }
+    const winnerIndex = firstScore === secondScore ? -1 : firstScore > secondScore ? 0 : 1;
     return {
       winnerIndex,
-      result: { displayText: `Saiu ${roll} (${outcome === "even" ? "par" : "ímpar"})` },
+      result: { displayText: `Melhor de 5 · ${firstScore} a ${secondScore}` },
     };
   }
   if (gameId === "duelCoin") {
-    const choices = ["heads", "tails"];
-    if (!choices.includes(firstChoice) || !choices.includes(secondChoice)) throw new RangeError("Invalid coin choice.");
-    const outcome = secureRandomInt(2) === 0 ? "heads" : "tails";
-    const firstCorrect = firstChoice === outcome;
-    const secondCorrect = secondChoice === outcome;
-    const winnerIndex = firstCorrect === secondCorrect ? -1 : firstCorrect ? 0 : 1;
+    const firstChoices = String(firstChoice).split(",");
+    const secondChoices = String(secondChoice).split(",");
+    if (firstChoices.length === 1) firstChoices.push(...Array(4).fill(firstChoices[0]));
+    if (secondChoices.length === 1) secondChoices.push(...Array(4).fill(secondChoices[0]));
+    if (firstChoices.length !== 5 || secondChoices.length !== 5
+        || [...firstChoices, ...secondChoices].some((choice) => !["heads", "tails"].includes(choice))) {
+      throw new RangeError("Submit five valid coin guesses.");
+    }
+    let firstScore = 0;
+    let secondScore = 0;
+    for (let round = 0; round < 5; round += 1) {
+      const outcome = secureRandomInt(2) === 0 ? "heads" : "tails";
+      const firstCorrect = firstChoices[round] === outcome;
+      const secondCorrect = secondChoices[round] === outcome;
+      if (firstCorrect !== secondCorrect) {
+        if (firstCorrect) firstScore += 1;
+        else secondScore += 1;
+      }
+    }
+    const winnerIndex = firstScore === secondScore ? -1 : firstScore > secondScore ? 0 : 1;
     return {
       winnerIndex,
-      result: { displayText: `A moeda deu ${outcome === "heads" ? "cara" : "coroa"}` },
+      result: { displayText: `Melhor de 5 · ${firstScore} a ${secondScore}` },
     };
   }
-  if (gameId === "duelCards") {
-    if (!/^[1-6]$/.test(String(firstChoice))
-        || !/^[1-6]$/.test(String(secondChoice))) {
-      throw new RangeError("Invalid card choice.");
+  if (gameId === "duelQuiz") {
+    const questionIndexes = duelQuizQuestionIndexes(challengeSeed);
+    const firstAnswers = String(firstChoice).split(",");
+    const secondAnswers = String(secondChoice).split(",");
+    if ([...firstAnswers, ...secondAnswers].some((answer) => !/^[0-3]$/.test(answer))
+        || firstAnswers.length !== questionIndexes.length
+        || secondAnswers.length !== questionIndexes.length) {
+      throw new RangeError("Submit five valid quiz answers.");
     }
-    const firstCard = Number(firstChoice);
-    const secondCard = Number(secondChoice);
-    const winnerIndex = firstCard === secondCard ? -1 : firstCard > secondCard ? 0 : 1;
+    const scoreAnswers = (answers) => answers.reduce((score, answer, index) => (
+      score + (Number(answer) === QUIZ_QUESTIONS[questionIndexes[index]].correct ? 1 : 0)
+    ), 0);
+    const firstScore = scoreAnswers(firstAnswers);
+    const secondScore = scoreAnswers(secondAnswers);
     return {
-      winnerIndex,
-      result: { displayText: `Carta ${firstCard} contra carta ${secondCard}` },
+      winnerIndex: firstScore === secondScore ? -1 : firstScore > secondScore ? 0 : 1,
+      result: { displayText: `Quiz · ${firstScore}/5 a ${secondScore}/5` },
+    };
+  }
+  if (gameId === "duelTarget") {
+    const firstGuesses = String(firstChoice).split(",");
+    const secondGuesses = String(secondChoice).split(",");
+    if ([...firstGuesses, ...secondGuesses].some((guess) => !/^[0-9]$/.test(guess))
+        || firstGuesses.length !== 5 || secondGuesses.length !== 5) {
+      throw new RangeError("Submit five target guesses from zero to nine.");
+    }
+    let firstScore = 0;
+    let secondScore = 0;
+    for (let round = 0; round < 5; round += 1) {
+      const target = secureRandomInt(10);
+      const firstDistance = Math.abs(Number(firstGuesses[round]) - target);
+      const secondDistance = Math.abs(Number(secondGuesses[round]) - target);
+      if (firstDistance < secondDistance) firstScore += 1;
+      else if (secondDistance < firstDistance) secondScore += 1;
+    }
+    return {
+      winnerIndex: firstScore === secondScore ? -1 : firstScore > secondScore ? 0 : 1,
+      result: { displayText: `Mira · ${firstScore}/5 a ${secondScore}/5` },
+    };
+  }
+  if (gameId === "duelMemory") {
+    const firstPattern = String(firstChoice);
+    const secondPattern = String(secondChoice);
+    if (!/^[0-3]{7}$/.test(firstPattern) || !/^[0-3]{7}$/.test(secondPattern)
+        || !/^[a-f0-9-]{8,64}$/i.test(challengeSeed)) {
+      throw new RangeError("Submit a valid seven-step memory sequence.");
+    }
+    const pattern = generateMemoryPattern(challengeSeed);
+    const firstScore = firstPattern.split("").reduce((score, value, index) => score + (value === pattern[index] ? 1 : 0), 0);
+    const secondScore = secondPattern.split("").reduce((score, value, index) => score + (value === pattern[index] ? 1 : 0), 0);
+    return {
+      winnerIndex: firstScore === secondScore ? -1 : firstScore > secondScore ? 0 : 1,
+      result: { displayText: `Memória · ${firstScore}/7 a ${secondScore}/7` },
     };
   }
   throw new RangeError("Invalid duel game.");
 }
 
-function higherLowerResult(selection, wagerCents, secureRandomInt = randomInt) {
-  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER) || !["higher", "lower"].includes(selection)) {
-    throw new RangeError("Invalid higher-lower wager.");
+const QUIZ_QUESTIONS = [
+  { question: "Quantos lados tem um hexágono?", answers: ["5", "6", "7", "8"], correct: 1 },
+  { question: "Qual planeta é conhecido como planeta vermelho?", answers: ["Vênus", "Marte", "Júpiter", "Mercúrio"], correct: 1 },
+  { question: "Quanto é 9 × 7?", answers: ["56", "63", "72", "81"], correct: 1 },
+  { question: "Qual é o maior oceano da Terra?", answers: ["Atlântico", "Índico", "Pacífico", "Ártico"], correct: 2 },
+  { question: "Quantos minutos há em duas horas?", answers: ["100", "110", "120", "140"], correct: 2 },
+  { question: "Qual destes animais é um mamífero?", answers: ["Tubarão", "Golfinho", "Polvo", "Truta"], correct: 1 },
+  { question: "Qual é a raiz quadrada de 144?", answers: ["10", "11", "12", "14"], correct: 2 },
+  { question: "Em que direção o Sol nasce?", answers: ["Norte", "Sul", "Leste", "Oeste"], correct: 2 },
+];
+
+function seededRandom(seed) {
+  const normalized = String(seed).replace(/[^0-9a-f]/gi, "").slice(0, 8);
+  let state = (Number.parseInt(normalized || "1", 16) % 2_147_483_646) + 1;
+  return (max) => {
+    state = (state * 16_807) % 2_147_483_647;
+    return state % max;
+  };
+}
+
+function duelQuizQuestionIndexes(seed) {
+  const secureRandomInt = seededRandom(seed);
+  const indexes = Array.from({ length: QUIZ_QUESTIONS.length }, (_value, index) => index);
+  for (let index = indexes.length - 1; index > 0; index -= 1) {
+    const swapIndex = secureRandomInt(index + 1);
+    [indexes[index], indexes[swapIndex]] = [indexes[swapIndex], indexes[index]];
   }
-  const first = secureRandomInt(13) + 1;
-  const second = secureRandomInt(13) + 1;
-  const tied = first === second;
-  const won = !tied && (selection === "higher" ? second > first : second < first);
-  const multiplier = won ? 190 : tied ? 100 : 0;
+  return indexes.slice(0, 5);
+}
+
+function generateMemoryPattern(seed) {
+  const secureRandomInt = seededRandom(seed);
+  return Array.from({ length: 7 }, () => secureRandomInt(4).toString()).join("");
+}
+
+function parseChallenge(selection, wagerCents, gameId) {
+  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER) || typeof selection !== "string") {
+    throw new RangeError(`Invalid ${gameId} challenge.`);
+  }
+  const separator = selection.indexOf(":");
+  const seed = separator > 0 ? selection.slice(0, separator) : "";
+  const moves = separator > 0 ? selection.slice(separator + 1) : "";
+  if (!/^[a-f0-9-]{8,64}$/i.test(seed) || moves.length > 100) {
+    throw new RangeError(`Invalid ${gameId} challenge.`);
+  }
+  return { seed, moves, random: seededRandom(seed) };
+}
+
+function memoryChallengeResult(selection, wagerCents) {
+  const challenge = parseChallenge(selection, wagerCents, "memory");
+  const pattern = generateMemoryPattern(challenge.seed);
+  const entered = challenge.moves.replace(/,/g, "");
+  if (!/^[0-3]{1,7}$/.test(entered)) throw new RangeError("Invalid memory sequence.");
+  let correct = 0;
+  while (correct < Math.min(pattern.length, entered.length) && pattern[correct] === entered[correct]) correct += 1;
+  const payoutBps = correct < 4 ? 0 : (correct - 3) * 5_000;
+  const payoutCents = Math.floor(wagerCents * payoutBps / 10_000);
   return {
-    displayText: `Carta ${first} → ${second} · ${won ? "Acertou" : tied ? "Empate" : "Errou"}`,
-    first,
-    second,
-    won,
-    payoutCents: won ? Math.floor(wagerCents * multiplier / 100) : tied ? wagerCents : 0,
+    displayText: `Sequência: ${pattern.split("").join(" · ")} · ${correct}/7 corretas`,
+    score: correct,
+    payoutCents,
+    multiplier: payoutBps / 100,
+  };
+}
+
+function quizChallengeResult(selection, wagerCents) {
+  const challenge = parseChallenge(selection, wagerCents, "quiz");
+  const questionIndexes = Array.from({ length: 5 }, (_value, index) => index);
+  for (let index = questionIndexes.length - 1; index > 0; index -= 1) {
+    const swapIndex = challenge.random(index + 1);
+    [questionIndexes[index], questionIndexes[swapIndex]] = [questionIndexes[swapIndex], questionIndexes[index]];
+  }
+  const answers = challenge.moves.split("");
+  if (answers.length !== 5 || answers.some((answer) => !/^[0-3]$/.test(answer))) {
+    throw new RangeError("Answer all five quiz questions.");
+  }
+  const score = answers.reduce((total, answer, index) => (
+    total + (Number(answer) === QUIZ_QUESTIONS[questionIndexes[index]].correct ? 1 : 0)
+  ), 0);
+  const multiplier = [0, 0, 0, 1, 1.5, 2][score];
+  return {
+    displayText: `Quiz: ${score}/5 corretas`,
+    score,
+    payoutCents: Math.floor(wagerCents * multiplier),
+    multiplier: Math.round(multiplier * 100),
+    questionIndexes,
+  };
+}
+
+function codebreakerChallengeResult(selection, wagerCents) {
+  const challenge = parseChallenge(selection, wagerCents, "codebreaker");
+  const secret = [];
+  while (secret.length < 4) {
+    const digit = challenge.random(10);
+    if (!secret.includes(digit)) secret.push(digit);
+  }
+  const guesses = challenge.moves.split(",").filter(Boolean);
+  if (guesses.length < 1 || guesses.length > 8 || guesses.some((guess) => !/^\d{4}$/.test(guess))) {
+    throw new RangeError("Submit between one and eight four-digit guesses.");
+  }
+  let solvedAt = -1;
+  for (let index = 0; index < guesses.length; index += 1) {
+    if ([...guesses[index]].every((digit, position) => Number(digit) === secret[position])) {
+      solvedAt = index;
+      break;
+    }
+  }
+  const multiplier = solvedAt < 0 ? 0 : Math.max(100, 800 - solvedAt * 100);
+  return {
+    displayText: `Código ${secret.join("")} · ${solvedAt < 0 ? "não descoberto" : `descoberto na tentativa ${solvedAt + 1}`}`,
+    score: solvedAt < 0 ? 0 : 8 - solvedAt,
+    payoutCents: Math.floor(wagerCents * multiplier / 100),
     multiplier,
   };
 }
 
-function luckyNumberResult(selection, wagerCents, secureRandomInt = randomInt) {
-  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER) || !/^[0-9]$/.test(String(selection))) {
-    throw new RangeError("Invalid lucky-number wager.");
+function mazeChallengeResult(selection, wagerCents) {
+  const challenge = parseChallenge(selection, wagerCents, "maze");
+  const layouts = [
+    new Set([1, 3, 6, 8, 11, 13, 16, 18, 21, 23]),
+    new Set([1, 2, 3, 4, 6, 7, 8, 9, 11, 12, 13, 14, 16, 17, 18, 19]),
+    new Set([5, 6, 7, 8, 10, 11, 12, 13, 15, 16, 17, 18, 20, 21, 22]),
+  ];
+  const walls = layouts[challenge.random(layouts.length)];
+  const path = challenge.moves.split(",").filter(Boolean).map(Number);
+  if (path.length < 1 || path.length > 25 || path.some((cell) => !Number.isInteger(cell) || cell < 0 || cell > 24)) {
+    throw new RangeError("Invalid maze path.");
   }
-  const number = secureRandomInt(10);
-  const won = number === Number(selection);
+  const uniquePath = path.every((cell, index) => path.indexOf(cell) === index);
+  const adjacent = path.every((cell, index) => index === 0
+    ? cell === 0
+    : Math.abs(cell % 5 - path[index - 1] % 5) + Math.abs(Math.floor(cell / 5) - Math.floor(path[index - 1] / 5)) === 1);
+  const clear = path.every((cell) => !walls.has(cell));
+  const reachedExit = path[path.length - 1] === 24;
+  const solved = uniquePath && adjacent && clear && reachedExit;
+  const optimalLength = 9;
+  const multiplier = solved ? Math.max(100, 150 - Math.max(0, path.length - optimalLength) * 10) : 0;
   return {
-    displayText: `Saiu ${number} · ${won ? "Número certo" : "Não foi desta vez"}`,
-    number,
-    won,
-    payoutCents: won ? Math.floor(wagerCents * 950 / 100) : 0,
-    multiplier: won ? 950 : 0,
-  };
-}
-
-function luckyDoorsResult(selection, wagerCents, secureRandomInt = randomInt) {
-  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER) || !/^[1-4]$/.test(String(selection))) {
-    throw new RangeError("Invalid lucky-doors wager.");
-  }
-  const winningDoor = secureRandomInt(4) + 1;
-  const won = winningDoor === Number(selection);
-  return {
-    displayText: `A porta premiada era ${winningDoor} · ${won ? "Encontrou o prêmio" : "Porta vazia"}`,
-    winningDoor,
-    won,
-    payoutCents: won ? Math.floor(wagerCents * 380 / 100) : 0,
-    multiplier: won ? 380 : 0,
-  };
-}
-
-function diceSumResult(selection, wagerCents, secureRandomInt = randomInt) {
-  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER) || !["low", "high"].includes(selection)) {
-    throw new RangeError("Invalid dice-sum wager.");
-  }
-  const first = secureRandomInt(6) + 1;
-  const second = secureRandomInt(6) + 1;
-  const sum = first + second;
-  const tied = sum === 7;
-  const won = !tied && (selection === "low" ? sum < 7 : sum > 7);
-  const multiplier = won ? 188 : tied ? 100 : 0;
-  return {
-    displayText: `Dados ${first} + ${second} = ${sum} · ${won ? "Acertou" : tied ? "Empate" : "Errou"}`,
-    first,
-    second,
-    sum,
-    won,
-    payoutCents: won ? Math.floor(wagerCents * multiplier / 100) : tied ? wagerCents : 0,
+    displayText: solved ? `Labirinto concluído em ${path.length} passos` : "Caminho bloqueado ou saída não alcançada",
+    score: solved ? Math.max(0, optimalLength + 1 - path.length) : 0,
+    payoutCents: Math.floor(wagerCents * multiplier / 100),
     multiplier,
-  };
-}
-
-function cardPairResult(selection, wagerCents, secureRandomInt = randomInt) {
-  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER) || !["match", "different"].includes(selection)) {
-    throw new RangeError("Invalid card-pair wager.");
-  }
-  const first = secureRandomInt(13) + 1;
-  const second = secureRandomInt(13) + 1;
-  const matched = first === second;
-  const won = selection === "match" ? matched : !matched;
-  const multiplier = selection === "match" ? 1_235 : 102;
-  return {
-    displayText: `Cartas ${first} e ${second} · ${won ? "Previsão certa" : "Previsão errada"}`,
-    first,
-    second,
-    won,
-    payoutCents: won ? Math.floor(wagerCents * multiplier / 100) : 0,
-    multiplier: won ? multiplier : 0,
-  };
-}
-
-function colorWheelResult(selection, wagerCents, secureRandomInt = randomInt) {
-  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER) || !["red", "black", "gold"].includes(selection)) {
-    throw new RangeError("Invalid color-wheel wager.");
-  }
-  const draw = secureRandomInt(100);
-  const color = draw < 45 ? "red" : draw < 90 ? "black" : "gold";
-  const won = color === selection;
-  const multiplier = color === "gold" ? 950 : 211;
-  const labels = { red: "Vermelho", black: "Preto", gold: "Dourado" };
-  return {
-    displayText: `A roda parou em ${labels[color]} · ${won ? "Acertou" : "Errou"}`,
-    color,
-    won,
-    payoutCents: won ? Math.floor(wagerCents * multiplier / 100) : 0,
-    multiplier: won ? multiplier : 0,
-  };
-}
-
-function rangePickResult(selection, wagerCents, secureRandomInt = randomInt) {
-  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER) || !["low", "middle", "high"].includes(selection)) {
-    throw new RangeError("Invalid range-pick wager.");
-  }
-  const number = secureRandomInt(10);
-  const range = number <= 3 ? "low" : number <= 5 ? "middle" : "high";
-  const won = range === selection;
-  const multiplier = range === "middle" ? 475 : 238;
-  const labels = { low: "Baixa", middle: "Central", high: "Alta" };
-  return {
-    displayText: `Saiu ${number} · Faixa ${labels[range]} · ${won ? "Acertou" : "Errou"}`,
-    number,
-    range,
-    won,
-    payoutCents: won ? Math.floor(wagerCents * multiplier / 100) : 0,
-    multiplier: won ? multiplier : 0,
-  };
-}
-
-function doubleCoinResult(selection, wagerCents, secureRandomInt = randomInt) {
-  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER) || !["same", "different"].includes(selection)) {
-    throw new RangeError("Invalid double-coin wager.");
-  }
-  const first = secureRandomInt(2);
-  const second = secureRandomInt(2);
-  const outcome = first === second ? "same" : "different";
-  const won = selection === outcome;
-  return {
-    displayText: `${first === 0 ? "Cara" : "Coroa"} + ${second === 0 ? "Cara" : "Coroa"} · ${won ? "Acertou" : "Errou"}`,
-    outcome,
-    won,
-    payoutCents: won ? Math.floor(wagerCents * 190 / 100) : 0,
-    multiplier: won ? 190 : 0,
-  };
-}
-
-function tripleDiceResult(selection, wagerCents, secureRandomInt = randomInt) {
-  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER) || !["low", "middle", "high"].includes(selection)) {
-    throw new RangeError("Invalid triple-dice wager.");
-  }
-  const dice = Array.from({ length: 3 }, () => secureRandomInt(6) + 1);
-  const sum = dice.reduce((total, value) => total + value, 0);
-  const outcome = sum <= 7 ? "low" : sum <= 13 ? "middle" : "high";
-  const multiplier = outcome === "middle" ? 143 : 598;
-  const won = selection === outcome;
-  return {
-    displayText: `Dados ${dice.join(" + ")} = ${sum} · ${won ? "Acertou" : "Errou"}`,
-    dice,
-    sum,
-    outcome,
-    won,
-    payoutCents: won ? Math.floor(wagerCents * multiplier / 100) : 0,
-    multiplier: won ? multiplier : 0,
-  };
-}
-
-function luckySuitResult(selection, wagerCents, secureRandomInt = randomInt) {
-  const suits = ["spades", "hearts", "diamonds", "clubs"];
-  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER) || !suits.includes(selection)) {
-    throw new RangeError("Invalid lucky-suit wager.");
-  }
-  const outcome = suits[secureRandomInt(suits.length)];
-  const won = selection === outcome;
-  const labels = { spades: "Espadas", hearts: "Copas", diamonds: "Ouros", clubs: "Paus" };
-  return {
-    displayText: `Naipe ${labels[outcome]} · ${won ? "Acertou" : "Errou"}`,
-    outcome,
-    won,
-    payoutCents: won ? Math.floor(wagerCents * 380 / 100) : 0,
-    multiplier: won ? 380 : 0,
-  };
-}
-
-function safeVaultResult(selection, wagerCents, secureRandomInt = randomInt) {
-  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER)
-      || !/^[1-5]$/.test(String(selection))) {
-    throw new RangeError("Invalid safe-vault wager.");
-  }
-  const outcome = secureRandomInt(5) + 1;
-  const won = Number(selection) === outcome;
-  return {
-    displayText: `Cofre ${outcome} · ${won ? "Encontrou o prêmio" : "Vazio"}`,
-    outcome,
-    won,
-    payoutCents: won ? Math.floor(wagerCents * 475 / 100) : 0,
-    multiplier: won ? 475 : 0,
+    walls: [...walls],
   };
 }
 
@@ -518,20 +537,16 @@ module.exports = {
   createShuffledDeck,
   diceGuessResult,
   footballShotResult,
-  higherLowerResult,
   isBlackjack,
-  luckyDoorsResult,
-  luckyNumberResult,
   minesCashoutPayout,
   parityDiceResult,
-  cardPairResult,
-  colorWheelResult,
-  diceSumResult,
-  rangePickResult,
-  doubleCoinResult,
-  tripleDiceResult,
-  luckySuitResult,
-  safeVaultResult,
+  memoryChallengeResult,
+  quizChallengeResult,
+  codebreakerChallengeResult,
+  mazeChallengeResult,
+  generateMemoryPattern,
+  QUIZ_QUESTIONS,
+  duelQuizQuestionIndexes,
   resolveRockPaperScissors,
   resolveOnlineDuel,
   rockPaperScissorsResult,

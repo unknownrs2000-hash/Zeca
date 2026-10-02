@@ -501,6 +501,9 @@ fun CassinoApp(
                                     concluir(resultado, error)
                                 }
                             },
+                            onIniciarDesafioSolo = { jogo, aposta, requestId, concluir ->
+                                FirebaseRepository.iniciarDesafioSolo(jogo, aposta, requestId, concluir)
+                            },
                             onIniciarCrash = { aposta, requestId, concluir ->
                                 FirebaseRepository.iniciarCrash(aposta, requestId) { sessao, error -> concluir(sessao, error) }
                             },

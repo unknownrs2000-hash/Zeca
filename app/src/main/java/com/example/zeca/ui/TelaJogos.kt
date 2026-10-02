@@ -80,43 +80,14 @@ private data class MiniJogoSolo(
 )
 
 private val miniJogosSolo = listOf(
-    MiniJogoSolo("Pedra, papel e tesoura", "rps", "Vença a mão do servidor; empate devolve a aposta. Vitória paga 1,85x.", listOf(
-        EscolhaMiniJogo("Pedra", "rock"), EscolhaMiniJogo("Papel", "paper"), EscolhaMiniJogo("Tesoura", "scissors"),
-    )),
-    MiniJogoSolo("Maior ou menor", "higherLower", "Adivinhe se a segunda carta será maior ou menor. Empate devolve a aposta; acerto paga 1,90x.", listOf(
-        EscolhaMiniJogo("Maior", "higher"), EscolhaMiniJogo("Menor", "lower"),
-    )),
-    MiniJogoSolo("Número secreto", "luckyNumber", "Escolha um número de 0 a 9. Acerto paga 9,50x.", (0..9).map { EscolhaMiniJogo(it.toString(), it.toString()) }),
-    MiniJogoSolo("Portas da sorte", "luckyDoors", "Uma das quatro portas esconde o prêmio. Acerto paga 3,80x.", (1..4).map { EscolhaMiniJogo("Porta $it", it.toString()) }),
-    MiniJogoSolo("Soma dos dados", "diceSum", "Escolha 2–6 ou 8–12. Se sair 7, a aposta volta; acerto paga 1,88x.", listOf(
-        EscolhaMiniJogo("2–6", "low"), EscolhaMiniJogo("8–12", "high"),
-    )),
-    MiniJogoSolo("Duas cartas", "cardPair", "Preveja se duas cartas serão iguais. Par paga 12,35x; diferentes pagam 1,02x.", listOf(
-        EscolhaMiniJogo("Par", "match"), EscolhaMiniJogo("Diferentes", "different"),
-    )),
-    MiniJogoSolo("Roda colorida", "colorWheel", "Vermelho e preto pagam 2,11x; dourado paga 9,50x.", listOf(
-        EscolhaMiniJogo("Vermelho", "red"), EscolhaMiniJogo("Preto", "black"), EscolhaMiniJogo("Dourado", "gold"),
-    )),
-    MiniJogoSolo("Faixa premiada", "rangePick", "Escolha 0–3, 4–5 ou 6–9. As faixas externas pagam 2,38x; centro paga 4,75x.", listOf(
-        EscolhaMiniJogo("Baixa · 0–3", "low"), EscolhaMiniJogo("Central · 4–5", "middle"), EscolhaMiniJogo("Alta · 6–9", "high"),
-    )),
-    MiniJogoSolo("Moedas gêmeas", "doubleCoin", "Adivinhe se duas moedas sairão iguais ou diferentes. Acerto paga 1,90x.", listOf(
-        EscolhaMiniJogo("Iguais", "same"), EscolhaMiniJogo("Diferentes", "different"),
-    )),
-    MiniJogoSolo("Trio de dados", "tripleDice", "Preveja a soma baixa (3–7), média (8–13) ou alta (14–18).", listOf(
-        EscolhaMiniJogo("Baixa · 3–7", "low"), EscolhaMiniJogo("Média · 8–13", "middle"), EscolhaMiniJogo("Alta · 14–18", "high"),
-    )),
-    MiniJogoSolo("Naipe secreto", "luckySuit", "Escolha um dos quatro naipes. Acerto paga 3,80x.", listOf(
-        EscolhaMiniJogo("Espadas ♠", "spades"), EscolhaMiniJogo("Copas ♥", "hearts"),
-        EscolhaMiniJogo("Ouros ♦", "diamonds"), EscolhaMiniJogo("Paus ♣", "clubs"),
-    )),
-    MiniJogoSolo("Cofre numerado", "safeVault", "Escolha um dos cinco cofres. O prêmio paga 4,75x.", (1..5).map {
-        EscolhaMiniJogo("Cofre $it", it.toString())
-    }),
+    MiniJogoSolo("Memória em sequência", "memorySequence", "Observe a sequência de sete sinais e repita-a na ordem. O prêmio cresce com cada acerto consecutivo.", emptyList()),
+    MiniJogoSolo("Desafio relâmpago", "quizSprint", "Responda cinco perguntas variadas. O servidor calcula o prêmio pelo número de respostas certas.", emptyList()),
+    MiniJogoSolo("Quebra-código", "codebreaker", "Descubra o código de quatro dígitos em até oito tentativas; o prêmio diminui a cada palpite.", emptyList()),
+    MiniJogoSolo("Labirinto", "mazeRunner", "Encontre a saída num tabuleiro 5 × 5 sem atravessar paredes. Caminhos menores rendem mais.", emptyList()),
 )
 
 private val jogosSoloPorGrupo = linkedMapOf(
-    "Novos" to miniJogosSolo.map { it.nome },
+    "Desafios" to miniJogosSolo.map { it.nome },
     "Rápidos" to listOf("Cara ou coroa", "Dado", "Par ou ímpar", "Raspadinha", "Futebol"),
     "Mesa" to listOf("Slots", "Roleta", "Crash", "Blackjack", "Minas"),
     "Esportes" to listOf("Apostas esportivas"),
@@ -151,6 +122,7 @@ fun TelaJogos(
     onRevelarMinas: (String, Int, String, (EstadoMinas?, Exception?) -> Unit) -> Unit,
     onSacarMinas: (String, String, (EstadoMinas?, Exception?) -> Unit) -> Unit,
     onJogar: (String, Long, String, String, String, (ResultadoJogo?, Exception?) -> Unit) -> Unit,
+    onIniciarDesafioSolo: (String, Long, String, (String?, Exception?) -> Unit) -> Unit,
     onIniciarCrash: (Long, String, (SessaoCrash?, Exception?) -> Unit) -> Unit,
     onSacarCrash: (String, String, (ResultadoCrash?, Exception?) -> Unit) -> Unit,
     onIniciarBlackjack: (Long, String, (EstadoBlackjack?, Exception?) -> Unit) -> Unit,
@@ -158,7 +130,7 @@ fun TelaJogos(
 ) {
     var jogo by rememberSaveable { mutableStateOf(miniJogosSolo.first().nome) }
     var categoriaJogos by rememberSaveable { mutableStateOf("Solo") }
-    var grupoSolo by rememberSaveable { mutableStateOf("Novos") }
+    var grupoSolo by rememberSaveable { mutableStateOf("Desafios") }
     var selecaoMinijogo by rememberSaveable { mutableStateOf("") }
     var apostaTexto by rememberSaveable { mutableStateOf("10,00") }
     var tipoRoleta by rememberSaveable { mutableStateOf("Cor") }
@@ -185,6 +157,7 @@ fun TelaJogos(
     var saqueCrashPendente by remember { mutableStateOf(false) }
     var estadoBlackjack by remember { mutableStateOf<EstadoBlackjack?>(null) }
     var estadoMinas by remember { mutableStateOf<EstadoMinas?>(null) }
+    var desafioSoloAtivo by rememberSaveable { mutableStateOf(false) }
     val historicoRoleta = remember { mutableStateListOf<Int>() }
 
     LaunchedEffect(roomInviteId) {
@@ -197,6 +170,7 @@ fun TelaJogos(
     val apostaCentavos = parseValorCentavos(apostaTexto)
     val apostaValida = apostaCentavos != null && apostaCentavos in 100..1_000_000 && apostaCentavos <= saldoCentavos
     val apostaTravada = when (jogo) {
+        in miniJogosSolo.map { it.nome } -> desafioSoloAtivo
         "Crash" -> sessaoCrash != null
         "Blackjack" -> estadoBlackjack?.status == "active"
         "Minas" -> estadoMinas?.status == "active"
@@ -274,6 +248,7 @@ fun TelaJogos(
                 lucroUltimo = round.variacaoCentavos
                 atrasoSaldo = 1_300L
                 mensagem = mensagemPremio(round.variacaoCentavos)
+                desafioSoloAtivo = false
                 rodada += 1
             }
         }
@@ -303,8 +278,9 @@ fun TelaJogos(
                             .background(if (categoriaJogos == categoria) Cores.Verde else Color.White.copy(alpha = 0.07f))
                             .clickable {
                             if (categoriaJogos != categoria) {
+                                desafioSoloAtivo = false
                                 categoriaJogos = categoria
-                                grupoSolo = "Novos"
+                                grupoSolo = "Desafios"
                                 jogo = when (categoria) {
                                     "Solo" -> miniJogosSolo.first().nome
                                     "1v1" -> "Jokenpô online"
@@ -350,12 +326,12 @@ fun TelaJogos(
                 "Solo" -> jogosSoloPorGrupo[grupoSolo].orEmpty()
                 "1v1" -> listOf(
                     "Jokenpô online",
-                    "Duelo de par ou ímpar",
-                    "Duelo de cara ou coroa",
-                    "Duelo de cartas",
+                    "Quiz de duelo",
+                    "Mira em duelo",
+                    "Duelo de memória",
                     "Cabo de guerra",
                 )
-                else -> listOf("Cabo de guerra", "Corrida em equipe", "Revezamento", "Toque relâmpago")
+                else -> listOf("Cabo de guerra", "Corrida em equipe", "Revezamento", "Quiz relâmpago")
             }
             Text(
                 if (categoriaJogos == "Solo") "${jogosVisiveis.size} jogos · $grupoSolo" else "Salas multiplayer · ${categoriaJogos}",
@@ -367,6 +343,7 @@ fun TelaJogos(
                 jogosVisiveis,
                 jogo,
             ) {
+                desafioSoloAtivo = false
                 jogo = it
                 selecaoMinijogo = miniJogosSolo.firstOrNull { miniGame -> miniGame.nome == it }?.opcoes?.firstOrNull()?.valor.orEmpty()
                 mensagem = ""
@@ -378,11 +355,11 @@ fun TelaJogos(
                     "Cabo de guerra",
                     "Corrida em equipe",
                     "Revezamento",
-                    "Toque relâmpago",
+                    "Quiz relâmpago",
                     "Jokenpô online",
-                    "Duelo de par ou ímpar",
-                    "Duelo de cara ou coroa",
-                    "Duelo de cartas",
+                    "Quiz de duelo",
+                    "Mira em duelo",
+                    "Duelo de memória",
                 )) {
                 OutlinedTextField(
                     value = apostaTexto,
@@ -654,12 +631,12 @@ fun TelaJogos(
                     onApostar = onApostarEsportiva,
                     onLiquidar = onLiquidarApostasEsportivas,
                 )
-                "Jokenpô online", "Duelo de par ou ímpar", "Duelo de cara ou coroa", "Duelo de cartas" -> JogoJokenpoOnline(
+                "Jokenpô online", "Quiz de duelo", "Mira em duelo", "Duelo de memória" -> JogoJokenpoOnline(
                     uidAtual = uidAtual,
                     gameId = when (jogo) {
-                        "Duelo de par ou ímpar" -> "duelParity"
-                        "Duelo de cara ou coroa" -> "duelCoin"
-                        "Duelo de cartas" -> "duelCards"
+                        "Quiz de duelo" -> "duelQuiz"
+                        "Mira em duelo" -> "duelTarget"
+                        "Duelo de memória" -> "duelMemory"
                         else -> "rps"
                     },
                     gameName = jogo,
@@ -669,13 +646,13 @@ fun TelaJogos(
                     onCancelarFila = onCancelarFilaJokenpo,
                     onJogar = onJogarJokenpo,
                 )
-                "Cabo de guerra", "Corrida em equipe", "Revezamento", "Toque relâmpago" -> TelaCaboGuerra(
+                "Cabo de guerra", "Corrida em equipe", "Revezamento", "Quiz relâmpago" -> TelaCaboGuerra(
                     uidAtual = uidAtual,
                     modoInicial = categoriaJogos,
                     gameIdInicial = when (jogo) {
                         "Corrida em equipe" -> "teamRace"
                         "Revezamento" -> "teamRelay"
-                        "Toque relâmpago" -> "teamBlitz"
+                        "Quiz relâmpago" -> "teamBlitz"
                         else -> "tug"
                     },
                     saldoCentavos = saldoCentavos,
@@ -732,7 +709,31 @@ fun TelaJogos(
                         }
                         else -> escolhaMiniJogo?.valor.orEmpty()
                     }
-                    MiniGameCard(
+                    if (miniGame != null && miniGame.id in setOf("memorySequence", "quizSprint", "codebreaker", "mazeRunner")) {
+                        DesafioSolo(
+                            gameId = miniGame.id,
+                            gameName = miniGame.nome,
+                            rules = miniGame.regras,
+                            round = rodada,
+                            enabled = apostaValida,
+                            busy = ocupado,
+                            result = resultado,
+                            message = mensagemTela,
+                            profitCents = lucroUltimo,
+                            onPrepare = { callback ->
+                                val wager = apostaCentavos
+                                if (wager == null) {
+                                    callback(null, IllegalArgumentException("Informe uma aposta válida."))
+                                } else {
+                                    onIniciarDesafioSolo(miniGame.id, wager, UUID.randomUUID().toString()) { seed, error ->
+                                        desafioSoloAtivo = seed != null
+                                        callback(seed, error)
+                                    }
+                                }
+                            },
+                            onSubmit = { selection -> jogarMiniJogo(miniGame.id, selection) },
+                        )
+                    } else MiniGameCard(
                         nome = jogo,
                         regras = regras,
                         opcoes = opcoes,
@@ -1270,7 +1271,7 @@ private fun simboloJogo(nome: String): String = when (nome) {
     "Slots" -> "7"
     "Roleta", "Roda colorida" -> "◉"
     "Crash" -> "↗"
-    "Blackjack", "Duas cartas" -> "♠"
+    "Blackjack" -> "♠"
     "Cara ou coroa" -> "◐"
     "Dado", "Soma dos dados" -> "⚄"
     "Par ou ímpar" -> "±"
@@ -1279,7 +1280,6 @@ private fun simboloJogo(nome: String): String = when (nome) {
     "Futebol" -> "⚽"
     "Apostas esportivas" -> "◎"
     "Pedra, papel e tesoura" -> "✂"
-    "Maior ou menor" -> "↕"
     "Número secreto" -> "#"
     "Faixa premiada" -> "⌁"
     "Cabo de guerra" -> "⇄"
@@ -1291,14 +1291,13 @@ private fun corDestaqueJogo(nome: String): Color = when (nome) {
     "Slots" -> Color(0xFFFF737C)
     "Roleta", "Roda colorida" -> Color(0xFFFFC857)
     "Crash" -> Color(0xFF43D9C0)
-    "Blackjack", "Duas cartas" -> Color(0xFF8EA8FF)
+    "Blackjack" -> Color(0xFF8EA8FF)
     "Cara ou coroa", "Pedra, papel e tesoura" -> Color(0xFFFF987B)
     "Dado", "Soma dos dados" -> Color(0xFF63C8FF)
     "Par ou ímpar" -> Color(0xFF80D99A)
     "Minas", "Portas da sorte" -> Color(0xFFFF8C80)
     "Raspadinha" -> Color(0xFFC9A1FF)
     "Futebol", "Apostas esportivas" -> Color(0xFF77DFA0)
-    "Maior ou menor" -> Color(0xFF80C7FF)
     "Número secreto" -> Color(0xFFFFD166)
     "Faixa premiada" -> Color(0xFFB6D875)
     "Cabo de guerra" -> Color(0xFFFF987B)

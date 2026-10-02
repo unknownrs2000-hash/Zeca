@@ -1314,6 +1314,20 @@ object FirebaseRepository {
         }
     }
 
+    fun iniciarDesafioSolo(
+        jogo: String,
+        apostaCentavos: Long,
+        requestId: String,
+        callback: (String?, Exception?) -> Unit,
+    ) {
+        chamarFunction(
+            "startSoloChallenge",
+            mapOf("game" to jogo, "amountCents" to apostaCentavos, "requestId" to requestId),
+        ) { data, erro ->
+            callback(data?.get("seed") as? String, erro)
+        }
+    }
+
     fun iniciarCrash(apostaCentavos: Long, requestId: String, callback: (SessaoCrash?, Exception?) -> Unit) {
         chamarFunction("startCrash", mapOf("amountCents" to apostaCentavos, "requestId" to requestId)) { data, erro ->
             val sessao = data?.let {

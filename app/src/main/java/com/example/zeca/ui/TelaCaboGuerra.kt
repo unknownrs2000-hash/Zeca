@@ -58,6 +58,19 @@ import java.text.NumberFormat
 import java.util.Locale
 import java.util.UUID
 
+private data class TeamQuizQuestion(val prompt: String, val answers: List<String>)
+
+private val teamQuizQuestions = listOf(
+    TeamQuizQuestion("Quanto é 12 × 8?", listOf("86", "96", "108", "112")),
+    TeamQuizQuestion("Qual é a capital do Japão?", listOf("Seul", "Pequim", "Tóquio", "Bangkok")),
+    TeamQuizQuestion("Quantos lados tem um octógono?", listOf("6", "7", "8", "9")),
+    TeamQuizQuestion("Qual gás as plantas absorvem?", listOf("Oxigênio", "Hélio", "Nitrogênio", "Dióxido de carbono")),
+    TeamQuizQuestion("Qual é o maior mamífero do mundo?", listOf("Elefante", "Baleia-azul", "Girafa", "Hipopótamo")),
+    TeamQuizQuestion("Quantos minutos há em uma hora e meia?", listOf("80", "90", "100", "120")),
+    TeamQuizQuestion("Qual destes é um metal precioso?", listOf("Quartzo", "Granito", "Ouro", "Carvão")),
+    TeamQuizQuestion("Em qual continente fica o Egito?", listOf("África", "Europa", "Ásia", "Oceania")),
+)
+
 @Composable
 fun TelaCaboGuerra(
     uidAtual: String,
@@ -142,8 +155,9 @@ fun TelaCaboGuerra(
         delay(160)
         val currentRoom = salaSelecionada ?: return@LaunchedEffect
         if (currentRoom.id != room.id || currentRoom.status != "active" || enviandoLotePuxoes) return@LaunchedEffect
-        val count = minOf(8, puxoesPendentes)
-        puxoesPendentes -= count
+        val quizMode = room.gameId == "teamBlitz"
+        val count = if (quizMode) puxoesPendentes else minOf(8, puxoesPendentes)
+        puxoesPendentes = 0
         enviandoLotePuxoes = true
         onPuxarCorda(room.id, count, UUID.randomUUID().toString()) { next, error ->
             enviandoLotePuxoes = false
@@ -154,7 +168,12 @@ fun TelaCaboGuerra(
                     atualizarSalas()
                 } else {
                     val acceptedPulls = next?.puxoesAceitos?.coerceIn(0, count) ?: count
-                    if (next?.status == "active") puxoesPendentes += count - acceptedPulls
+                    if (quizMode) {
+                        aviso = if (acceptedPulls > 0) "Resposta certa! +2 pontos para seu time."
+                        else "Resposta errada. A próxima pergunta já está valendo."
+                    } else if (next?.status == "active") {
+                        puxoesPendentes += count - acceptedPulls
+                    }
                     salaSelecionada = next
                 }
             }
@@ -369,47 +388,69 @@ fun TelaCaboGuerra(
                     }
                     "active" -> {
                         val buttonScale by animateFloatAsState(
-                            targetValue = if (puxoesPendentes > 0) 0.96f else 1f,
+                            targetValue = if (puxoesPendentes > 0 && room.gameId != "teamBlitz") 0.96f else 1f,
                             animationSpec = tween(90),
                             label = "tug-tap-scale",
                         )
-                        val puxoesTimeAVisual = room.puxoesTimeA + if (souTimeA) puxoesPendentes else 0
-                        val puxoesTimeBVisual = room.puxoesTimeB + if (souTimeB) puxoesPendentes else 0
+                        val pendingScore = if (room.gameId == "teamBlitz") 0 else puxoesPendentes
+                        val puxoesTimeAVisual = room.puxoesTimeA + if (souTimeA) pendingScore else 0
+                        val puxoesTimeBVisual = room.puxoesTimeB + if (souTimeB) pendingScore else 0
                         val lead = puxoesTimeAVisual - puxoesTimeBVisual
                         Text("Time A: $puxoesTimeAVisual  ·  $puxoesTimeBVisual :Time B", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        TugRopeVisual(lead)
-                        Text("Toques registrados na hora${if (puxoesPendentes > 0) " · +$puxoesPendentes" else ""}", modifier = Modifier.fillMaxWidth(), color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp, textAlign = TextAlign.Center)
-                        val meuTime = if (souTimeA) "A" else "B"
-                        val vezDoColega = room.gameId == "teamRelay"
-                            && room.ultimoJogadorPorTime[meuTime] == uidAtual
-                        Button(
-                            onClick = {
-                                val nowMs = SystemClock.elapsedRealtime()
-                                if (ultimoToqueMs == 0L || nowMs - ultimoToqueMs >= 120L) {
-                                    ultimoToqueMs = nowMs
-                                    puxoesPendentes += 1
-                                    erro = ""
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        if (room.gameId == "teamBlitz") {
+                            val questionIndex = ((room.puxoesTimeA + room.puxoesTimeB) / 2) % teamQuizQuestions.size
+                            val question = teamQuizQuestions[questionIndex]
+                            Text("Quiz relâmpago · acerte para marcar 2 pontos", color = Cores.Turquesa, fontWeight = FontWeight.Bold)
+                            Text(question.prompt, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            question.answers.forEachIndexed { index, answer ->
+                                Button(
+                                    onClick = {
+                                        puxoesPendentes = index + 1
+                                        erro = ""
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    },
+                                    enabled = !enviandoLotePuxoes && puxoesPendentes == 0,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = ButtonDefaults.buttonColors(containerColor = if (souTimeA) Cores.Verde else Color(0xFFFF8B91)),
+                                ) {
+                                    Text(answer, color = Color(0xFF101417), fontWeight = FontWeight.Bold)
                                 }
-                            },
-                            enabled = !enviandoLotePuxoes && !vezDoColega,
-                            modifier = Modifier.fillMaxWidth().height(72.dp).graphicsLayer {
-                                scaleX = buttonScale
-                                scaleY = buttonScale
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = if (souTimeA) Cores.Verde else Color(0xFFFF8B91)),
-                        ) {
-                            Text(
-                                when {
-                                    vezDoColega -> "AGUARDE SEU COLEGA"
-                                    room.gameId == "teamRace" -> "TOQUE PARA CORRER"
-                                    room.gameId == "teamRelay" -> "TOQUE PARA REVEZAR"
-                                    room.gameId == "teamBlitz" -> "TOQUE PARA MARCAR"
-                                    else -> "TOQUE PARA PUXAR"
+                            }
+                            if (enviandoLotePuxoes) Text("Verificando resposta…", color = Color.White.copy(alpha = 0.65f))
+                        } else {
+                            TugRopeVisual(lead)
+                            Text("Toques registrados na hora${if (puxoesPendentes > 0) " · +$puxoesPendentes" else ""}", modifier = Modifier.fillMaxWidth(), color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp, textAlign = TextAlign.Center)
+                            val meuTime = if (souTimeA) "A" else "B"
+                            val vezDoColega = room.gameId == "teamRelay"
+                                && room.ultimoJogadorPorTime[meuTime] == uidAtual
+                            Button(
+                                onClick = {
+                                    val nowMs = SystemClock.elapsedRealtime()
+                                    if (ultimoToqueMs == 0L || nowMs - ultimoToqueMs >= 120L) {
+                                        ultimoToqueMs = nowMs
+                                        puxoesPendentes += 1
+                                        erro = ""
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    }
                                 },
-                                color = Color(0xFF101417),
-                                fontWeight = FontWeight.Black,
-                            )
+                                enabled = !enviandoLotePuxoes && !vezDoColega,
+                                modifier = Modifier.fillMaxWidth().height(72.dp).graphicsLayer {
+                                    scaleX = buttonScale
+                                    scaleY = buttonScale
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = if (souTimeA) Cores.Verde else Color(0xFFFF8B91)),
+                            ) {
+                                Text(
+                                    when {
+                                        vezDoColega -> "AGUARDE SEU COLEGA"
+                                        room.gameId == "teamRace" -> "TOQUE PARA CORRER"
+                                        room.gameId == "teamRelay" -> "TOQUE PARA REVEZAR"
+                                        else -> "TOQUE PARA PUXAR"
+                                    },
+                                    color = Color(0xFF101417),
+                                    fontWeight = FontWeight.Black,
+                                )
+                            }
                         }
                     }
                     "settled" -> {
@@ -549,14 +590,14 @@ fun TelaCaboGuerra(
 private fun nomeJogoEquipe(gameId: String): String = when (gameId) {
     "teamRace" -> "Corrida em equipe"
     "teamRelay" -> "Revezamento"
-    "teamBlitz" -> "Toque relâmpago"
+    "teamBlitz" -> "Quiz relâmpago"
     else -> "Cabo de guerra"
 }
 
 private fun regraJogoEquipe(gameId: String): String = when (gameId) {
     "teamRace" -> "Primeiro time a 24 pontos vence"
     "teamRelay" -> "Alterne os toques entre colegas · 12 pontos vencem"
-    "teamBlitz" -> "Cada toque vale 2 pontos · primeiro a 36 vence"
+    "teamBlitz" -> "Responda perguntas de múltipla escolha · cada acerto vale 2 pontos"
     else -> "Toque para puxar · vantagem de 8 vence"
 }
 
