@@ -520,6 +520,10 @@ data class PreferenciasConta(
     val confirmImportant: Boolean = true,
     val personalizedRecommendations: Boolean = true,
     val syncSettings: Boolean = true,
+    val shareBotProfile: Boolean = false,
+    val shareBotPetInventory: Boolean = false,
+    val shareBotMissions: Boolean = false,
+    val shareBotEconomy: Boolean = false,
 ) {
     fun paraMapa(): Map<String, Any> = mapOf(
         "profileVisibility" to profileVisibility,
@@ -532,6 +536,10 @@ data class PreferenciasConta(
         "confirmImportant" to confirmImportant,
         "personalizedRecommendations" to personalizedRecommendations,
         "syncSettings" to syncSettings,
+        "shareBotProfile" to shareBotProfile,
+        "shareBotPetInventory" to shareBotPetInventory,
+        "shareBotMissions" to shareBotMissions,
+        "shareBotEconomy" to shareBotEconomy,
     )
 }
 
@@ -559,6 +567,47 @@ data class EconomiaWhatsApp(
     val totalBankGold: Long,
     val groups: List<GrupoEconomiaWhatsApp>,
     val history: List<HistoricoGoldWhatsApp>,
+)
+data class PerfilWhatsApp(
+    val displayName: String,
+    val level: Int,
+    val xp: Long,
+    val quizPoints: Long,
+    val messages: Long,
+    val groups: List<GrupoProgressoWhatsApp>,
+)
+data class GrupoProgressoWhatsApp(
+    val name: String,
+    val xp: Long,
+    val level: Int,
+    val messages: Long,
+    val quizPoints: Long,
+)
+data class PetWhatsApp(
+    val type: String,
+    val name: String,
+    val rarity: String,
+    val level: Int,
+    val happiness: Int,
+    val energy: Int,
+    val fullness: Int,
+)
+data class MissaoWhatsApp(
+    val id: String,
+    val title: String,
+    val target: Int,
+    val progress: Int,
+    val completed: Boolean,
+    val claimedInBot: Boolean,
+    val claimedInApp: Boolean = false,
+)
+data class PainelWhatsApp(
+    val profile: PerfilWhatsApp? = null,
+    val pet: PetWhatsApp? = null,
+    val inventory: Map<String, Int> = emptyMap(),
+    val missions: List<MissaoWhatsApp> = emptyList(),
+    val economy: EconomiaWhatsApp? = null,
+    val integrationPoints: Long = 0L,
 )
 data class PainelConta(
     val preferences: PreferenciasConta = PreferenciasConta(),
@@ -2127,6 +2176,10 @@ object FirebaseRepository {
                         confirmImportant = settings["confirmImportant"] as? Boolean ?: true,
                         personalizedRecommendations = settings["personalizedRecommendations"] as? Boolean ?: true,
                         syncSettings = settings["syncSettings"] as? Boolean ?: true,
+                        shareBotProfile = settings["shareBotProfile"] as? Boolean ?: false,
+                        shareBotPetInventory = settings["shareBotPetInventory"] as? Boolean ?: false,
+                        shareBotMissions = settings["shareBotMissions"] as? Boolean ?: false,
+                        shareBotEconomy = settings["shareBotEconomy"] as? Boolean ?: false,
                     ),
                     friends = accountList("friends"),
                     friendRequests = accountList("friendRequests"),
@@ -2191,6 +2244,110 @@ object FirebaseRepository {
                 return@chamarFunction
             }
             callback(EconomiaWhatsApp(totalGold, totalBankGold, groups, history), null)
+        }
+    }
+
+    fun carregarPainelWhatsApp(callback: (PainelWhatsApp?, Exception?) -> Unit) {
+        chamarFunction("getLinkedWhatsAppDashboard", emptyMap()) { data, error ->
+            if (data == null || error != null) {
+                callback(null, error ?: IllegalStateException("Painel do WhatsApp vazio."))
+                return@chamarFunction
+            }
+            val bot = data["bot"] as? Map<*, *> ?: emptyMap<Any, Any>()
+            val profile = (bot["profile"] as? Map<*, *>)?.let { raw ->
+                val groups = (raw["groups"] as? List<*>).orEmpty().mapNotNull { item ->
+                    val group = item as? Map<*, *> ?: return@mapNotNull null
+                    GrupoProgressoWhatsApp(
+                        name = group["name"] as? String ?: return@mapNotNull null,
+                        xp = (group["xp"] as? Number)?.toLong() ?: 0L,
+                        level = (group["level"] as? Number)?.toInt() ?: 1,
+                        messages = (group["messages"] as? Number)?.toLong() ?: 0L,
+                        quizPoints = (group["quizPoints"] as? Number)?.toLong() ?: 0L,
+                    )
+                }
+                PerfilWhatsApp(
+                    displayName = raw["displayName"] as? String ?: "Jogador",
+                    level = (raw["level"] as? Number)?.toInt() ?: 1,
+                    xp = (raw["xp"] as? Number)?.toLong() ?: 0L,
+                    quizPoints = (raw["quizPoints"] as? Number)?.toLong() ?: 0L,
+                    messages = (raw["messages"] as? Number)?.toLong() ?: 0L,
+                    groups = groups,
+                )
+            }
+            val pets = bot["pets"] as? Map<*, *>
+            val pet = (pets?.get("pet") as? Map<*, *>)?.let { raw ->
+                PetWhatsApp(
+                    type = raw["type"] as? String ?: "",
+                    name = raw["name"] as? String ?: "",
+                    rarity = raw["rarity"] as? String ?: "",
+                    level = (raw["level"] as? Number)?.toInt() ?: 1,
+                    happiness = (raw["happiness"] as? Number)?.toInt() ?: 0,
+                    energy = (raw["energy"] as? Number)?.toInt() ?: 0,
+                    fullness = (raw["fullness"] as? Number)?.toInt() ?: 0,
+                )
+            }
+            val inventory = (pets?.get("inventory") as? Map<*, *>).orEmpty().mapNotNull { (key, value) ->
+                val itemKey = key as? String ?: return@mapNotNull null
+                val amount = (value as? Number)?.toInt()?.takeIf { it > 0 } ?: return@mapNotNull null
+                itemKey to amount
+            }.toMap()
+            val missions = ((bot["missions"] as? Map<*, *>)?.get("items") as? List<*>).orEmpty()
+                .mapNotNull { raw ->
+                    val item = raw as? Map<*, *> ?: return@mapNotNull null
+                    val id = item["id"] as? String ?: return@mapNotNull null
+                    MissaoWhatsApp(
+                        id = id,
+                        title = item["title"] as? String ?: id,
+                        target = (item["target"] as? Number)?.toInt() ?: 0,
+                        progress = (item["progress"] as? Number)?.toInt() ?: 0,
+                        completed = item["completed"] as? Boolean ?: false,
+                        claimedInBot = item["claimedInBot"] as? Boolean ?: false,
+                        claimedInApp = item["claimedInApp"] as? Boolean ?: false,
+                    )
+                }
+            val economy = (bot["economy"] as? Map<*, *>)?.let { raw ->
+                val groups = (raw["groups"] as? List<*>).orEmpty().mapNotNull { item ->
+                    val group = item as? Map<*, *> ?: return@mapNotNull null
+                    GrupoEconomiaWhatsApp(
+                        name = group["name"] as? String ?: return@mapNotNull null,
+                        gold = (group["gold"] as? Number)?.toLong() ?: 0L,
+                        bankGold = (group["bankGold"] as? Number)?.toLong() ?: 0L,
+                    )
+                }
+                val history = (raw["history"] as? List<*>).orEmpty().mapNotNull { item ->
+                    val entry = item as? Map<*, *> ?: return@mapNotNull null
+                    HistoricoGoldWhatsApp(
+                        groupName = entry["groupName"] as? String ?: return@mapNotNull null,
+                        type = entry["type"] as? String ?: return@mapNotNull null,
+                        item = entry["item"] as? String ?: "Movimentação",
+                        amount = (entry["amount"] as? Number)?.toLong() ?: 0L,
+                        createdAtMs = (entry["createdAtMs"] as? Number)?.toLong() ?: 0L,
+                    )
+                }
+                EconomiaWhatsApp(
+                    totalGold = (raw["totalGold"] as? Number)?.toLong() ?: 0L,
+                    totalBankGold = (raw["totalBankGold"] as? Number)?.toLong() ?: 0L,
+                    groups = groups,
+                    history = history,
+                )
+            }
+            callback(
+                PainelWhatsApp(
+                    profile = profile,
+                    pet = pet,
+                    inventory = inventory,
+                    missions = missions,
+                    economy = economy,
+                    integrationPoints = (data["integrationPoints"] as? Number)?.toLong() ?: 0L,
+                ),
+                null,
+            )
+        }
+    }
+
+    fun resgatarMissaoWhatsApp(missionId: String, callback: (Long?, Exception?) -> Unit) {
+        chamarFunction("claimWhatsAppMissionReward", mapOf("missionId" to missionId)) { data, error ->
+            callback((data?.get("integrationPoints") as? Number)?.toLong(), error)
         }
     }
 

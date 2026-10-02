@@ -868,6 +868,7 @@ fun CassinoApp(
                         )
                         Aba.Conta -> TelaCentralConta(
                             painel = painelConta,
+                            eventoSemanal = recursosSociais.eventoSemanal,
                             carregando = carregandoPainelConta,
                             erro = erroPainelConta,
                             bloqueioDispositivoAtivo = bloqueioDispositivoAtivo,
@@ -879,8 +880,11 @@ fun CassinoApp(
                             onDesvincularWhatsApp = { complete ->
                                 FirebaseRepository.desvincularWhatsApp(complete)
                             },
-                            onCarregarEconomiaWhatsApp = { complete ->
-                                FirebaseRepository.carregarEconomiaWhatsApp(complete)
+                            onCarregarPainelWhatsApp = { complete ->
+                                FirebaseRepository.carregarPainelWhatsApp(complete)
+                            },
+                            onResgatarMissaoWhatsApp = { missionId, complete ->
+                                FirebaseRepository.resgatarMissaoWhatsApp(missionId, complete)
                             },
                             onAbrirWhatsApp = { message ->
                                 val whatsappUrl = if (message.isBlank()) {
@@ -901,6 +905,21 @@ fun CassinoApp(
                                         android.widget.Toast.LENGTH_LONG,
                                     ).show()
                                 }
+                            },
+                            onCompartilharFigurinha = { uri ->
+                                val mimeType = contexto.contentResolver.getType(uri) ?: "image/*"
+                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = mimeType
+                                    putExtra(Intent.EXTRA_STREAM, uri)
+                                    putExtra(Intent.EXTRA_TEXT, "!s")
+                                    clipData = android.content.ClipData.newUri(
+                                        contexto.contentResolver,
+                                        "Imagem para figurinha",
+                                        uri,
+                                    )
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                contexto.startActivity(Intent.createChooser(shareIntent, "Enviar imagem ao bot"))
                             },
                             onSalvarPreferencias = { preferences, complete ->
                                 FirebaseRepository.salvarPreferenciasConta(preferences) { error ->

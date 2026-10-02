@@ -18,6 +18,8 @@ const {
   equipTitle,
   getSocialDashboard,
   getAccountSettings,
+  getLinkedWhatsAppDashboard,
+  claimWhatsAppMissionReward,
   manageFriend,
   saveAccountSettings,
   publishAppAnnouncement,
@@ -280,6 +282,21 @@ test("WhatsApp account linking requires an authenticated app account and validat
   await assert.rejects(
     getLinkedWhatsAppEconomy({ auth: null, data: {} }),
     (error) => error.code === "unauthenticated",
+  );
+  await assert.rejects(
+    getLinkedWhatsAppDashboard({ auth: null, data: {} }),
+    (error) => error.code === "unauthenticated",
+  );
+  await assert.rejects(
+    claimWhatsAppMissionReward({ auth: null, data: {} }),
+    (error) => error.code === "unauthenticated",
+  );
+  await assert.rejects(
+    claimWhatsAppMissionReward({
+      auth: { uid: "player", token: {} },
+      data: { missionId: "unknown" },
+    }),
+    (error) => error.code === "invalid-argument",
   );
   await assert.rejects(
     _completeWhatsAppLink({ data: { code: "123", jid: "5511999999999@s.whatsapp.net" } }),

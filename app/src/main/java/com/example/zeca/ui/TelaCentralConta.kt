@@ -1,5 +1,6 @@
 package com.example.zeca.ui
 
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -33,12 +34,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import com.example.zeca.AlteracaoConta
 import com.example.zeca.AvisoApp
-import com.example.zeca.EconomiaWhatsApp
+import com.example.zeca.MissaoWhatsApp
+import com.example.zeca.PainelWhatsApp
 import com.example.zeca.PainelConta
 import com.example.zeca.PreferenciasConta
 import com.example.zeca.RecomendacaoJogo
+import com.example.zeca.ui.EventoSemanal
 import com.example.zeca.ui.theme.Cores
 import java.text.SimpleDateFormat
 import java.text.NumberFormat
@@ -48,6 +53,7 @@ import java.util.Locale
 @Composable
 fun TelaCentralConta(
     painel: PainelConta?,
+    eventoSemanal: EventoSemanal?,
     carregando: Boolean,
     erro: String,
     bloqueioDispositivoAtivo: Boolean,
@@ -56,8 +62,10 @@ fun TelaCentralConta(
     onSalvarPreferencias: (PreferenciasConta, (Exception?) -> Unit) -> Unit,
     onCriarCodigoVinculoWhatsApp: ((String?, Long, Exception?) -> Unit) -> Unit,
     onDesvincularWhatsApp: ((Exception?) -> Unit) -> Unit,
-    onCarregarEconomiaWhatsApp: ((EconomiaWhatsApp?, Exception?) -> Unit) -> Unit,
+    onCarregarPainelWhatsApp: ((PainelWhatsApp?, Exception?) -> Unit) -> Unit,
+    onResgatarMissaoWhatsApp: (String, (Long?, Exception?) -> Unit) -> Unit,
     onAbrirWhatsApp: (String) -> Unit,
+    onCompartilharFigurinha: (Uri) -> Unit,
     onGerenciarAmigo: (String, String, String, (Exception?) -> Unit) -> Unit,
     onDefinirBloqueio: (Boolean) -> Unit,
     onPublicarAviso: (String, String, String, Long, (Exception?) -> Unit) -> Unit,
@@ -77,9 +85,12 @@ fun TelaCentralConta(
     var codigoVinculoExpiraEm by rememberSaveable { mutableStateOf(0L) }
     var criandoCodigoVinculo by remember { mutableStateOf(false) }
     var confirmarDesvinculoWhatsApp by rememberSaveable { mutableStateOf(false) }
-    var economiaWhatsApp by remember { mutableStateOf<EconomiaWhatsApp?>(null) }
-    var carregandoEconomiaWhatsApp by remember { mutableStateOf(false) }
-    var erroEconomiaWhatsApp by rememberSaveable { mutableStateOf("") }
+    var painelWhatsApp by remember { mutableStateOf<PainelWhatsApp?>(null) }
+    var carregandoPainelWhatsApp by remember { mutableStateOf(false) }
+    var erroPainelWhatsApp by rememberSaveable { mutableStateOf("") }
+    val seletorFigurinha = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let(onCompartilharFigurinha)
+    }
 
     fun save(updated: PreferenciasConta) {
         statusMensagem = "Salvando..."
@@ -115,6 +126,30 @@ fun TelaCentralConta(
         if (carregando) Text("Carregando suas configurações...", color = Color.White.copy(alpha = 0.7f))
         if (erro.isNotBlank()) Text(erro, color = Color(0xFFFF8B91))
         if (statusMensagem.isNotBlank()) Text(statusMensagem, color = Cores.Turquesa, fontSize = 12.sp)
+
+        SecaoConta("Privacidade e sincronização com o bot") {
+            Text(
+                "Os dados ficam privados nesta conta e só são consultados quando você ativa cada opção. Desative uma opção para interromper novas consultas.",
+                color = Color.White.copy(alpha = 0.68f),
+                fontSize = 12.sp,
+            )
+            PreferenceSwitchConta("Perfil, XP e progresso por grupo", preferences.shareBotProfile) {
+                save(preferences.copy(shareBotProfile = it))
+                if (!it) painelWhatsApp = painelWhatsApp?.copy(profile = null)
+            }
+            PreferenceSwitchConta("Pet e inventário", preferences.shareBotPetInventory) {
+                save(preferences.copy(shareBotPetInventory = it))
+                if (!it) painelWhatsApp = painelWhatsApp?.copy(pet = null, inventory = emptyMap())
+            }
+            PreferenceSwitchConta("Missões do bot e eventos cruzados", preferences.shareBotMissions) {
+                save(preferences.copy(shareBotMissions = it))
+                if (!it) painelWhatsApp = painelWhatsApp?.copy(missions = emptyList())
+            }
+            PreferenceSwitchConta("Gold virtual e extrato por grupo", preferences.shareBotEconomy) {
+                save(preferences.copy(shareBotEconomy = it))
+                if (!it) painelWhatsApp = painelWhatsApp?.copy(economy = null)
+            }
+        }
 
         SecaoConta("Privacidade e perfil") {
             Text("Visibilidade", color = Color.White, fontWeight = FontWeight.Bold)
@@ -207,7 +242,7 @@ fun TelaCentralConta(
 
         SecaoConta("Conectar ao WhatsApp") {
             Text(
-                "Vincule sua conta enviando um código temporário ao bot. O saldo e o progresso do app e do WhatsApp continuam separados.",
+                "Vincule sua conta para consultar dados escolhidos por você, sincronizar desafios e enviar imagens ao bot. Saldos e progressos financeiros continuam separados.",
                 color = Color.White.copy(alpha = 0.68f),
                 fontSize = 12.sp,
             )
@@ -217,57 +252,105 @@ fun TelaCentralConta(
                 OutlinedButton(
                     onClick = {
                         onRecarregar()
-                        carregandoEconomiaWhatsApp = true
-                        erroEconomiaWhatsApp = ""
-                        onCarregarEconomiaWhatsApp { result, error ->
-                            carregandoEconomiaWhatsApp = false
-                            economiaWhatsApp = result
-                            erroEconomiaWhatsApp = error?.localizedMessage.orEmpty()
+                        carregandoPainelWhatsApp = true
+                        erroPainelWhatsApp = ""
+                        onCarregarPainelWhatsApp { result, error ->
+                            carregandoPainelWhatsApp = false
+                            painelWhatsApp = result
+                            erroPainelWhatsApp = error?.localizedMessage.orEmpty()
                         }
                     },
-                    enabled = !carregandoEconomiaWhatsApp,
-                ) { Text(if (carregandoEconomiaWhatsApp) "Consultando economia..." else "Consultar gold e extrato") }
-                if (erroEconomiaWhatsApp.isNotBlank()) {
-                    Text(erroEconomiaWhatsApp, color = Color(0xFFFF8B91), fontSize = 12.sp)
+                    enabled = !carregandoPainelWhatsApp,
+                ) { Text(if (carregandoPainelWhatsApp) "Sincronizando..." else "Sincronizar dados permitidos") }
+                if (erroPainelWhatsApp.isNotBlank()) {
+                    Text(erroPainelWhatsApp, color = Color(0xFFFF8B91), fontSize = 12.sp)
                 }
-                economiaWhatsApp?.let { economy ->
+                if (preferences.shareBotProfile || preferences.shareBotPetInventory
+                    || preferences.shareBotMissions || preferences.shareBotEconomy
+                ) {
+                    painelWhatsApp?.let { botPanel ->
                     val formatGold = remember {
                         NumberFormat.getIntegerInstance(Locale.forLanguageTag("pt-BR"))
                     }
-                    Text(
-                        "Gold disponível: ${formatGold.format(economy.totalGold)}",
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Text(
-                        "Gold guardado no banco: ${formatGold.format(economy.totalBankGold)}",
-                        color = Color.White.copy(alpha = 0.72f),
-                        fontSize = 12.sp,
-                    )
-                    economy.groups.forEach { group ->
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(Cores.Fundo, RoundedCornerShape(12.dp))
-                                .padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(3.dp),
-                        ) {
-                            Text(group.name, color = Color.White, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Pontos de integração: ${formatGold.format(botPanel.integrationPoints)}",
+                            color = Cores.Turquesa,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        botPanel.profile?.let { profile ->
+                            Text("Perfil do bot · ${profile.displayName}", color = Color.White, fontWeight = FontWeight.Bold)
                             Text(
-                                "Disponível: ${formatGold.format(group.gold)}  ·  Banco: ${formatGold.format(group.bankGold)} gold",
-                                color = Color.White.copy(alpha = 0.68f),
+                                "Nível ${profile.level} · ${formatGold.format(profile.xp)} XP · ${formatGold.format(profile.quizPoints)} pontos de quiz · ${formatGold.format(profile.messages)} mensagens",
+                                color = Color.White.copy(alpha = 0.72f),
                                 fontSize = 12.sp,
                             )
+                            profile.groups.forEach { group ->
+                                Text(
+                                    "${group.name} · nível ${group.level} · ${formatGold.format(group.xp)} XP",
+                                    color = Color.White.copy(alpha = 0.62f),
+                                    fontSize = 11.sp,
+                                )
+                            }
                         }
-                    }
-                    if (economy.history.isNotEmpty()) {
-                        Text("Movimentações recentes", color = Color.White, fontWeight = FontWeight.Bold)
-                        economy.history.take(10).forEach { movement ->
-                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                val date = remember(movement.createdAtMs) {
-                                    SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
-                                        .format(Date(movement.createdAtMs))
+                        if (preferences.shareBotPetInventory) {
+                            botPanel.pet?.let { pet ->
+                                Text("Pet · ${pet.name.ifBlank { pet.type.ifBlank { "Sem nome" } }}", color = Color.White, fontWeight = FontWeight.Bold)
+                                Text(
+                                    "Nível ${pet.level} · ${pet.rarity.ifBlank { "raridade não informada" }} · energia ${pet.energy}% · fome ${pet.fullness}% · felicidade ${pet.happiness}%",
+                                    color = Color.White.copy(alpha = 0.7f),
+                                    fontSize = 11.sp,
+                                )
+                            } ?: Text("Nenhum pet encontrado na conta do bot.", color = Color.White.copy(alpha = 0.62f), fontSize = 12.sp)
+                            if (botPanel.inventory.isNotEmpty()) {
+                                Text("Inventário do bot", color = Color.White, fontWeight = FontWeight.Bold)
+                                botPanel.inventory.entries.take(30).forEach { (item, quantity) ->
+                                    Text("$item × $quantity", color = Color.White.copy(alpha = 0.72f), fontSize = 11.sp)
                                 }
+                            } else {
+                                Text("O inventário do bot está vazio.", color = Color.White.copy(alpha = 0.62f), fontSize = 12.sp)
+                            }
+                        }
+                        if (preferences.shareBotMissions) {
+                            Text("Missões cruzadas do bot", color = Color.White, fontWeight = FontWeight.Bold)
+                            botPanel.missions.forEach { mission ->
+                                MissaoWhatsAppLinha(
+                                    mission = mission,
+                                    onResgatar = {
+                                        onResgatarMissaoWhatsApp(mission.id) { points, error ->
+                                            statusMensagem = error?.localizedMessage
+                                                ?: "Missão resgatada: +${points ?: 10L} pontos de integração."
+                                            if (error == null) {
+                                                carregandoPainelWhatsApp = true
+                                                onCarregarPainelWhatsApp { updated, loadError ->
+                                                    carregandoPainelWhatsApp = false
+                                                    if (loadError == null) painelWhatsApp = updated
+                                                }
+                                            }
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                        botPanel.economy?.let { economy ->
+                            Text(
+                                "Gold virtual · disponível ${formatGold.format(economy.totalGold)} · banco ${formatGold.format(economy.totalBankGold)}",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            economy.groups.forEach { group ->
+                                Text(
+                                    "${group.name} · ${formatGold.format(group.gold)} disponível · ${formatGold.format(group.bankGold)} no banco",
+                                    color = Color.White.copy(alpha = 0.68f),
+                                    fontSize = 11.sp,
+                                )
+                            }
+                            if (economy.history.isNotEmpty()) {
+                                Text("Extrato recente do bot", color = Color.White, fontWeight = FontWeight.Bold)
+                                economy.history.take(10).forEach { movement ->
+                                    val date = remember(movement.createdAtMs) {
+                                        SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
+                                            .format(Date(movement.createdAtMs))
+                                    }
                                 Text(
                                     "${if (movement.type == "spent") "−" else "+"}${formatGold.format(movement.amount)} gold · ${movement.item}",
                                     color = if (movement.type == "spent") Color.White.copy(alpha = 0.78f) else Cores.Turquesa,
@@ -275,15 +358,38 @@ fun TelaCentralConta(
                                     fontWeight = FontWeight.SemiBold,
                                 )
                                 Text("${movement.groupName} · $date", color = Color.White.copy(alpha = 0.52f), fontSize = 10.sp)
+                                }
                             }
                         }
-                    }
                     Text(
-                        "Gold é uma moeda virtual do bot; não faz parte do saldo em reais do app e não pode ser resgatado por Pix.",
+                        "Os pontos de integração e o gold do bot não fazem parte do saldo em reais e não podem ser resgatados por Pix.",
                         color = Color.White.copy(alpha = 0.56f),
                         fontSize = 11.sp,
                     )
+                    }
                 }
+                if (preferences.shareBotMissions && eventoSemanal != null) {
+                    Text("Evento semanal do app · ${eventoSemanal.tema}", color = Color.White, fontWeight = FontWeight.Bold)
+                    Text(eventoSemanal.descricao, color = Color.White.copy(alpha = 0.68f), fontSize = 12.sp)
+                    OutlinedButton(
+                        onClick = {
+                            onAbrirWhatsApp(
+                                "🎮 Evento semanal do Zeca: ${eventoSemanal.tema}\n" +
+                                    "${eventoSemanal.descricao}\n" +
+                                    "Progresso: ${eventoSemanal.progresso}/${eventoSemanal.meta}\n" +
+                                    "Participe no app Zeca!",
+                            )
+                        },
+                    ) { Text("Compartilhar evento no WhatsApp") }
+                }
+                OutlinedButton(onClick = { seletorFigurinha.launch("image/*") }) {
+                    Text("Escolher imagem e enviar ao bot como figurinha")
+                }
+                Text(
+                    "Escolha uma imagem; o WhatsApp abrirá o seletor de conversa com o comando !s preenchido.",
+                    color = Color.White.copy(alpha = 0.56f),
+                    fontSize = 11.sp,
+                )
                 OutlinedButton(
                     onClick = { confirmarDesvinculoWhatsApp = true },
                     enabled = !carregando,
@@ -323,6 +429,9 @@ fun TelaCentralConta(
                         onClick = { onAbrirWhatsApp("!vincular $codigoVinculoWhatsApp") },
                     ) { Text("Escolher bot e enviar código") }
                 }
+                OutlinedButton(onClick = { seletorFigurinha.launch("image/*") }) {
+                    Text("Compartilhar imagem como figurinha no WhatsApp")
+                }
             }
         }
 
@@ -340,7 +449,7 @@ fun TelaCentralConta(
                                 if (error == null) {
                                     codigoVinculoWhatsApp = ""
                                     codigoVinculoExpiraEm = 0L
-                                    economiaWhatsApp = null
+                                    painelWhatsApp = null
                                     onRecarregar()
                                 }
                             }
@@ -551,6 +660,33 @@ private fun PreferenceSwitchConta(label: String, checked: Boolean, onChange: (Bo
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(label, color = Color.White, modifier = Modifier.weight(1f), fontSize = 13.sp)
         Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+@Composable
+private fun MissaoWhatsAppLinha(mission: MissaoWhatsApp, onResgatar: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Cores.Fundo, RoundedCornerShape(12.dp))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Text(mission.title, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+        Text(
+            "${mission.progress.coerceAtMost(mission.target)}/${mission.target} · " +
+                when {
+                    mission.claimedInApp -> "recompensa resgatada no app"
+                    mission.claimedInBot -> "resgatada no bot"
+                    mission.completed -> "concluída"
+                    else -> "em andamento"
+                },
+            color = if (mission.completed) Cores.Turquesa else Color.White.copy(alpha = 0.64f),
+            fontSize = 11.sp,
+        )
+        if (mission.completed && !mission.claimedInApp) {
+            Button(onClick = onResgatar) { Text("Resgatar 10 pontos virtuais") }
+        }
     }
 }
 

@@ -4578,6 +4578,10 @@ const ACCOUNT_SETTING_DEFAULTS = Object.freeze({
   confirmImportant: true,
   personalizedRecommendations: true,
   syncSettings: true,
+  shareBotProfile: false,
+  shareBotPetInventory: false,
+  shareBotMissions: false,
+  shareBotEconomy: false,
 });
 
 exports.getAccountSettings = onCall(async (request) => {
@@ -4688,14 +4692,7 @@ exports.unlinkWhatsAppAccount = onCall(async (request) => {
   return { unlinked: true };
 });
 
-exports.getLinkedWhatsAppEconomy = onCall(async (request) => {
-  const uid = authenticatedUid(request);
-  const profile = await database.collection("users").doc(uid).get();
-  const jid = profile.get("whatsappLink.jid");
-  if (typeof jid !== "string" || !/^\d+@s\.whatsapp\.net$/.test(jid)) {
-    throw new HttpsError("failed-precondition", "Vincule sua conta do WhatsApp antes de consultar a economia.");
-  }
-
+async function consultarApiBotVinculado(jid, path) {
   const secret = process.env.WHATSAPP_LINK_SECRET;
   const baseUrl = process.env.PIROQUINHAS_API_URL;
   if (!secret || secret.length < 32 || !baseUrl) {
@@ -4710,9 +4707,7 @@ exports.getLinkedWhatsAppEconomy = onCall(async (request) => {
   if (apiUrl.protocol !== "https:" || apiUrl.pathname !== "/" || apiUrl.search || apiUrl.hash) {
     throw new HttpsError("failed-precondition", "O servidor do bot deve usar um endereço HTTPS válido.");
   }
-
   const timestamp = String(Date.now());
-  const path = "/api/integration/economy";
   const payload = `${timestamp}\nGET\n${path}\n${jid}`;
   const signature = createHmac("sha256", secret).update(payload).digest("hex");
   let response;
@@ -4732,7 +4727,7 @@ exports.getLinkedWhatsAppEconomy = onCall(async (request) => {
   }
   if (!response.ok) {
     console.error(`Consulta da economia no bot retornou HTTP ${response.status}.`);
-    throw new HttpsError("failed-precondition", "Não foi possível consultar a economia do WhatsApp agora.");
+    throw new HttpsError("failed-precondition", "Não foi possível consultar os dados do WhatsApp agora.");
   }
   let economy;
   try {
@@ -4741,12 +4736,160 @@ exports.getLinkedWhatsAppEconomy = onCall(async (request) => {
     console.error("Resposta inválida do endpoint de economia do bot:", error);
     throw new HttpsError("internal", "O servidor do WhatsApp retornou uma resposta inválida.");
   }
+  return economy;
+}
+
+exports.getLinkedWhatsAppEconomy = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const userRef = database.collection("users").doc(uid);
+  const [profile, settings] = await Promise.all([
+    userRef.get(),
+    userRef.collection("preferences").doc("appSettings").get(),
+  ]);
+  const jid = profile.get("whatsappLink.jid");
+  if (typeof jid !== "string" || !/^\d+@s\.whatsapp\.net$/.test(jid)) {
+    throw new HttpsError("failed-precondition", "Vincule sua conta do WhatsApp antes de consultar a economia.");
+  }
+  if (settings.get("shareBotEconomy") !== true) {
+    throw new HttpsError("failed-precondition", "Ative o compartilhamento da economia do bot nas preferências de privacidade.");
+  }
+  const economy = await consultarApiBotVinculado(jid, "/api/integration/economy");
   if (!Number.isSafeInteger(economy.totalGold) || economy.totalGold < 0
       || !Number.isSafeInteger(economy.totalBankGold) || economy.totalBankGold < 0
       || !Array.isArray(economy.groups) || !Array.isArray(economy.history)) {
     throw new HttpsError("internal", "O servidor do WhatsApp retornou dados de economia inválidos.");
   }
   return economy;
+});
+
+const WHATSAPP_DAILY_MISSIONS = Object.freeze({
+  xp100: { title: "Ganhe 100 XP no WhatsApp", target: 100, points: 10 },
+  msg50: { title: "Envie 50 mensagens no WhatsApp", target: 50, points: 10 },
+  quiz5: { title: "Acerte 5 quizzes no WhatsApp", target: 5, points: 10 },
+  gold500: { title: "Ganhe 500 gold no WhatsApp", target: 500, points: 10 },
+  pet10: { title: "Cuide do pet 10 vezes no WhatsApp", target: 10, points: 10 },
+  roubo3: { title: "Conclua 3 atividades no WhatsApp", target: 3, points: 10 },
+});
+
+exports.getLinkedWhatsAppDashboard = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const userRef = database.collection("users").doc(uid);
+  const [profile, settingsSnapshot] = await Promise.all([
+    userRef.get(),
+    userRef.collection("preferences").doc("appSettings").get(),
+  ]);
+  const jid = profile.get("whatsappLink.jid");
+  if (typeof jid !== "string" || !/^\d+@s\.whatsapp\.net$/.test(jid)) {
+    throw new HttpsError("failed-precondition", "Vincule sua conta do WhatsApp antes de sincronizar dados.");
+  }
+  const settings = { ...ACCOUNT_SETTING_DEFAULTS, ...(settingsSnapshot.data() || {}) };
+  const sections = [
+    settings.shareBotProfile && "profile",
+    settings.shareBotPetInventory && "pets",
+    settings.shareBotMissions && "missions",
+    settings.shareBotEconomy && "economy",
+  ].filter(Boolean).sort();
+  const eventIdentity = weeklyEventForDate(new Date());
+  const eventSnapshot = eventIdentity
+    ? await userRef.collection("weeklyEvents").doc(eventIdentity.id).get()
+    : null;
+  const eventData = eventSnapshot?.exists ? eventSnapshot.data() : null;
+  const event = eventIdentity ? {
+    id: eventIdentity.id,
+    title: eventData?.title || eventIdentity.title,
+    description: eventData?.description || eventIdentity.description,
+    progress: Math.min(eventIdentity.target, eventData?.progress || 0),
+    target: eventIdentity.target,
+    rewardCents: eventIdentity.rewardCents,
+    claimed: Array.isArray(profile.get("claimedWeeklyEventIds"))
+      && profile.get("claimedWeeklyEventIds").includes(eventIdentity.id),
+  } : null;
+  if (sections.length === 0) {
+    return {
+      integrationPoints: Number(profile.get("whatsappIntegrationPoints") || 0),
+      appEvent: event,
+      bot: {},
+    };
+  }
+  const path = `/api/integration/dashboard?sections=${sections.join(",")}`;
+  const botData = await consultarApiBotVinculado(jid, path);
+  if (settings.shareBotMissions && Array.isArray(botData.missions?.items)) {
+    botData.missions.items = await Promise.all(botData.missions.items.map(async (mission) => {
+      const claimId = `${botData.missions.date}_${mission.id}`;
+      const claim = await userRef.collection("whatsappMissionClaims").doc(claimId).get();
+      return { ...mission, claimedInApp: claim.exists };
+    }));
+  }
+  const result = {
+    integrationPoints: Number(profile.get("whatsappIntegrationPoints") || 0),
+    appEvent: event,
+    bot: botData,
+  };
+  if (!settings.shareBotMissions) delete result.bot.missions;
+  if (!settings.shareBotProfile) delete result.bot.profile;
+  if (!settings.shareBotPetInventory) delete result.bot.pets;
+  if (!settings.shareBotEconomy) delete result.bot.economy;
+  return result;
+});
+
+exports.claimWhatsAppMissionReward = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const missionId = request.data?.missionId;
+  if (typeof missionId !== "string" || !Object.hasOwn(WHATSAPP_DAILY_MISSIONS, missionId)) {
+    throw new HttpsError("invalid-argument", "Missão do WhatsApp inválida.");
+  }
+  const userRef = database.collection("users").doc(uid);
+  const [profile, settings] = await Promise.all([
+    userRef.get(),
+    userRef.collection("preferences").doc("appSettings").get(),
+  ]);
+  if (settings.get("shareBotMissions") !== true) {
+    throw new HttpsError("failed-precondition", "Ative as missões sincronizadas nas preferências de privacidade.");
+  }
+  const jid = profile.get("whatsappLink.jid");
+  if (typeof jid !== "string" || !/^\d+@s\.whatsapp\.net$/.test(jid)) {
+    throw new HttpsError("failed-precondition", "Vincule sua conta do WhatsApp antes de resgatar.");
+  }
+  const dashboard = await consultarApiBotVinculado(jid, "/api/integration/dashboard?sections=missions");
+  const mission = dashboard.missions?.items?.find((item) => item.id === missionId);
+  const definition = WHATSAPP_DAILY_MISSIONS[missionId];
+  const missionDate = dashboard.missions?.date;
+  if (typeof missionDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(missionDate)
+      || !mission || mission.completed !== true
+      || !Number.isSafeInteger(mission.progress) || mission.progress < definition.target
+      || mission.target !== definition.target) {
+    throw new HttpsError("failed-precondition", "Conclua a missão diária no bot antes de resgatar.");
+  }
+  const claimId = `${missionDate}_${missionId}`;
+  if (!/^\d{4}-\d{2}-\d{2}_[a-z0-9]+$/.test(claimId)) {
+    throw new HttpsError("failed-precondition", "Data da missão inválida.");
+  }
+  const claimRef = userRef.collection("whatsappMissionClaims").doc(claimId);
+  let integrationPoints = 0;
+  let alreadyClaimed = false;
+  await database.runTransaction(async (transaction) => {
+    const [currentUser, previousClaim] = await Promise.all([
+      transaction.get(userRef),
+      transaction.get(claimRef),
+    ]);
+    if (!currentUser.exists) throw new HttpsError("not-found", "Perfil do app não encontrado.");
+    integrationPoints = Number(currentUser.get("whatsappIntegrationPoints") || 0);
+    if (previousClaim.exists) {
+      alreadyClaimed = true;
+      return;
+    }
+    integrationPoints += definition.points;
+    transaction.update(userRef, { whatsappIntegrationPoints: integrationPoints });
+    transaction.create(claimRef, {
+      source: "whatsapp_daily_mission",
+      missionId,
+      missionDate,
+      points: definition.points,
+      claimedAtMs: Date.now(),
+      createdAt: FieldValue.serverTimestamp(),
+    });
+  });
+  return { integrationPoints, awardedPoints: alreadyClaimed ? 0 : definition.points, alreadyClaimed };
 });
 
 exports._completeWhatsAppLink = async (request) => {
@@ -4838,7 +4981,17 @@ exports.saveAccountSettings = onCall(async (request) => {
     }
     normalized.accessibilityFontScale = input.accessibilityFontScale;
   }
-  for (const key of ["highContrast", "reduceMotion", "confirmImportant", "personalizedRecommendations", "syncSettings"]) {
+  for (const key of [
+    "highContrast",
+    "reduceMotion",
+    "confirmImportant",
+    "personalizedRecommendations",
+    "syncSettings",
+    "shareBotProfile",
+    "shareBotPetInventory",
+    "shareBotMissions",
+    "shareBotEconomy",
+  ]) {
     if (input[key] != null) {
       if (typeof input[key] !== "boolean") throw new HttpsError("invalid-argument", "Preferência inválida.");
       normalized[key] = input[key];
