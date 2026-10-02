@@ -41,7 +41,6 @@ import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Groups
-import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
@@ -79,7 +78,6 @@ import com.example.zeca.ui.TelaAutenticacao
 import com.example.zeca.ui.TelaAdmin
 import com.example.zeca.ui.TelaChat
 import com.example.zeca.ui.TelaDenunciasAdmin
-import com.example.zeca.ui.TelaAtividadesExtras
 import com.example.zeca.ui.TelaCentralConta
 import com.example.zeca.ui.TelaInicio
 import com.example.zeca.ui.TelaJogos
@@ -107,7 +105,6 @@ enum class Aba(val titulo: String, val icone: ImageVector) {
     Carteira("Carteira", Icons.Filled.AccountBalanceWallet),
     Chat("Chat", Icons.AutoMirrored.Filled.Chat),
     Comunidade("Comunidade", Icons.Filled.Groups),
-    Extras("Extras", Icons.Filled.Explore),
     Conta("Conta", Icons.Filled.Settings),
     Perfil("Perfil", Icons.Filled.Person),
     Admin("Admin", Icons.Filled.Settings),
@@ -421,7 +418,7 @@ fun CassinoApp(
     }
 
     LaunchedEffect(usuario.uid, aba) {
-        if (aba == Aba.Comunidade || aba == Aba.Extras) carregarRecursosSociais()
+        if (aba == Aba.Comunidade) carregarRecursosSociais()
         if (aba == Aba.Conta) carregarPainelConta()
     }
 
@@ -867,10 +864,6 @@ fun CassinoApp(
                             onEnviarDenuncia = { denuncia, concluir ->
                                 FirebaseRepository.enviarDenuncia(denuncia, concluir)
                             },
-                        )
-                        Aba.Extras -> TelaAtividadesExtras(
-                            eventoSemanal = recursosSociais.eventoSemanal,
-                            onClose = { aba = Aba.Jogos },
                         )
                         Aba.Conta -> TelaCentralConta(
                             painel = painelConta,
