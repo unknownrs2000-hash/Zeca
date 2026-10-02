@@ -32,6 +32,7 @@ data class PerfilJogador(
     val avatarItensEquipados: List<String> = emptyList(),
     val avatarComoFotoPerfil: Boolean = false,
     val tituloEquipado: String = "",
+    val bio: String = "",
 )
 
 data class JogadorRanking(
@@ -137,6 +138,7 @@ data class PerfilPublico(
     val avatarItensEquipados: List<String> = emptyList(),
     val avatarComoFotoPerfil: Boolean = false,
     val tituloEquipado: String = "",
+    val bio: String = "",
 )
 
 data class ResultadoTransferencia(
@@ -972,6 +974,7 @@ object FirebaseRepository {
         displayName: String,
         avatarUrl: String,
         avatarComoFotoPerfil: Boolean,
+        bio: String,
         callback: (Exception?) -> Unit,
     ) {
         chamarFunction(
@@ -979,6 +982,7 @@ object FirebaseRepository {
             mapOf(
                 "username" to username,
                 "displayName" to displayName,
+                "bio" to bio,
                 "avatarUrl" to avatarUrl,
                 "avatarAsProfilePhoto" to avatarComoFotoPerfil,
             ),
@@ -1225,6 +1229,7 @@ object FirebaseRepository {
                     avatarItensEquipados = (it["equippedAvatarItems"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
                     avatarComoFotoPerfil = it["avatarAsProfilePhoto"] as? Boolean ?: false,
                     tituloEquipado = it["equippedTitle"] as? String ?: "",
+                    bio = it["bio"] as? String ?: "",
                 )
             }
             callback(perfil, erro)
@@ -1938,6 +1943,7 @@ object FirebaseRepository {
         avatarItensEquipados = (snapshot.get("equippedAvatarItems") as? List<*>)?.filterIsInstance<String>().orEmpty(),
         avatarComoFotoPerfil = snapshot.getBoolean("avatarAsProfilePhoto") == true,
         tituloEquipado = snapshot.getString("equippedTitle") ?: "",
+        bio = snapshot.getString("bio") ?: "",
     )
 
     private fun toJogadorRanking(snapshot: DocumentSnapshot): JogadorRanking? {

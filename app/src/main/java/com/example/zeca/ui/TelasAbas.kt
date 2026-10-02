@@ -837,12 +837,13 @@ fun TelaPerfil(
     avatarUrl: String,
     avatarItensEquipados: List<String>,
     avatarComoFotoPerfil: Boolean,
+    bio: String,
     inventario: List<String>,
     molduraEquipada: String,
     tituloEquipado: String = "",
     onEscolherMoldura: (String, (String?) -> Unit) -> Unit,
     onEnviarFoto: (Uri, (String?, String?) -> Unit) -> Unit,
-    onSalvarPerfil: (String, String, String, Boolean, (String?) -> Unit) -> Unit,
+    onSalvarPerfil: (String, String, String, Boolean, String, (String?) -> Unit) -> Unit,
     onEquiparItemAvatar: (String, String?, (String?) -> Unit) -> Unit,
     onEquiparTitulo: (String?, (String?) -> Unit) -> Unit = { _, concluir -> concluir(null) },
     onAbrirLoja: () -> Unit,
@@ -852,6 +853,7 @@ fun TelaPerfil(
     var usernameEditavel by rememberSaveable { mutableStateOf(username) }
     var avatarUrlEditavel by rememberSaveable { mutableStateOf(avatarUrl) }
     var avatarComoFotoEditavel by rememberSaveable { mutableStateOf(avatarComoFotoPerfil) }
+    var bioEditavel by rememberSaveable { mutableStateOf(bio) }
     var mensagemPerfil by rememberSaveable { mutableStateOf("") }
     var mensagemMoldura by rememberSaveable { mutableStateOf("") }
     var enviandoFoto by remember { mutableStateOf(false) }
@@ -867,11 +869,12 @@ fun TelaPerfil(
             }
         }
     }
-    LaunchedEffect(apelido, username, avatarUrl) {
+    LaunchedEffect(apelido, username, avatarUrl, bio) {
         apelidoEditavel = apelido
         usernameEditavel = username
         avatarUrlEditavel = avatarUrl
         avatarComoFotoEditavel = avatarComoFotoPerfil
+        bioEditavel = bio
     }
 
     TelaBase("Perfil", "Seu espaço no Zeca.") {
@@ -933,6 +936,26 @@ fun TelaPerfil(
                 label = { Text("Nome de exibição") },
                 singleLine = true,
             )
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("SUA BIO", color = Cores.Verde, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    "Uma frase para as pessoas conhecerem você.",
+                    color = Color.White.copy(alpha = 0.62f),
+                    fontSize = 12.sp,
+                )
+                OutlinedTextField(
+                    value = bioEditavel,
+                    onValueChange = { bioEditavel = it.take(160); mensagemPerfil = "" },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Sobre você") },
+                    placeholder = { Text("O que você gosta de fazer?") },
+                    supportingText = {
+                        Text("Visível para outros jogadores · ${bioEditavel.length}/160")
+                    },
+                    minLines = 3,
+                    maxLines = 4,
+                )
+            }
             Text(email, color = Color.White.copy(alpha = 0.62f), fontSize = 12.sp)
             Text("Nível $nivel · ${partidas % 10}/10 partidas para o próximo", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             LinearProgressIndicator(
@@ -944,13 +967,13 @@ fun TelaPerfil(
             Text("Próximo nível: bônus de ${formatarReais(nivel.toLong() * 5_000L)}", color = Cores.Turquesa, fontSize = 12.sp)
             Button(
                 onClick = {
-                    onSalvarPerfil(usernameEditavel, apelidoEditavel.trim(), avatarUrlEditavel, avatarComoFotoEditavel) { erro ->
+                    onSalvarPerfil(usernameEditavel, apelidoEditavel.trim(), avatarUrlEditavel, avatarComoFotoEditavel, bioEditavel.trim()) { erro ->
                         mensagemPerfil = erro ?: "Perfil atualizado."
                     }
                 },
                 enabled = Regex("^[a-z0-9_]{3,20}$").matches(usernameEditavel)
                     && apelidoEditavel.trim().length in 2..24
-                    && (apelidoEditavel.trim() != apelido || usernameEditavel != username || avatarUrlEditavel != avatarUrl || avatarComoFotoEditavel != avatarComoFotoPerfil)
+                    && (apelidoEditavel.trim() != apelido || usernameEditavel != username || avatarUrlEditavel != avatarUrl || avatarComoFotoEditavel != avatarComoFotoPerfil || bioEditavel.trim() != bio)
                     && !enviandoFoto,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Salvar perfil") }

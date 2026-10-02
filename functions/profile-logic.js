@@ -17,6 +17,12 @@ function normalizeUsername(username) {
   return /^[a-z0-9_]{3,20}$/.test(normalized) ? normalized : null;
 }
 
+function normalizeBio(bio) {
+  if (typeof bio !== "string") return null;
+  const normalized = bio.trim();
+  return normalized.length <= 160 ? normalized : null;
+}
+
 function levelProgress(gamesPlayed) {
   const safeGamesPlayed = Number.isSafeInteger(gamesPlayed) && gamesPlayed >= 0 ? gamesPlayed : 0;
   const gamesTowardNextLevel = safeGamesPlayed % 10;
@@ -148,5 +154,6 @@ module.exports = {
   getMissionProgress,
   initializeBalance,
   levelProgress,
+  normalizeBio,
   normalizeUsername,
 };

@@ -39,6 +39,7 @@ const {
   getMissionProgress,
   initializeBalance,
   levelProgress,
+  normalizeBio,
   normalizeUsername,
 } = require("./profile-logic");
 const { applyStreakMessage, dateUtc } = require("./chat-logic");
@@ -374,6 +375,7 @@ exports.updatePlayerProfile = onCall(async (request) => {
   const uid = authenticatedUid(request);
   const displayName = safeName(request.data?.displayName, "");
   const username = normalizeUsername(request.data?.username);
+  const bio = normalizeBio(request.data?.bio ?? "");
   const avatarUrl = typeof request.data?.avatarUrl === "string" ? request.data.avatarUrl.trim() : "";
   const avatarAsProfilePhoto = request.data?.avatarAsProfilePhoto === true;
   if (!displayName) {
@@ -381,6 +383,9 @@ exports.updatePlayerProfile = onCall(async (request) => {
   }
   if (!username) {
     throw new HttpsError("invalid-argument", "Use um nome de usuário de 3 a 20 caracteres: letras, números e _.");
+  }
+  if (bio === null) {
+    throw new HttpsError("invalid-argument", "A bio deve ter no máximo 160 caracteres.");
   }
   const fotoCloudinary = avatarUrl.startsWith("https://res.cloudinary.com/vwctfu9u/image/upload/");
   const fotoGoogle = /^https:\/\/(?:[a-z0-9-]+\.)*googleusercontent\.com\//i.test(avatarUrl);
@@ -418,6 +423,7 @@ exports.updatePlayerProfile = onCall(async (request) => {
     transaction.update(userRef, {
       username,
       displayName,
+      bio,
       avatarUrl,
       avatarAsProfilePhoto,
       equippedAvatarItems,
@@ -425,7 +431,7 @@ exports.updatePlayerProfile = onCall(async (request) => {
     });
     transaction.update(rankRef, { username, displayName, avatarUrl, avatarAsProfilePhoto, equippedAvatarItems });
   });
-  return { ok: true, username, displayName, avatarUrl, avatarAsProfilePhoto };
+  return { ok: true, username, displayName, bio, avatarUrl, avatarAsProfilePhoto };
 });
 
 exports.registerPixKey = onCall(async (request) => {
@@ -2814,6 +2820,7 @@ exports.getPlayerProfile = onCall(async (request) => {
     uid: targetUid,
     displayName: rank.displayName || "Jogador",
     username: rank.username || "",
+    bio: typeof profile.bio === "string" ? profile.bio : "",
     level: rank.level || 1,
     avatarUrl: rank.avatarUrl || "",
     avatarAsProfilePhoto: rank.avatarAsProfilePhoto === true,

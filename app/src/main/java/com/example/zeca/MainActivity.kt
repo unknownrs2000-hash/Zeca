@@ -412,7 +412,7 @@ fun CassinoApp(
                 }
             },
             onSalvarPerfil = { username, displayName, avatarUrl, avatarComoFoto, concluir ->
-                FirebaseRepository.atualizarPerfil(username, displayName, avatarUrl, avatarComoFoto) { error ->
+                FirebaseRepository.atualizarPerfil(username, displayName, avatarUrl, avatarComoFoto, "") { error ->
                     concluir(error?.localizedMessage)
                 }
             },
@@ -698,6 +698,7 @@ fun CassinoApp(
                                 partidas = jogador.partidas,
                                 vitorias = jogador.vitorias,
                                 avatarUrl = jogador.avatarUrl,
+                                bio = jogador.bio,
                                 avatarItensEquipados = jogador.avatarItensEquipados,
                                 avatarComoFotoPerfil = jogador.avatarComoFotoPerfil,
                                 inventario = jogador.inventario,
@@ -711,8 +712,8 @@ fun CassinoApp(
                                         concluir(url, error?.localizedMessage)
                                     }
                                 },
-                                onSalvarPerfil = { username, nome, avatarUrl, avatarComoFoto, concluir ->
-                                    FirebaseRepository.atualizarPerfil(username, nome, avatarUrl, avatarComoFoto) { error -> concluir(error?.localizedMessage) }
+                                onSalvarPerfil = { username, nome, avatarUrl, avatarComoFoto, bio, concluir ->
+                                    FirebaseRepository.atualizarPerfil(username, nome, avatarUrl, avatarComoFoto, bio) { error -> concluir(error?.localizedMessage) }
                                 },
                                 onEquiparItemAvatar = { slot, itemId, concluir ->
                                     FirebaseRepository.equiparItemAvatar(slot, itemId) { error -> concluir(error?.localizedMessage) }

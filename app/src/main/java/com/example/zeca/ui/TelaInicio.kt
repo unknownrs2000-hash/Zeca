@@ -417,6 +417,13 @@ internal fun TelaPerfilJogador(
                     fontSize = 13.sp,
                 )
                 else -> {
+                    SecaoJogador("Sobre mim") {
+                        Text(
+                            perfil.bio.ifBlank { "Este jogador ainda não escreveu uma bio." },
+                            color = Color.White.copy(alpha = if (perfil.bio.isBlank()) 0.62f else 0.92f),
+                            fontSize = 14.sp,
+                        )
+                    }
                     SecaoJogador("Chave Pix") {
                         if (perfil.chavePix.isBlank()) {
                             Text(

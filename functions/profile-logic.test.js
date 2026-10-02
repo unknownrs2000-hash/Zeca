@@ -8,6 +8,7 @@ const {
   getMissionProgress,
   initializeBalance,
   levelProgress,
+  normalizeBio,
   normalizeUsername,
 } = require("./profile-logic");
 
@@ -39,6 +40,13 @@ test("usernames are unique-key compatible and case-insensitive", () => {
   assert.equal(normalizeUsername("ab"), null);
   assert.equal(normalizeUsername("nome com espaço"), null);
   assert.equal(normalizeUsername("nome!"), null);
+});
+
+test("bios are trimmed and limited to 160 characters", () => {
+  assert.equal(normalizeBio("  Olá, eu sou Zeca!  "), "Olá, eu sou Zeca!");
+  assert.equal(normalizeBio("a".repeat(160)), "a".repeat(160));
+  assert.equal(normalizeBio("a".repeat(161)), null);
+  assert.equal(normalizeBio(null), null);
 });
 
 test("level reward is granted once at each ten settled games", () => {
