@@ -5,13 +5,16 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -32,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -42,6 +46,8 @@ import java.time.temporal.WeekFields
 import java.util.Locale
 
 private val secoesAtividadesExtras = listOf("Treino", "Pedra-papel-tesoura", "Regras e retornos", "Calendário")
+private val iconesSecoesExtras = listOf("🎯", "✊", "📘", "🗓️")
+private val descricoesSecoesExtras = listOf("Pratique com o bot", "Jogue no mesmo aparelho", "Saiba como funciona", "Desafios da semana")
 private val sequenciaTreinoExtras = listOf(1, 3, 0, 2)
 private val perguntaTreinoExtras = "Qual é o maior oceano da Terra?"
 private val respostasTreinoExtras = listOf("Atlântico", "Índico", "Pacífico", "Ártico")
@@ -55,35 +61,138 @@ fun TelaAtividadesExtras(eventoSemanal: EventoSemanal?, onClose: () -> Unit) {
             .fillMaxSize()
             .background(Cores.Fundo)
             .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp)
             .padding(bottom = 24.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 18.dp, bottom = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 14.dp, bottom = 16.dp)
+                .background(
+                    brush = Brush.linearGradient(
+                        colors = listOf(Cores.Cartao, Cores.Turquesa.copy(alpha = 0.22f)),
+                    ),
+                    shape = RoundedCornerShape(24.dp),
+                )
+                .border(1.dp, Cores.Turquesa.copy(alpha = 0.26f), RoundedCornerShape(24.dp))
+                .padding(18.dp),
         ) {
-            Column(Modifier.weight(1f)) {
-                Text("Atividades extras", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Black)
-                Text("Pratique, jogue localmente e consulte as regras.", color = Color.White.copy(alpha = 0.64f), fontSize = 13.sp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(54.dp)
+                        .background(Cores.Turquesa.copy(alpha = 0.16f), CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("🎮", fontSize = 27.sp)
+                }
+                Column(
+                    modifier = Modifier.weight(1f).padding(start = 12.dp, end = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    Text(
+                        "ZECA  ·  JOGUE DO SEU JEITO",
+                        color = Cores.Turquesa,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 1.sp,
+                    )
+                    Text("Atividades extras", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Black)
+                    Text(
+                        "Treine, desafie alguém ou confira as regras.",
+                        color = Color.White.copy(alpha = 0.72f),
+                        fontSize = 12.sp,
+                    )
+                }
+                TextButton(onClick = onClose) {
+                    Text("Fechar", color = Cores.Turquesa, fontWeight = FontWeight.Bold)
+                }
             }
-            TextButton(onClick = onClose) { Text("Fechar", color = Cores.Turquesa) }
         }
 
-        Row(
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 14.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            secoesAtividadesExtras.forEachIndexed { index, titulo ->
-                SectionChipExtras(titulo, secaoSelecionada == index) { secaoSelecionada = index }
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            for (rowIndex in 0..1) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    for (columnIndex in 0..1) {
+                        val index = rowIndex * 2 + columnIndex
+                        SectionCardExtras(
+                            title = secoesAtividadesExtras[index],
+                            description = descricoesSecoesExtras[index],
+                            icon = iconesSecoesExtras[index],
+                            selected = secaoSelecionada == index,
+                            modifier = Modifier.weight(1f),
+                        ) { secaoSelecionada = index }
+                    }
+                }
             }
         }
 
-        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 16.dp)) {
+        Column(Modifier.fillMaxWidth().padding(top = 20.dp)) {
             when (secaoSelecionada) {
                 0 -> TreinoCasualExtras()
                 1 -> JokenpoLocalExtras()
                 2 -> ExplicacaoRegrasExtras()
                 else -> CalendarioAtividadeExtras(eventoSemanal)
             }
+        }
+    }
+}
+
+@Composable
+private fun SectionCardExtras(
+    title: String,
+    description: String,
+    icon: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = modifier
+            .background(
+                color = if (selected) Cores.Turquesa.copy(alpha = 0.14f) else Cores.Cartao,
+                shape = RoundedCornerShape(16.dp),
+            )
+            .border(
+                width = 1.dp,
+                color = if (selected) Cores.Turquesa.copy(alpha = 0.7f) else Cores.Borda,
+                shape = RoundedCornerShape(16.dp),
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .background(
+                    color = if (selected) Cores.Turquesa.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.06f),
+                    shape = RoundedCornerShape(12.dp),
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(icon, fontSize = 18.sp)
+        }
+        Column(
+            modifier = Modifier.weight(1f).padding(start = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                title,
+                color = if (selected) Cores.Turquesa else Color.White,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+            )
+            Text(
+                description,
+                color = Color.White.copy(alpha = 0.58f),
+                fontSize = 9.sp,
+                maxLines = 1,
+            )
         }
     }
 }
