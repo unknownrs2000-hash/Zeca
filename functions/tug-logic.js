@@ -6,6 +6,7 @@ const MAX_PULLS_PER_BATCH = 8;
 const TEAM_RACE_TARGET = 24;
 const TEAM_RELAY_TARGET = 12;
 const TEAM_BLITZ_TARGET = 20;
+const COMPLETED_ROOM_RETENTION_MS = 2 * 60 * 1_000;
 const TEAM_QUIZ_QUESTIONS = [
   { question: "Quanto é 12 × 8?", answers: ["86", "96", "108", "112"], correct: 1 },
   { question: "Qual é a capital do Japão?", answers: ["Seul", "Pequim", "Tóquio", "Bangkok"], correct: 2 },
@@ -28,6 +29,34 @@ function playersInRoom(room) {
     { uid: room?.creatorUid, team: "A" },
     ...(room?.opponentUid ? [{ uid: room.opponentUid, team: "B" }] : []),
   ];
+}
+
+function chooseBalancedTeam(players, playerSkill = 1) {
+  const totals = players.reduce((result, player) => {
+    const team = player.team === "B" ? "B" : "A";
+    result[team] += Number.isFinite(player.skill) ? player.skill : 1;
+    result[`${team}Count`] += 1;
+    return result;
+  }, { A: 0, B: 0, ACount: 0, BCount: 0 });
+  if (totals.A < totals.B) return "A";
+  if (totals.B < totals.A) return "B";
+  if (totals.ACount < totals.BCount) return "A";
+  if (totals.BCount < totals.ACount) return "B";
+  return playerSkill % 2 === 0 ? "B" : "A";
+}
+
+function recordCompletedRoomExit(room, uid, nowMs) {
+  if (!room || room.status !== "settled") throw new Error("room-not-settled");
+  const players = playersInRoom(room);
+  if (!players.some((player) => player.uid === uid)) throw new Error("not-a-player");
+  const exitedUids = [...new Set([...(room.exitedUids || []), uid])];
+  const everyoneExited = players.length > 0 && players.every((player) => exitedUids.includes(player.uid));
+  return {
+    exitedUids,
+    cleanupAfterMs: everyoneExited
+      ? room.cleanupAfterMs || nowMs + COMPLETED_ROOM_RETENTION_MS
+      : 0,
+  };
 }
 
 function applyTugPull(room, uid, nowMs, pullCount = 1) {
@@ -90,4 +119,13 @@ function applyTugPull(room, uid, nowMs, pullCount = 1) {
   };
 }
 
-module.exports = { MAX_PULLS_PER_BATCH, PULL_COOLDOWN_MS, WINNING_PULL_MARGIN, applyTugPull, teamQuizQuestion };
+module.exports = {
+  COMPLETED_ROOM_RETENTION_MS,
+  MAX_PULLS_PER_BATCH,
+  PULL_COOLDOWN_MS,
+  WINNING_PULL_MARGIN,
+  applyTugPull,
+  chooseBalancedTeam,
+  recordCompletedRoomExit,
+  teamQuizQuestion,
+};

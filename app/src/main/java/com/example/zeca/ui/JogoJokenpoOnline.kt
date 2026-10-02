@@ -54,6 +54,7 @@ internal fun JogoJokenpoOnline(
     onBuscarAdversario: (String, String, (String, String, Exception?) -> Unit) -> Unit,
     onCancelarFila: ((Exception?) -> Unit) -> Unit,
     onJogar: (String, String, String, (ResultadoJokenpo?, Exception?) -> Unit) -> Unit,
+    onPedirRevanche: (String, String, (String, String, Exception?) -> Unit) -> Unit,
 ) {
     var statusFila by rememberSaveable { mutableStateOf("") }
     var matchId by rememberSaveable { mutableStateOf("") }
@@ -61,6 +62,7 @@ internal fun JogoJokenpoOnline(
     var partida by remember { mutableStateOf<PartidaJokenpo?>(null) }
     var ocupado by remember { mutableStateOf(false) }
     var erro by rememberSaveable { mutableStateOf("") }
+    var informacao by rememberSaveable { mutableStateOf("") }
     val escolhasDuelo = remember(matchId) { mutableStateListOf<String>() }
     var sequenciaMemoriaVisivel by remember(matchId) { mutableStateOf(true) }
     val observarFilaAtual by rememberUpdatedState(onObservarFila)
@@ -156,24 +158,47 @@ internal fun JogoJokenpoOnline(
             partidaConcluida -> {
                 Text(resultadoPessoal, color = if (resultadoPessoal == "Você venceu") Cores.Verde else Color.White, fontSize = 20.sp, fontWeight = FontWeight.Black)
                 Text(partida?.resultado.orEmpty(), color = Color.White.copy(alpha = 0.72f), fontSize = 13.sp)
+                val opponentRequested = partida?.revengeRequestedBy?.any { it != uidAtual } == true
+                val selfRequested = uidAtual in partida?.revengeRequestedBy.orEmpty()
                 Button(
                     onClick = {
                         ocupado = true
                         erro = ""
-                        onBuscarAdversario(gameId, UUID.randomUUID().toString()) { status, newMatchId, error ->
+                        informacao = ""
+                        onPedirRevanche(matchId, UUID.randomUUID().toString()) { status, newMatchId, error ->
                             ocupado = false
-                            if (error != null) erro = error.localizedMessage ?: "Não foi possível buscar uma partida."
+                            if (error != null) erro = error.localizedMessage ?: "Não foi possível pedir revanche."
                             else {
-                                statusFila = status
-                                matchId = newMatchId
-                                jaEscolheu = false
-                                partida = null
+                                if (status == "matched" && newMatchId.isNotBlank()) {
+                                    statusFila = "matched"
+                                    matchId = newMatchId
+                                    jaEscolheu = false
+                                    partida = null
+                                } else {
+                                    informacao = "Pedido enviado. A revanche começa quando seu adversário aceitar."
+                                    partida = partida?.copy(revengeRequestedBy = partida?.revengeRequestedBy.orEmpty() + uidAtual)
+                                }
                             }
                         }
                     },
                     enabled = !ocupado,
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text(if (ocupado) "Buscando..." else "Nova partida") }
+                ) {
+                    Text(
+                        when {
+                            ocupado -> "Enviando pedido..."
+                            opponentRequested -> "Aceitar revanche"
+                            selfRequested -> "Aguardando adversário..."
+                            else -> "Pedir revanche"
+                        },
+                    )
+                }
+                if (selfRequested && !opponentRequested) {
+                    Text("Aguarde o adversário aceitar para jogar novamente.", color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp)
+                }
+                if (informacao.isNotBlank()) {
+                    Text(informacao, color = Cores.Turquesa, fontSize = 12.sp)
+                }
             }
             statusPartida == "playing" -> {
                 Row(

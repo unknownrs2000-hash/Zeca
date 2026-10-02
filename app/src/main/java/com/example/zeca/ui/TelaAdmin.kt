@@ -97,6 +97,7 @@ private val itensInventarioAdmin = listOf(
 
 @Composable
 fun TelaAdmin(
+    onAbrirDenuncias: () -> Unit,
     onCarregarUsuarios: (String, (List<UsuarioAdmin>, String, Exception?) -> Unit) -> Unit,
     onCarregarAvatarPublico: (String, (UsuarioAdmin?) -> Unit) -> Unit,
     onCarregarDetalhes: (String, (DetalhesAdmin?, Exception?) -> Unit) -> Unit,
@@ -106,6 +107,7 @@ fun TelaAdmin(
     onAtualizarInventario: (String, String, String, String, String, (Exception?) -> Unit) -> Unit,
     onDefinirBloqueio: (String, Boolean, String, String, (Exception?) -> Unit) -> Unit,
     onExcluirUsuario: (String, String, String, String, (Exception?) -> Unit) -> Unit,
+    onCarregarTicketsSuporte: (((List<Map<String, Any>>, Exception?) -> Unit) -> Unit)? = null,
 ) {
     var usuarios by remember { mutableStateOf<List<UsuarioAdmin>>(emptyList()) }
     var cursor by remember { mutableStateOf("") }
@@ -129,6 +131,9 @@ fun TelaAdmin(
     var erroExclusao by remember { mutableStateOf("") }
     var uidConfirmacao by rememberSaveable { mutableStateOf("") }
     var requestIdExclusao by rememberSaveable { mutableStateOf("") }
+    var ticketsSuporte by remember { mutableStateOf<List<Map<String, Any>>>(emptyList()) }
+    var erroTicketsSuporte by remember { mutableStateOf("") }
+    var mostrandoTicketsSuporte by rememberSaveable { mutableStateOf(false) }
     var extratoExpandido by remember(selecionado?.uid) { mutableStateOf(false) }
     var extratoOculto by remember(selecionado?.uid) { mutableStateOf(false) }
     val avataresConsultados = remember { mutableSetOf<String>() }
@@ -190,6 +195,34 @@ fun TelaAdmin(
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Text("Administração", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Black)
+        TextButton(onClick = onAbrirDenuncias) { Text("Denúncias da comunidade") }
+        if (onCarregarTicketsSuporte != null) {
+            TextButton(
+                onClick = {
+                    onCarregarTicketsSuporte { tickets, error ->
+                        ticketsSuporte = tickets
+                        erroTicketsSuporte = error?.localizedMessage.orEmpty()
+                        mostrandoTicketsSuporte = true
+                    }
+                },
+            ) { Text("Solicitações de suporte") }
+            if (mostrandoTicketsSuporte) {
+                if (erroTicketsSuporte.isNotBlank()) Text(erroTicketsSuporte, color = Color(0xFFFF8B91))
+                if (ticketsSuporte.isEmpty() && erroTicketsSuporte.isBlank()) {
+                    Text("Nenhuma solicitação recebida.", color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp)
+                }
+                ticketsSuporte.forEach { ticket ->
+                    Column(
+                        Modifier.fillMaxWidth().background(Cores.Cartao, RoundedCornerShape(10.dp)).padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text("${ticket["category"]} · ${ticket["title"]}", color = Cores.Turquesa, fontWeight = FontWeight.Bold)
+                        Text("Usuário: ${ticket["username"]} · ${ticket["status"]}", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
+                        Text(ticket["details"]?.toString().orEmpty(), color = Color.White, fontSize = 12.sp)
+                    }
+                }
+            }
+        }
         if (carregando) {
             LinearProgressIndicator(
                 modifier = Modifier.fillMaxWidth(),

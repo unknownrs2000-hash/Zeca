@@ -1,8 +1,5 @@
 package com.example.zeca.ui
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -41,7 +38,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -419,7 +415,6 @@ internal fun TelaPerfilJogador(
     gruposEmComum: List<String> = emptyList(),
     onConversar: (() -> Unit)? = null,
 ) {
-    val context = LocalContext.current
     var fotoAmpliada by remember { mutableStateOf<FotoPerfilAmpliada?>(null) }
     BackHandler(onBack = onFechar)
     Box(
@@ -498,30 +493,6 @@ internal fun TelaPerfilJogador(
                             color = Color.White.copy(alpha = if (perfil.bio.isBlank()) 0.62f else 0.92f),
                             fontSize = 14.sp,
                         )
-                    }
-                    SecaoJogador("Chave Pix") {
-                        if (perfil.chavePix.isBlank()) {
-                            Text(
-                                "Este jogador ainda não cadastrou uma chave Pix.",
-                                color = Color.White.copy(alpha = 0.65f),
-                                fontSize = 14.sp,
-                            )
-                        } else {
-                            Text(perfil.chavePix, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                            Text(
-                                if (perfil.tipoChavePix == "email") "E-mail" else "Chave aleatória",
-                                color = Color.White.copy(alpha = 0.58f),
-                                fontSize = 12.sp,
-                            )
-                            Button(
-                                onClick = {
-                                    val clipboard = context.getSystemService(ClipboardManager::class.java)
-                                    clipboard?.setPrimaryClip(ClipData.newPlainText("Chave Pix", perfil.chavePix))
-                                    Toast.makeText(context, "Chave Pix copiada", Toast.LENGTH_SHORT).show()
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) { Text("Copiar chave Pix") }
-                        }
                     }
                     SecaoJogador("Estatísticas") {
                         DadoJogador("Saldo", formatarReais(perfil.saldoCentavos))

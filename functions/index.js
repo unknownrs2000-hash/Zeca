@@ -49,7 +49,25 @@ const {
   settleSportsSelection,
   sportsPayoutCents,
 } = require("./sports-logic");
-const { MAX_PULLS_PER_BATCH, applyTugPull } = require("./tug-logic");
+const {
+  COMPLETED_ROOM_RETENTION_MS,
+  MAX_PULLS_PER_BATCH,
+  applyTugPull,
+  chooseBalancedTeam,
+  recordCompletedRoomExit,
+} = require("./tug-logic");
+const {
+  ACHIEVEMENT_DEFINITIONS,
+  advanceWeeklyEvent,
+  canAddClanMember,
+  canViewPlayerProfile,
+  canTransitionReport,
+  isoWeekKey,
+  qualifiesForWeeklyEvent,
+  validateClan,
+  validateReport,
+  weeklyEventForDate,
+} = require("./social-logic");
 
 const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
 initializeApp(serviceAccount ? { credential: cert(JSON.parse(serviceAccount)) } : {});
@@ -109,6 +127,69 @@ function requireAdmin(request) {
     throw new HttpsError("permission-denied", "Acesso restrito à administração.");
   }
   return uid;
+}
+
+function recordMinigameSettlement(transaction, userRef, {
+  gameId,
+  gameName,
+  outcome,
+  netCents = 0,
+  summary,
+  recordId,
+  atMs = Date.now(),
+  clanId = "",
+}) {
+  const week = isoWeekKey(new Date(atMs));
+  const weekly = weeklyEventForDate(new Date(atMs));
+  const event = weekly && qualifiesForWeeklyEvent(gameId, weekly.eventKey)
+    ? advanceWeeklyEvent({
+      eventKey: weekly.eventKey,
+      weekKey: weekly.weekKey,
+      progress: 0,
+      increment: 1,
+      target: weekly.target,
+      rewardCents: weekly.rewardCents,
+    })
+    : null;
+  transaction.create(userRef.collection("gameHistory").doc(recordId), {
+    gameId,
+    gameName,
+    outcome,
+    netCents,
+    summary: typeof summary === "string" ? summary.slice(0, 240) : "",
+    atMs,
+  });
+  const statsRef = userRef.collection("minigameStats");
+  const won = outcome === "won";
+  const lost = outcome === "lost";
+  const tied = outcome === "tied";
+  const increments = {
+    gameName,
+    played: FieldValue.increment(1),
+    wins: FieldValue.increment(won ? 1 : 0),
+    losses: FieldValue.increment(lost ? 1 : 0),
+    ties: FieldValue.increment(tied ? 1 : 0),
+    netCents: FieldValue.increment(netCents),
+    currentStreak: won ? FieldValue.increment(1) : 0,
+  };
+  transaction.set(statsRef.doc(gameId), increments, { merge: true });
+  transaction.set(statsRef.doc("all"), increments, { merge: true });
+  if (weekly && event?.valid) {
+    transaction.set(userRef.collection("weeklyEvents").doc(weekly.id), {
+      eventKey: weekly.eventKey,
+      weekKey: weekly.weekKey,
+      title: weekly.title,
+      description: weekly.description,
+      target: weekly.target,
+      rewardCents: weekly.rewardCents,
+      progress: FieldValue.increment(1),
+    }, { merge: true });
+    if (clanId) {
+      transaction.set(database.collection("clans").doc(clanId), {
+        weeklyScores: { [week]: FieldValue.increment(won ? 1 : 0) },
+      }, { merge: true });
+    }
+  }
 }
 
 async function deleteMatchingDocuments(query) {
@@ -421,6 +502,13 @@ exports.updatePlayerProfile = onCall(async (request) => {
     const equippedAvatarItems = Array.isArray(userSnapshot.get("equippedAvatarItems"))
       ? userSnapshot.get("equippedAvatarItems")
       : [];
+    const changedFields = [
+      ["displayName", displayName],
+      ["username", username],
+      ["bio", bio],
+      ["avatarUrl", avatarUrl],
+      ["avatarAsProfilePhoto", avatarAsProfilePhoto],
+    ].filter(([field, value]) => userSnapshot.get(field) !== value).map(([field]) => field);
     transaction.update(userRef, {
       username,
       displayName,
@@ -431,6 +519,13 @@ exports.updatePlayerProfile = onCall(async (request) => {
       profileSetupComplete: true,
     });
     transaction.update(rankRef, { username, displayName, avatarUrl, avatarAsProfilePhoto, equippedAvatarItems });
+    if (changedFields.length > 0) {
+      transaction.create(userRef.collection("accountActivity").doc(randomUUID()), {
+        fields: changedFields,
+        createdAt: FieldValue.serverTimestamp(),
+        createdAtMs: Date.now(),
+      });
+    }
   });
   return { ok: true, username, displayName, bio, avatarUrl, avatarAsProfilePhoto };
 });
@@ -755,6 +850,16 @@ exports.playGame = onCall(async (request) => {
       deltaCents,
       createdAt: FieldValue.serverTimestamp(),
     });
+    recordMinigameSettlement(transaction, userRef, {
+      gameId: game,
+      gameName: gameNames[game] || (game === "slots" ? "Slots" : "Roleta"),
+      outcome: returnedCents > amountCents ? "won" : returnedCents < amountCents ? "lost" : "tied",
+      netCents: deltaCents,
+      summary: description,
+      recordId: requestId,
+      atMs: actionAtMs,
+      clanId: typeof profile.clanId === "string" ? profile.clanId : "",
+    });
     registrarPremioNivel(transaction, userRef, requestId, progression);
     registrarPremiosMissao(transaction, userRef, missions);
     response = {
@@ -940,6 +1045,101 @@ exports.cancelJokenpoQueue = onCall(async (request) => {
   return { ok: true, cancelled };
 });
 
+exports.requestJokenpoRematch = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const matchId = request.data?.matchId;
+  const requestId = request.data?.requestId;
+  if (typeof matchId !== "string" || !/^[a-f0-9-]{36}$/i.test(matchId)
+      || typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)) {
+    throw new HttpsError("invalid-argument", "Partida ou identificador de revanche inválido.");
+  }
+
+  const matchRef = database.collection("jokenpoMatches").doc(matchId);
+  const requestRef = database.collection("users").doc(uid).collection("gameRequests").doc(requestId);
+  let response;
+  await database.runTransaction(async (transaction) => {
+    const previousRequest = await transaction.get(requestRef);
+    if (previousRequest.exists) {
+      response = previousRequest.get("response");
+      return;
+    }
+    const matchSnapshot = await transaction.get(matchRef);
+    if (!matchSnapshot.exists || matchSnapshot.get("status") !== "completed") {
+      throw new HttpsError("failed-precondition", "A revanche só pode ser pedida após o fim da partida.");
+    }
+    const match = matchSnapshot.data();
+    const playerUids = Array.isArray(match.playerUids) ? match.playerUids : [];
+    if (playerUids.length !== 2 || !playerUids.includes(uid)) {
+      throw new HttpsError("permission-denied", "Você não participou desta partida.");
+    }
+    const nowMs = Date.now();
+    const existingRequests = match.rematchRequests && typeof match.rematchRequests === "object"
+      ? match.rematchRequests
+      : {};
+    const validRequests = Object.fromEntries(Object.entries(existingRequests).filter(([, atMs]) => (
+      Number.isFinite(atMs) && atMs <= nowMs && nowMs - atMs <= 2 * 60_000
+    )));
+    const queueRefs = playerUids.map((playerUid) => database.collection("jokenpoQueue").doc(playerUid));
+    const queues = await Promise.all(queueRefs.map((ref) => transaction.get(ref)));
+    const activeWaitingQueue = queues.some((queue) => (
+      queue.exists && queue.get("status") === "waiting"
+        && Number.isFinite(queue.get("createdAtMs"))
+        && queue.get("createdAtMs") <= nowMs
+        && nowMs - queue.get("createdAtMs") <= JOKENPO_QUEUE_TTL_MS
+    ));
+    const conflictingMatchIds = [...new Set(queues
+      .filter((queue) => queue.exists && queue.get("status") === "matched"
+        && typeof queue.get("matchId") === "string" && queue.get("matchId") !== matchId)
+      .map((queue) => queue.get("matchId")))];
+    const conflictingMatches = await Promise.all(conflictingMatchIds.map((id) => (
+      transaction.get(database.collection("jokenpoMatches").doc(id))
+    )));
+    const activeOtherMatch = activeWaitingQueue || conflictingMatches.some((snapshot) => (
+      snapshot.exists && snapshot.get("status") === "playing"
+    ));
+    if (activeOtherMatch) throw new HttpsError("failed-precondition", "Termine sua partida atual antes de pedir revanche.");
+
+    if (playerUids.some((playerUid) => playerUid !== uid && validRequests[playerUid])) {
+      const newMatchId = randomUUID();
+      const newMatchRef = database.collection("jokenpoMatches").doc(newMatchId);
+      const playerNames = match.playerNames || {};
+      transaction.create(newMatchRef, {
+        gameId: normalizeJokenpoGameId(match.gameId),
+        playerUids,
+        playerNames,
+        status: "playing",
+        winnerUid: "",
+        resultText: "",
+        createdAtMs: nowMs,
+        rematchOf: matchId,
+      });
+      for (let index = 0; index < playerUids.length; index += 1) {
+        transaction.set(queueRefs[index], {
+          uid: playerUids[index],
+          status: "matched",
+          matchId: newMatchId,
+          hasPlayed: false,
+          updatedAtMs: nowMs,
+        });
+      }
+      transaction.update(matchRef, {
+        rematchRequests: { ...validRequests, [uid]: nowMs },
+        rematchMatchId: newMatchId,
+        rematchStartedAtMs: nowMs,
+      });
+      response = { status: "matched", matchId: newMatchId };
+    } else {
+      transaction.update(matchRef, {
+        rematchRequests: { ...validRequests, [uid]: nowMs },
+        rematchExpiresAtMs: nowMs + 2 * 60_000,
+      });
+      response = { status: "waiting", matchId: "" };
+    }
+    transaction.create(requestRef, { response, createdAt: FieldValue.serverTimestamp() });
+  });
+  return response;
+});
+
 exports.submitJokenpoChoice = onCall(async (request) => {
   const uid = authenticatedUid(request);
   const matchId = request.data?.matchId;
@@ -1001,6 +1201,9 @@ exports.submitJokenpoChoice = onCall(async (request) => {
     if (!opponentUid) throw new HttpsError("failed-precondition", "A partida não tem dois jogadores.");
     const opponentMoveRef = movesRef.doc(opponentUid);
     const opponentMoveSnapshot = await transaction.get(opponentMoveRef);
+    const settlementProfiles = opponentMoveSnapshot.exists
+      ? await Promise.all(playerUids.map((playerUid) => transaction.get(database.collection("users").doc(playerUid))))
+      : [];
     transaction.create(ownMoveRef, { uid, choice, createdAtMs: Date.now() });
     transaction.update(queueRef, { hasPlayed: true, updatedAtMs: Date.now() });
 
@@ -1020,6 +1223,33 @@ exports.submitJokenpoChoice = onCall(async (request) => {
         winnerUid,
         resultText,
         updatedAtMs: Date.now(),
+      });
+      const settledAtMs = Date.now();
+      const gameNames = {
+        rps: "Pedra, papel e tesoura",
+        duelParity: "Par ou ímpar",
+        duelCoin: "Cara ou coroa",
+        duelMemory: "Memória em duelo",
+        duelQuiz: "Quiz em duelo",
+        duelTarget: "Mira certeira",
+      };
+      playerUids.forEach((playerUid, index) => {
+        const outcome = winnerUid ? (winnerUid === playerUid ? "won" : "lost") : "tied";
+        recordMinigameSettlement(
+          transaction,
+          database.collection("users").doc(playerUid),
+          {
+            gameId,
+            gameName: gameNames[gameId] || "Duelo",
+            outcome,
+            summary: resultText,
+            recordId: matchId,
+            atMs: settledAtMs,
+            clanId: typeof settlementProfiles[index]?.get("clanId") === "string"
+              ? settlementProfiles[index].get("clanId")
+              : "",
+          },
+        );
       });
       response = { status: "completed", winnerUid, resultText };
     }
@@ -1509,6 +1739,16 @@ exports.revealMinesCell = onCall(async (request) => {
         payoutCents: 0,
         profitCents,
       });
+      recordMinigameSettlement(transaction, userRef, {
+        gameId: "mines",
+        gameName: "Minas",
+        outcome: "lost",
+        netCents: profitCents,
+        summary: `Minas · mina na casa ${cell + 1}`,
+        recordId: `mines_${gameId}`,
+        atMs: nowMs,
+        clanId: typeof profile.clanId === "string" ? profile.clanId : "",
+      });
       registrarPremioNivel(transaction, userRef, requestId, progression);
       registrarPremiosMissao(transaction, userRef, missions);
       response = {
@@ -1613,6 +1853,16 @@ exports.cashOutMines = onCall(async (request) => {
       deltaCents: payout.payoutCents,
       createdAt: FieldValue.serverTimestamp(),
     });
+    recordMinigameSettlement(transaction, userRef, {
+      gameId: "mines",
+      gameName: "Minas",
+      outcome: profitCents > 0 ? "won" : profitCents < 0 ? "lost" : "tied",
+      netCents: profitCents,
+      summary: `Minas · saque (${(payout.multiplierBps / 10_000).toFixed(2)}x)`,
+      recordId: `mines_${gameId}`,
+      atMs: actionAtMs,
+      clanId: typeof profile.clanId === "string" ? profile.clanId : "",
+    });
     registrarPremioNivel(transaction, userRef, requestId, progression);
     registrarPremiosMissao(transaction, userRef, missions);
     response = {
@@ -1659,6 +1909,7 @@ function tugGameName(gameId) {
 }
 
 const TUG_ROOM_IDLE_TTL_MS = 10 * 60 * 1_000;
+const TUG_ROOM_CLEANUP_BATCH_SIZE = 100;
 
 function publicTugRoom(room, includeInvites = false) {
   const players = tugPlayers(room);
@@ -1686,8 +1937,49 @@ function publicTugRoom(room, includeInvites = false) {
     winnerTeam: room.winnerTeam || "",
     inviteVersion: room.inviteVersion || 0,
     lastUpdatedAtMs: room.lastUpdatedAtMs || 0,
+    exitedUids: Array.isArray(room.exitedUids) ? room.exitedUids : [],
+    cleanupAfterMs: room.cleanupAfterMs || 0,
+    clanId: typeof room.clanId === "string" ? room.clanId : "",
   };
 }
+
+async function deleteExpiredCompletedTugRoom(roomRef, nowMs = Date.now()) {
+  let deleted = false;
+  await database.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(roomRef);
+    if (!snapshot.exists) return;
+    const room = snapshot.data();
+    if (room.status !== "settled" || !Number.isFinite(room.cleanupAfterMs)
+        || room.cleanupAfterMs > nowMs) return;
+    transaction.delete(roomRef);
+    deleted = true;
+  });
+  return deleted;
+}
+
+async function startLegacyCompletedRoomCleanup(roomRef, nowMs = Date.now()) {
+  await database.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(roomRef);
+    if (!snapshot.exists) return;
+    const room = snapshot.data();
+    if (room.status !== "settled" || Array.isArray(room.exitedUids)) return;
+    transaction.update(roomRef, {
+      exitedUids: tugPlayers(room).map((player) => player.uid),
+      cleanupAfterMs: nowMs + COMPLETED_ROOM_RETENTION_MS,
+      lastUpdatedAtMs: nowMs,
+    });
+  });
+}
+
+async function cleanupExpiredTugRooms(nowMs = Date.now()) {
+  const expiredRooms = await database.collection("tugRooms")
+    .where("cleanupAfterMs", "<=", nowMs)
+    .limit(TUG_ROOM_CLEANUP_BATCH_SIZE)
+    .get();
+  await Promise.all(expiredRooms.docs.map((document) => deleteExpiredCompletedTugRoom(document.ref, nowMs)));
+}
+
+exports._cleanupExpiredTugRooms = cleanupExpiredTugRooms;
 
 async function expireIdleTugRoom(roomRef) {
   let expired = false;
@@ -1735,10 +2027,15 @@ async function expireIdleTugRoom(roomRef) {
 
 exports.listTugRooms = onCall(async (request) => {
   const uid = authenticatedUid(request);
-  const [waitingSnapshot, participantSnapshot] = await Promise.all([
+  await cleanupExpiredTugRooms();
+  const [profileSnapshot, waitingSnapshot, participantSnapshot] = await Promise.all([
+    database.collection("users").doc(uid).get(),
     database.collection("tugRooms").where("status", "==", "waiting").limit(25).get(),
     database.collection("tugRooms").where("participantUids", "array-contains", uid).limit(10).get(),
   ]);
+  const userClanId = profileSnapshot.exists && typeof profileSnapshot.get("clanId") === "string"
+    ? profileSnapshot.get("clanId")
+    : "";
   const candidates = new Map([...waitingSnapshot.docs, ...participantSnapshot.docs].map((document) => [document.id, document]));
   const staleRooms = [...candidates.values()].filter((document) => {
     const room = document.data();
@@ -1753,21 +2050,145 @@ exports.listTugRooms = onCall(async (request) => {
   for (const document of waitingSnapshot.docs) {
     if (expiredRoomIds.has(document.id)) continue;
     const room = document.data();
+    if (room.clanId && room.clanId !== userClanId && room.creatorUid !== uid) continue;
     if (room.creatorUid === uid || room.inviteOnly !== true || room.invitedUids?.includes(uid)) {
       visible.set(document.id, room);
     }
   }
   for (const document of participantSnapshot.docs) {
-    if (!expiredRoomIds.has(document.id)) visible.set(document.id, document.data());
+    if (expiredRoomIds.has(document.id)) continue;
+    const room = document.data();
+    if (room.status === "settled" && !Array.isArray(room.exitedUids)) {
+      await startLegacyCompletedRoomCleanup(document.ref);
+      continue;
+    }
+    if (Array.isArray(room.exitedUids) && room.exitedUids.includes(uid)) continue;
+    visible.set(document.id, room);
   }
+  const visibleRooms = [...visible.values()];
+  const playerUids = [...new Set(visibleRooms.flatMap((room) => tugPlayers(room).map((player) => player.uid)))];
+  const presenceSnapshots = playerUids.length
+    ? await database.getAll(...playerUids.map((playerUid) => database.collection("userPresence").doc(playerUid)))
+    : [];
+  const nowMs = Date.now();
+  const onlineByUid = new Map(presenceSnapshots.map((snapshot) => {
+    const lastSeen = snapshot.get("lastSeenAt");
+    const lastSeenMs = typeof lastSeen?.toMillis === "function" ? lastSeen.toMillis() : 0;
+    return [snapshot.id, snapshot.get("online") === true && nowMs - lastSeenMs < 120_000];
+  }));
   return {
-    rooms: [...visible.values()]
+    rooms: visibleRooms
       .map((room) => ({
         ...publicTugRoom(room, room.creatorUid === uid),
         isInvited: Array.isArray(room.invitedUids) && room.invitedUids.includes(uid),
+        players: tugPlayers(room).map((player) => ({
+          ...player,
+          online: onlineByUid.get(player.uid) === true,
+        })),
       }))
       .sort((left, right) => right.lastUpdatedAtMs - left.lastUpdatedAtMs),
   };
+});
+
+const TUG_QUICK_MESSAGES = Object.freeze({
+  good_luck: "Boa sorte!",
+  well_played: "Boa partida!",
+  nice_move: "Boa jogada!",
+  ready: "Estou pronto.",
+  thanks: "Obrigado!",
+  reaction_laugh: "😂",
+  reaction_fire: "🔥",
+  reaction_heart: "❤️",
+  reaction_clap: "👏",
+});
+
+exports.getTugRoomPresets = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const snapshot = await database.collection("users").doc(uid)
+    .collection("preferences").doc("roomPresets").get();
+  return { presets: snapshot.exists && Array.isArray(snapshot.get("presets")) ? snapshot.get("presets") : [] };
+});
+
+exports.saveTugRoomPresets = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const presets = request.data?.presets;
+  if (!Array.isArray(presets) || presets.length > 5) {
+    throw new HttpsError("invalid-argument", "Salve no máximo cinco predefinições.");
+  }
+  const normalized = presets.map((preset) => {
+    const name = typeof preset?.name === "string" ? preset.name.trim().replace(/\s+/g, " ") : "";
+    const mode = preset?.mode;
+    const gameId = preset?.gameId;
+    const stakeCents = preset?.stakeCents;
+    const passwordProtected = preset?.passwordProtected === true;
+    if (name.length < 2 || name.length > 24
+        || !["1v1", "2v2"].includes(mode)
+        || !["tug", "teamRace", "teamRelay", "teamBlitz"].includes(gameId)
+        || (gameId !== "tug" && mode !== "2v2")
+        || !validateWager(stakeCents, MAX_TRANSFER_CENTS)) {
+      throw new HttpsError("invalid-argument", "Uma das predefinições contém valores inválidos.");
+    }
+    return { name, mode, gameId, stakeCents, passwordProtected };
+  });
+  await database.collection("users").doc(uid)
+    .collection("preferences").doc("roomPresets")
+    .set({ presets: normalized, updatedAt: FieldValue.serverTimestamp() });
+  return { ok: true, presets: normalized };
+});
+
+exports.getTugRoomMessages = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const roomId = request.data?.roomId;
+  if (typeof roomId !== "string" || !/^[a-f0-9-]{36}$/i.test(roomId)) {
+    throw new HttpsError("invalid-argument", "Sala inválida.");
+  }
+  const roomSnapshot = await database.collection("tugRooms").doc(roomId).get();
+  if (!roomSnapshot.exists || !tugPlayers(roomSnapshot.data()).some((player) => player.uid === uid)) {
+    throw new HttpsError("permission-denied", "Somente participantes da sala podem ler o chat.");
+  }
+  const messages = await database.collection("tugRooms").doc(roomId)
+    .collection("messages").orderBy("createdAtMs", "desc").limit(40).get();
+  return {
+    messages: messages.docs.reverse().map((document) => ({ id: document.id, ...document.data() })),
+  };
+});
+
+exports.sendTugRoomMessage = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const roomId = request.data?.roomId;
+  const requestId = request.data?.requestId;
+  const quickMessageId = request.data?.quickMessageId;
+  const text = typeof request.data?.text === "string" ? request.data.text.trim() : "";
+  const quickText = TUG_QUICK_MESSAGES[quickMessageId] || "";
+  if (typeof roomId !== "string" || !/^[a-f0-9-]{36}$/i.test(roomId)
+      || typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)
+      || (!quickText && (text.length < 1 || text.length > 140))
+      || (quickMessageId != null && !quickText)) {
+    throw new HttpsError("invalid-argument", "Mensagem ou identificador inválido.");
+  }
+  const roomRef = database.collection("tugRooms").doc(roomId);
+  const userRef = database.collection("users").doc(uid);
+  const messageRef = roomRef.collection("messages").doc(requestId);
+  await database.runTransaction(async (transaction) => {
+    const [roomSnapshot, userSnapshot, existingMessage] = await Promise.all([
+      transaction.get(roomRef), transaction.get(userRef), transaction.get(messageRef),
+    ]);
+    if (existingMessage.exists) return;
+    if (!roomSnapshot.exists || !tugPlayers(roomSnapshot.data()).some((player) => player.uid === uid)) {
+      throw new HttpsError("permission-denied", "Somente participantes da sala podem enviar mensagens.");
+    }
+    if (!userSnapshot.exists) throw new HttpsError("not-found", "Perfil não encontrado.");
+    const body = quickText || text;
+    transaction.create(messageRef, {
+      senderUid: uid,
+      senderName: safeName(userSnapshot.get("displayName"), "Jogador"),
+      text: body,
+      quickMessage: Boolean(quickText),
+      createdAtMs: Date.now(),
+      createdAt: FieldValue.serverTimestamp(),
+    });
+  });
+  return { ok: true };
 });
 
 exports.createTugRoom = onCall(async (request) => {
@@ -1777,12 +2198,14 @@ exports.createTugRoom = onCall(async (request) => {
   const invitedUids = request.data?.invitedUids;
   const mode = request.data?.mode || "1v1";
   const gameId = request.data?.gameId || "tug";
+  const clanId = request.data?.clanId || "";
   const password = typeof request.data?.password === "string" ? request.data.password : "";
   if (!validateWager(stakeCents, MAX_TRANSFER_CENTS)
       || typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)
       || !["1v1", "2v2"].includes(mode)
       || !["tug", "teamRace", "teamRelay", "teamBlitz"].includes(gameId)
       || (gameId !== "tug" && mode !== "2v2")
+      || (clanId !== "" && (typeof clanId !== "string" || !/^[a-f0-9-]{36}$/i.test(clanId)))
       || !Array.isArray(invitedUids) || invitedUids.some((targetUid) => typeof targetUid !== "string" || !targetUid || targetUid === uid)
       || invitedUids.length > 20 || new Set(invitedUids).size !== invitedUids.length
       || password.length > 24) {
@@ -1792,13 +2215,15 @@ exports.createTugRoom = onCall(async (request) => {
   const userRef = database.collection("users").doc(uid);
   const rankRef = database.collection("leaderboard").doc(uid);
   const historyRef = userRef.collection("transactions").doc(`tug_host_${requestId}`);
+  const clanRef = clanId ? database.collection("clans").doc(clanId) : null;
   const invitedRefs = invitedUids.map((targetUid) => database.collection("users").doc(targetUid));
   let response;
   await database.runTransaction(async (transaction) => {
-    const [roomSnapshot, userSnapshot, rankSnapshot, ...inviteSnapshots] = await Promise.all([
+    const [roomSnapshot, userSnapshot, rankSnapshot, clanSnapshot, ...inviteSnapshots] = await Promise.all([
       transaction.get(roomRef),
       transaction.get(userRef),
       transaction.get(rankRef),
+      clanRef ? transaction.get(clanRef) : Promise.resolve(null),
       ...invitedRefs.map((ref) => transaction.get(ref)),
     ]);
     if (roomSnapshot.exists) {
@@ -1807,7 +2232,16 @@ exports.createTugRoom = onCall(async (request) => {
       return;
     }
     if (!userSnapshot.exists || !rankSnapshot.exists) throw new HttpsError("failed-precondition", "Perfil ainda não foi criado.");
+    if (clanId && (!clanSnapshot?.exists || userSnapshot.get("clanId") !== clanId
+        || !(clanSnapshot.get("members") || []).some((member) => member.uid === uid))) {
+      throw new HttpsError("permission-denied", "Você não pertence ao clã desta sala.");
+    }
     if (inviteSnapshots.some((snapshot) => !snapshot.exists)) throw new HttpsError("not-found", "Um dos convidados não foi encontrado.");
+    if (clanId && invitedUids.some((inviteUid) => (
+      !(clanSnapshot.get("members") || []).some((member) => member.uid === inviteUid)
+    ))) {
+      throw new HttpsError("failed-precondition", "Todos os convidados da sala precisam ser membros do clã.");
+    }
     const profile = userSnapshot.data();
     const balance = profile.balanceCents || 0;
     if (balance < stakeCents) throw new HttpsError("failed-precondition", "Saldo insuficiente para criar a sala.");
@@ -1826,11 +2260,12 @@ exports.createTugRoom = onCall(async (request) => {
       roomId: requestId,
       mode,
       gameId,
+      clanId,
       creatorUid: uid,
       creatorName,
       opponentUid: "",
       opponentName: "",
-      players: [{ uid, name: creatorName, team: "A" }],
+      players: [{ uid, name: creatorName, team: "A", skill: Math.max(1, profile.level || 1) }],
       participantUids: [uid],
       invitedUids,
       inviteOnly: invitedUids.length > 0,
@@ -1898,13 +2333,15 @@ exports.joinTugRoom = onCall(async (request) => {
     }
     if (room.passwordHash && hashTugPassword(password, roomId) !== room.passwordHash) throw new HttpsError("permission-denied", "Senha da sala incorreta.");
     if (!userSnapshot.exists || !rankSnapshot.exists) throw new HttpsError("failed-precondition", "Perfil ainda não foi criado.");
+    if (room.clanId && userSnapshot.get("clanId") !== room.clanId) {
+      throw new HttpsError("permission-denied", "Somente membros do clã podem entrar nesta sala.");
+    }
     const balance = userSnapshot.get("balanceCents") || 0;
     if (balance < room.stakeCents) throw new HttpsError("failed-precondition", "Saldo insuficiente para entrar nesta sala.");
     const user = userSnapshot.data();
-    const teamACount = players.filter((player) => player.team === "A").length;
-    const teamBCount = players.filter((player) => player.team === "B").length;
-    const team = room.mode === "2v2" && teamACount <= teamBCount ? "A" : "B";
-    const updatedPlayers = [...players, { uid, name: user.displayName || "Jogador", team }];
+    const skill = Math.max(1, user.level || 1);
+    const team = room.mode === "2v2" ? chooseBalancedTeam(players, skill) : "B";
+    const updatedPlayers = [...players, { uid, name: user.displayName || "Jogador", team, skill }];
     const opponent = updatedPlayers.find((player) => player.team === "B");
     const updatedRoom = {
       status: updatedPlayers.length >= tugPlayerLimit(room) ? "ready" : "waiting",
@@ -1940,9 +2377,9 @@ exports.manageTugRoom = onCall(async (request) => {
   const newStakeCents = request.data?.stakeCents;
   const newPassword = typeof request.data?.password === "string" ? request.data.password : "";
     if (typeof roomId !== "string" || !/^[a-f0-9-]{36}$/i.test(roomId)
-      || !["setStake", "setPassword", "addInvite", "removeInvite", "kick", "cancel", "dissolve", "leave"].includes(action)
+      || !["setStake", "setPassword", "addInvite", "removeInvite", "kick", "cancel", "dissolve", "leave", "leaveCompleted", "transferLeadership"].includes(action)
       || typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)
-      || (["addInvite", "removeInvite", "kick"].includes(action) && !targetUid)
+      || (["addInvite", "removeInvite", "kick", "transferLeadership"].includes(action) && !targetUid)
       || (action === "setStake" && !validateWager(newStakeCents, MAX_TRANSFER_CENTS))
       || (action === "setPassword" && newPassword.length > 24)) {
     throw new HttpsError("invalid-argument", "Ação de sala ou parâmetros inválidos.");
@@ -1967,10 +2404,17 @@ exports.manageTugRoom = onCall(async (request) => {
     const room = roomSnapshot.data();
     const players = tugPlayers(room);
     const isCreator = room.creatorUid === uid;
-    if (action === "leave") {
+    if (action === "leaveCompleted") {
+      if (room.status !== "settled") {
+        throw new HttpsError("failed-precondition", "Só é possível sair após o fim da partida.");
+      }
+      if (!players.some((player) => player.uid === uid)) {
+        throw new HttpsError("permission-denied", "Você não participou desta partida.");
+      }
+    } else if (action === "leave") {
       if (isCreator) throw new HttpsError("failed-precondition", "O criador deve dissolver a sala para devolver todas as apostas.");
       if (!players.some((player) => player.uid === uid)) throw new HttpsError("permission-denied", "Você não está nesta sala.");
-    } else if (!isCreator) {
+    } else if (action !== "transferLeadership" && !isCreator) {
       throw new HttpsError("permission-denied", "Somente o criador pode alterar esta sala.");
     }
     if (!actorSnapshot.exists || !actorRankSnapshot.exists) throw new HttpsError("failed-precondition", "Perfil ainda não foi criado.");
@@ -2025,7 +2469,18 @@ exports.manageTugRoom = onCall(async (request) => {
       if (room.status !== "waiting") throw new HttpsError("failed-precondition", "A sala só pode ser configurada enquanto aguarda jogadores.");
     }
     const update = { lastUpdatedAtMs: Date.now() };
-    if (action === "setStake") {
+    if (action === "transferLeadership") {
+      if (!isCreator || !["waiting", "ready"].includes(room.status)) {
+        throw new HttpsError("failed-precondition", "A liderança só pode ser transferida pelo anfitrião antes da partida.");
+      }
+      const successor = players.find((player) => player.uid === targetUid);
+      if (!successor || targetUid === uid) {
+        throw new HttpsError("failed-precondition", "Escolha outro participante desta sala.");
+      }
+      update.creatorUid = successor.uid;
+      update.creatorName = successor.name;
+      update.leadershipTransferredAt = FieldValue.serverTimestamp();
+    } else if (action === "setStake") {
       const difference = newStakeCents - room.stakeCents;
       for (const player of stakePlayers) {
         const balance = player.userSnapshot.get("balanceCents") || 0;
@@ -2063,6 +2518,18 @@ exports.manageTugRoom = onCall(async (request) => {
     } else if (action === "removeInvite") {
       if (room.status !== "waiting") throw new HttpsError("failed-precondition", "Não é possível alterar convites depois que a partida começa.");
       update.invitedUids = (room.invitedUids || []).filter((inviteUid) => inviteUid !== targetUid);
+    } else if (action === "leaveCompleted") {
+      let exit;
+      try {
+        exit = recordCompletedRoomExit(room, uid, Date.now());
+      } catch (error) {
+        if (error.message === "not-a-player") {
+          throw new HttpsError("permission-denied", "Você não participou desta partida.");
+        }
+        throw new HttpsError("failed-precondition", "A partida ainda não foi concluída.");
+      }
+      update.exitedUids = exit.exitedUids;
+      if (exit.cleanupAfterMs > 0) update.cleanupAfterMs = exit.cleanupAfterMs;
     } else if (["cancel", "dissolve", "leave"].includes(action)) {
       if ((action === "cancel" || action === "dissolve") && !isCreator) {
         throw new HttpsError("permission-denied", "Somente o criador pode dissolver a sala.");
@@ -2259,6 +2726,16 @@ exports.pullTugRope = onCall(async (request) => {
         roomId,
         createdAt: FieldValue.serverTimestamp(),
       });
+      recordMinigameSettlement(transaction, userRefs[index], {
+        gameId: room.gameId || "tug",
+        gameName: tugGameName(room.gameId),
+        outcome: settlement.won ? "won" : "lost",
+        netCents: settlement.profitCents,
+        summary: `${tugGameName(room.gameId)} · ${settlement.won ? "vitória" : "derrota"}`,
+        recordId: `tug_${roomId}`,
+        atMs: nowMs,
+        clanId: typeof profiles[index].get("clanId") === "string" ? profiles[index].get("clanId") : "",
+      });
       registrarPremioNivel(transaction, userRefs[index], `${roomId}_${playerUids[index]}`, settlement.progression);
       registrarPremiosMissao(transaction, userRefs[index], settlement.missions);
     });
@@ -2439,6 +2916,16 @@ exports.cashOutCrash = onCall(async (request) => {
         createdAt: FieldValue.serverTimestamp(),
       });
     }
+    recordMinigameSettlement(transaction, userRef, {
+      gameId: "crash",
+      gameName: "Crash",
+      outcome: profitCents > 0 ? "won" : profitCents < 0 ? "lost" : "tied",
+      netCents: profitCents,
+      summary: crashed ? "Crash · multiplicador estourou" : `Crash · saque em ${(multiplierBps / 100).toFixed(2)}x`,
+      recordId: `crash_${gameId}`,
+      atMs: nowMs,
+      clanId: typeof profile.clanId === "string" ? profile.clanId : "",
+    });
     registrarPremioNivel(transaction, userRef, requestId, progression);
     registrarPremiosMissao(transaction, userRef, missions);
     response = {
@@ -2593,7 +3080,19 @@ exports.startBlackjack = onCall(async (request) => {
         createdAt: FieldValue.serverTimestamp(),
       });
     }
-    if (initialGame.status === "settled") registrarPremioNivel(transaction, userRef, requestId, progression);
+    if (initialGame.status === "settled") {
+      recordMinigameSettlement(transaction, userRef, {
+        gameId: "blackjack",
+        gameName: "Blackjack",
+        outcome: initialGame.payoutCents > amountCents ? "won" : initialGame.payoutCents < amountCents ? "lost" : "tied",
+        netCents: initialGame.profitCents,
+        summary: `Blackjack · ${initialGame.outcome}`,
+        recordId: `blackjack_${gameId}`,
+        atMs: startedAtMs,
+        clanId: typeof profile.clanId === "string" ? profile.clanId : "",
+      });
+      registrarPremioNivel(transaction, userRef, requestId, progression);
+    }
     response = publicBlackjackState(initialGame);
     transaction.create(requestRef, { response, createdAt: FieldValue.serverTimestamp() });
   });
@@ -2752,6 +3251,16 @@ exports.blackjackAction = onCall(async (request) => {
         createdAt: FieldValue.serverTimestamp(),
       });
     }
+    recordMinigameSettlement(transaction, userRef, {
+      gameId: "blackjack",
+      gameName: "Blackjack",
+      outcome: settlement.payoutCents > wagerCents ? "won" : settlement.payoutCents < wagerCents ? "lost" : "tied",
+      netCents: finalGame.profitCents,
+      summary: `Blackjack · ${settlement.outcome}`,
+      recordId: `blackjack_${gameId}`,
+      atMs: actionAtMs,
+      clanId: typeof profile.clanId === "string" ? profile.clanId : "",
+    });
     registrarPremioNivel(transaction, userRef, requestId, progression);
     registrarPremiosMissao(transaction, userRef, missions);
     response = publicBlackjackState(finalGame);
@@ -2902,7 +3411,7 @@ exports.equipAvatarItem = onCall(async (request) => {
 });
 
 exports.getPlayerProfile = onCall(async (request) => {
-  authenticatedUid(request);
+  const requesterUid = authenticatedUid(request);
   const targetUid = request.data?.uid;
   if (typeof targetUid !== "string" || targetUid.length < 1 || targetUid.length > 128) {
     throw new HttpsError("invalid-argument", "Jogador inválido.");
@@ -2918,6 +3427,20 @@ exports.getPlayerProfile = onCall(async (request) => {
 
   const rank = rankSnapshot.data();
   const profile = userSnapshot.data();
+  if (requesterUid !== targetUid) {
+    const [settingsSnapshot, requesterFriendship, targetFriendship] = await Promise.all([
+      database.collection("users").doc(targetUid).collection("preferences").doc("appSettings").get(),
+      database.collection("users").doc(requesterUid).collection("friends").doc(targetUid).get(),
+      database.collection("users").doc(targetUid).collection("friends").doc(requesterUid).get(),
+    ]);
+    const privateProfile = settingsSnapshot.get("profileVisibility") === "private";
+    const isFriend = requesterFriendship.exists && targetFriendship.exists
+      && requesterFriendship.get("status") === "accepted"
+      && targetFriendship.get("status") === "accepted";
+    if (!canViewPlayerProfile(requesterUid, targetUid, privateProfile ? "private" : "public", isFriend)) {
+      throw new HttpsError("permission-denied", "Este perfil está disponível apenas para amigos.");
+    }
+  }
   return {
     uid: targetUid,
     displayName: rank.displayName || "Jogador",
@@ -2927,14 +3450,12 @@ exports.getPlayerProfile = onCall(async (request) => {
     avatarUrl: rank.avatarUrl || "",
     avatarAsProfilePhoto: rank.avatarAsProfilePhoto === true,
     equippedAvatarItems: Array.isArray(rank.equippedAvatarItems) ? rank.equippedAvatarItems : [],
-    balanceCents: rank.balanceCents || 0,
+    balanceCents: 0,
     gamesPlayed: Number.isSafeInteger(profile.gamesPlayed) ? profile.gamesPlayed : 0,
     wins: Number.isSafeInteger(profile.wins) ? profile.wins : 0,
-    inventory: Array.isArray(profile.inventory)
-      ? profile.inventory.filter((id) => typeof id === "string")
-      : [],
-    pixKey: typeof profile.pixKey === "string" ? profile.pixKey : "",
-    pixKeyType: typeof profile.pixKeyType === "string" ? profile.pixKeyType : "",
+    inventory: [],
+    pixKey: "",
+    pixKeyType: "",
     equippedFrame: typeof profile.equippedFrame === "string" ? profile.equippedFrame : "",
     equippedTitle: typeof profile.equippedTitle === "string" ? profile.equippedTitle : "",
   };
@@ -3929,4 +4450,833 @@ exports.sendChatMessage = onCall(async (request) => {
   });
 
   return response;
+});
+
+exports.getSocialDashboard = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const userRef = database.collection("users").doc(uid);
+  const userSnapshot = await userRef.get();
+  if (!userSnapshot.exists) throw new HttpsError("failed-precondition", "Perfil ainda não foi criado.");
+  const profile = userSnapshot.data();
+  const [historySnapshot, statsSnapshot, clansSnapshot, invitationsSnapshot, ownReportsSnapshot] = await Promise.all([
+    userRef.collection("gameHistory").orderBy("atMs", "desc").limit(50).get(),
+    userRef.collection("minigameStats").get(),
+    database.collection("clans").limit(100).get(),
+    userRef.collection("clanInvitations").get(),
+    database.collection("playerReports").where("reporterUid", "==", uid).limit(50).get(),
+  ]);
+  const currentWeek = isoWeekKey(new Date());
+  const eventIdentity = weeklyEventForDate(new Date());
+  const eventSnapshot = eventIdentity
+    ? await userRef.collection("weeklyEvents").doc(eventIdentity.id).get()
+    : null;
+  const stats = statsSnapshot.docs
+    .filter((document) => document.id !== "all")
+    .map((document) => ({ gameId: document.id, ...document.data() }));
+  const allStats = statsSnapshot.docs.find((document) => document.id === "all")?.data() || {};
+  const totalMetrics = {
+    played: allStats.played || 0,
+    won: allStats.wins || 0,
+    lost: allStats.losses || 0,
+    tied: allStats.ties || 0,
+    netCents: allStats.netCents || 0,
+  };
+  const achievements = ACHIEVEMENT_DEFINITIONS.map(({ id, metric, target }) => ({
+    id,
+    progress: Math.min(target, totalMetrics[metric] || 0),
+    target,
+    unlocked: (totalMetrics[metric] || 0) >= target,
+  }));
+  const currentClanId = typeof profile.clanId === "string" ? profile.clanId : "";
+  const currentClanSnapshot = currentClanId && !clansSnapshot.docs.some((document) => document.id === currentClanId)
+    ? await database.collection("clans").doc(currentClanId).get()
+    : null;
+  const clanDocuments = currentClanSnapshot?.exists
+    ? [...clansSnapshot.docs, currentClanSnapshot]
+    : clansSnapshot.docs;
+  const visibleClans = clanDocuments
+    .map((document) => ({ id: document.id, ...document.data() }))
+    .filter((clan) => clan.policy !== "private" || clan.id === currentClanId)
+    .map((clan) => {
+      const members = Array.isArray(clan.members) ? clan.members : [];
+      const pending = Array.isArray(clan.pendingRequests) ? clan.pendingRequests : [];
+      return {
+        id: clan.id,
+        name: clan.name || "",
+        description: clan.description || "",
+        policy: clan.policy,
+        members: members.map((member) => ({
+          userId: member.uid,
+          name: member.displayName || "Jogador",
+          isLeader: member.role === "owner",
+          weeklyScore: member.weeklyScore || 0,
+        })),
+        leaderId: clan.ownerUid || "",
+        inviteCode: clan.ownerUid === uid && clan.policy === "private" ? clan.inviteCode || "" : "",
+        pendingRequests: clan.ownerUid === uid
+          ? pending.map((pendingUid) => ({ userId: pendingUid, name: pendingUid }))
+          : [],
+        weeklyScore: currentWeek ? clan.weeklyScores?.[currentWeek] || 0 : 0,
+      };
+    });
+  const rankedClans = visibleClans
+    .map((clan) => ({ clanId: clan.id, name: clan.name, score: clan.weeklyScore }))
+    .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name))
+    .slice(0, 20)
+    .map((clan, index) => ({ position: index + 1, clanId: clan.clanId, name: clan.name, score: clan.score }));
+  const eventData = eventSnapshot?.exists ? eventSnapshot.data() : null;
+  return {
+    clans: visibleClans,
+    currentClanId,
+    clanInvitations: invitationsSnapshot.docs.map((document) => ({
+      clanId: document.get("clanId"),
+      clanName: document.get("clanName") || "Clã",
+      invitedBy: document.get("invitedBy") || "",
+    })),
+    clanRanking: rankedClans,
+    reportUpdates: ownReportsSnapshot.docs
+      .map((document) => ({
+        id: document.id,
+        category: document.get("category"),
+        status: document.get("status"),
+        reviewReason: document.get("reviewReason") || "",
+        createdAtMs: document.get("createdAtMs") || 0,
+      }))
+      .sort((left, right) => right.createdAtMs - left.createdAtMs)
+      .slice(0, 20),
+    event: eventIdentity ? {
+      id: eventIdentity.id,
+      title: eventData?.title || eventIdentity.title,
+      description: eventData?.description || eventIdentity.description,
+      progress: Math.min(eventIdentity.target, eventData?.progress || 0),
+      target: eventIdentity.target,
+      rewardCents: eventIdentity.rewardCents,
+      claimed: Array.isArray(profile.claimedWeeklyEventIds)
+        && profile.claimedWeeklyEventIds.includes(eventIdentity.id),
+    } : null,
+    achievements,
+    history: historySnapshot.docs.map((document) => ({ id: document.id, ...document.data() })),
+    stats,
+  };
+});
+
+const ACCOUNT_SETTING_DEFAULTS = Object.freeze({
+  profileVisibility: "public",
+  customStatus: "",
+  theme: "dark",
+  locale: "pt-BR",
+  accessibilityFontScale: 1,
+  highContrast: false,
+  reduceMotion: false,
+  confirmImportant: true,
+  personalizedRecommendations: true,
+  syncSettings: true,
+});
+
+exports.getAccountSettings = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const userRef = database.collection("users").doc(uid);
+  const [settingsSnapshot, activitySnapshot, friendSnapshot, announcementSnapshot, statsSnapshot] = await Promise.all([
+    userRef.collection("preferences").doc("appSettings").get(),
+    userRef.collection("accountActivity").orderBy("createdAtMs", "desc").limit(30).get(),
+    userRef.collection("friends").get(),
+    database.collection("systemSettings").doc("announcements").get(),
+    userRef.collection("minigameStats").get(),
+  ]);
+  const settings = { ...ACCOUNT_SETTING_DEFAULTS, ...(settingsSnapshot.data() || {}) };
+  const acceptedFriends = friendSnapshot.docs.filter((document) => document.get("status") === "accepted");
+  const friendDetails = await Promise.all(acceptedFriends.map(async (document) => {
+    const [friendSettings, presence] = await Promise.all([
+      database.collection("users").doc(document.id).collection("preferences").doc("appSettings").get(),
+      database.collection("userPresence").doc(document.id).get(),
+    ]);
+    const lastSeen = presence.get("lastSeenAt");
+    const lastSeenMs = typeof lastSeen?.toMillis === "function" ? lastSeen.toMillis() : 0;
+    return {
+      uid: document.id,
+      displayName: document.get("displayName") || "Jogador",
+      username: document.get("username") || "",
+      status: friendSettings.get("customStatus") || "",
+      online: presence.get("online") === true && Date.now() - lastSeenMs < 120_000,
+    };
+  }));
+  const friends = friendDetails;
+  const requests = friendSnapshot.docs.filter((document) => document.get("status") === "incoming")
+    .map((document) => ({
+      uid: document.id,
+      displayName: document.get("displayName") || "Jogador",
+      username: document.get("username") || "",
+    }));
+  const announcementsData = announcementSnapshot.data() || {};
+  const nowMs = Date.now();
+  const announcements = (Array.isArray(announcementsData.items) ? announcementsData.items : [])
+    .filter((item) => item?.active === true && (!Number.isFinite(item.expiresAtMs) || item.expiresAtMs > nowMs))
+    .slice(0, 10);
+  const recommendations = statsSnapshot.docs
+    .filter((document) => document.id !== "all" && Number(document.get("played") || 0) > 0)
+    .map((document) => ({
+      gameId: document.id,
+      played: Number(document.get("played") || 0),
+      wins: Number(document.get("wins") || 0),
+    }))
+    .sort((left, right) => (right.wins / right.played) - (left.wins / left.played)
+      || left.played - right.played)
+    .slice(0, 3);
+  return {
+    settings,
+    friends,
+    friendRequests: requests,
+    activity: activitySnapshot.docs.map((document) => ({
+      id: document.id,
+      fields: document.get("fields") || [],
+      createdAtMs: document.get("createdAtMs") || 0,
+    })),
+    announcements,
+    recommendations,
+  };
+});
+
+exports.saveAccountSettings = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const input = request.data?.settings;
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new HttpsError("invalid-argument", "Configurações inválidas.");
+  }
+  const allowed = Object.keys(ACCOUNT_SETTING_DEFAULTS);
+  if (Object.keys(input).some((key) => !allowed.includes(key))) {
+    throw new HttpsError("invalid-argument", "Configuração desconhecida.");
+  }
+  const normalized = {};
+  if (input.profileVisibility != null) {
+    if (!["public", "private"].includes(input.profileVisibility)) throw new HttpsError("invalid-argument", "Privacidade inválida.");
+    normalized.profileVisibility = input.profileVisibility;
+  }
+  if (input.customStatus != null) {
+    if (typeof input.customStatus !== "string" || [...input.customStatus.trim()].length > 40) throw new HttpsError("invalid-argument", "Status deve ter até 40 caracteres.");
+    normalized.customStatus = input.customStatus.trim();
+  }
+  if (input.theme != null) {
+    if (!["dark", "amoled", "blue"].includes(input.theme)) throw new HttpsError("invalid-argument", "Tema inválido.");
+    normalized.theme = input.theme;
+  }
+  if (input.locale != null) {
+    if (!["pt-BR", "en-US", "es"].includes(input.locale)) throw new HttpsError("invalid-argument", "Idioma inválido.");
+    normalized.locale = input.locale;
+  }
+  if (input.accessibilityFontScale != null) {
+    if (typeof input.accessibilityFontScale !== "number" || input.accessibilityFontScale < 1 || input.accessibilityFontScale > 1.5) {
+      throw new HttpsError("invalid-argument", "Escala de texto fora do intervalo.");
+    }
+    normalized.accessibilityFontScale = input.accessibilityFontScale;
+  }
+  for (const key of ["highContrast", "reduceMotion", "confirmImportant", "personalizedRecommendations", "syncSettings"]) {
+    if (input[key] != null) {
+      if (typeof input[key] !== "boolean") throw new HttpsError("invalid-argument", "Preferência inválida.");
+      normalized[key] = input[key];
+    }
+  }
+  const ref = database.collection("users").doc(uid).collection("preferences").doc("appSettings");
+  let savedSettings = ACCOUNT_SETTING_DEFAULTS;
+  await database.runTransaction(async (transaction) => {
+    const oldSnapshot = await transaction.get(ref);
+    const oldSettings = oldSnapshot.data() || {};
+    const localOnlyKeys = [
+      "theme",
+      "locale",
+      "accessibilityFontScale",
+      "highContrast",
+      "reduceMotion",
+      "confirmImportant",
+      "personalizedRecommendations",
+    ];
+    if (oldSettings.syncSettings === false && normalized.syncSettings === false) {
+      for (const key of localOnlyKeys) delete normalized[key];
+    }
+    const changedFields = Object.keys(normalized).filter((key) => oldSettings[key] !== normalized[key]);
+    savedSettings = { ...ACCOUNT_SETTING_DEFAULTS, ...oldSettings, ...normalized };
+    transaction.set(ref, { ...savedSettings, updatedAt: FieldValue.serverTimestamp() });
+    if (changedFields.length) {
+      transaction.create(database.collection("users").doc(uid).collection("accountActivity").doc(randomUUID()), {
+        fields: changedFields,
+        createdAt: FieldValue.serverTimestamp(),
+        createdAtMs: Date.now(),
+      });
+    }
+  });
+  return { ok: true, settings: savedSettings };
+});
+
+exports.manageFriend = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const action = request.data?.action;
+  if (!["request", "accept", "remove", "reject"].includes(action)) {
+    throw new HttpsError("invalid-argument", "Ação de amizade inválida.");
+  }
+  const myUserRef = database.collection("users").doc(uid);
+  let targetUid = request.data?.targetUid;
+  if (action === "request") {
+    const username = normalizeUsername(request.data?.username);
+    if (!username) throw new HttpsError("invalid-argument", "Informe um nome de usuário válido.");
+    const usernameSnapshot = await database.collection("usernames").doc(username).get();
+    if (!usernameSnapshot.exists) throw new HttpsError("not-found", "Não encontramos esse nome de usuário.");
+    targetUid = usernameSnapshot.get("uid");
+  }
+  if (typeof targetUid !== "string" || targetUid.length < 1 || targetUid.length > 128 || targetUid === uid) {
+    throw new HttpsError("invalid-argument", "Jogador inválido.");
+  }
+  const targetUserRef = database.collection("users").doc(targetUid);
+  const myFriendRef = myUserRef.collection("friends").doc(targetUid);
+  const targetFriendRef = targetUserRef.collection("friends").doc(uid);
+  await database.runTransaction(async (transaction) => {
+    const [myUser, targetUser, myFriend, targetFriend] = await Promise.all([
+      transaction.get(myUserRef), transaction.get(targetUserRef),
+      transaction.get(myFriendRef), transaction.get(targetFriendRef),
+    ]);
+    if (!myUser.exists || !targetUser.exists) throw new HttpsError("not-found", "Perfil não encontrado.");
+    const now = FieldValue.serverTimestamp();
+    if (action === "request") {
+      if (myFriend.get("status") === "accepted") throw new HttpsError("already-exists", "Este jogador já está na sua lista.");
+      if (myFriend.get("status") === "outgoing") throw new HttpsError("already-exists", "O convite já foi enviado.");
+      const senderData = {
+        displayName: safeName(myUser.get("displayName"), "Jogador"),
+        username: myUser.get("username") || "",
+      };
+      const targetData = {
+        displayName: safeName(targetUser.get("displayName"), "Jogador"),
+        username: targetUser.get("username") || "",
+      };
+      transaction.set(myFriendRef, { status: "outgoing", ...targetData, updatedAt: now });
+      transaction.set(targetFriendRef, { status: "incoming", ...senderData, updatedAt: now });
+    } else if (action === "accept") {
+      if (myFriend.get("status") !== "incoming" || targetFriend.get("status") !== "outgoing") {
+        throw new HttpsError("failed-precondition", "Não há convite pendente deste jogador.");
+      }
+      transaction.set(myFriendRef, {
+        status: "accepted",
+        displayName: safeName(targetUser.get("displayName"), "Jogador"),
+        username: targetUser.get("username") || "",
+        updatedAt: now,
+      });
+      transaction.set(targetFriendRef, {
+        status: "accepted",
+        displayName: safeName(myUser.get("displayName"), "Jogador"),
+        username: myUser.get("username") || "",
+        updatedAt: now,
+      });
+    } else {
+      transaction.delete(myFriendRef);
+      transaction.delete(targetFriendRef);
+    }
+  });
+  return { ok: true };
+});
+
+exports.publishAppAnnouncement = onCall(async (request) => {
+  requireAdmin(request);
+  const title = typeof request.data?.title === "string" ? request.data.title.trim() : "";
+  const details = typeof request.data?.details === "string" ? request.data.details.trim() : "";
+  const type = request.data?.type;
+  const expiresAtMs = request.data?.expiresAtMs;
+  if (title.length < 3 || title.length > 80 || details.length < 3 || details.length > 500
+      || !["maintenance", "news"].includes(type)
+      || !Number.isSafeInteger(expiresAtMs) || expiresAtMs <= Date.now()) {
+    throw new HttpsError("invalid-argument", "Aviso, categoria ou prazo inválido.");
+  }
+  const ref = database.collection("systemSettings").doc("announcements");
+  await database.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(ref);
+    const items = Array.isArray(snapshot.get("items")) ? snapshot.get("items") : [];
+    transaction.set(ref, {
+      items: [{ id: randomUUID(), title, details, type, active: true, createdAtMs: Date.now(), expiresAtMs }, ...items]
+        .slice(0, 20),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+  });
+  return { ok: true };
+});
+
+exports.createSupportTicket = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const title = typeof request.data?.title === "string" ? request.data.title.trim() : "";
+  const details = typeof request.data?.details === "string" ? request.data.details.trim() : "";
+  const category = request.data?.category;
+  if (title.length < 3 || title.length > 80 || details.length < 10 || details.length > 2_000
+      || !["help", "accessibility"].includes(category)) {
+    throw new HttpsError("invalid-argument", "Informe um assunto e detalhes válidos.");
+  }
+  const uidRef = database.collection("users").doc(uid);
+  const snapshot = await uidRef.get();
+  if (!snapshot.exists) throw new HttpsError("failed-precondition", "Perfil ainda não foi criado.");
+  const ticketRef = database.collection("supportTickets").doc(randomUUID());
+  await ticketRef.create({
+    userUid: uid,
+    username: snapshot.get("username") || "",
+    category,
+    title,
+    details,
+    status: "open",
+    createdAt: FieldValue.serverTimestamp(),
+    createdAtMs: Date.now(),
+  });
+  return { ok: true, ticketId: ticketRef.id };
+});
+
+exports.adminListSupportTickets = onCall(async (request) => {
+  requireAdmin(request);
+  const snapshot = await database.collection("supportTickets").orderBy("createdAtMs", "desc").limit(50).get();
+  return {
+    tickets: snapshot.docs.map((document) => ({
+      id: document.id,
+      userUid: document.get("userUid") || "",
+      username: document.get("username") || "",
+      category: document.get("category") || "help",
+      title: document.get("title") || "",
+      details: document.get("details") || "",
+      status: document.get("status") || "open",
+      createdAtMs: document.get("createdAtMs") || 0,
+    })),
+  };
+});
+
+exports.createSocialClan = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const userRef = database.collection("users").doc(uid);
+  const requestId = request.data?.requestId;
+  if (typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)) {
+    throw new HttpsError("invalid-argument", "Identificador de criação inválido.");
+  }
+  const validation = validateClan({
+    name: request.data?.name,
+    description: request.data?.description,
+    policy: request.data?.policy,
+  });
+  if (!validation.valid) throw new HttpsError("invalid-argument", "Nome, descrição ou política do clã inválidos.");
+  const clanId = requestId;
+  const inviteCode = randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase();
+  const clanRef = database.collection("clans").doc(clanId);
+  const inviteRef = database.collection("clanInviteCodes").doc(inviteCode);
+  const actionRef = userRef.collection("socialRequests").doc(requestId);
+  let response = { ok: true, clanId, inviteCode };
+  await database.runTransaction(async (transaction) => {
+    const [userSnapshot, inviteSnapshot, actionSnapshot] = await Promise.all([
+      transaction.get(userRef),
+      transaction.get(inviteRef),
+      transaction.get(actionRef),
+    ]);
+    if (actionSnapshot.exists) {
+      if (actionSnapshot.get("name") !== validation.value.name
+          || actionSnapshot.get("description") !== validation.value.description
+          || actionSnapshot.get("policy") !== validation.value.policy) {
+        throw new HttpsError("already-exists", "Identificador de criação já utilizado.");
+      }
+      response = actionSnapshot.get("response");
+      return;
+    }
+    if (!userSnapshot.exists) throw new HttpsError("failed-precondition", "Perfil ainda não foi criado.");
+    if (userSnapshot.get("clanId")) throw new HttpsError("failed-precondition", "Saia do clã atual antes de criar outro.");
+    if (inviteSnapshot.exists) throw new HttpsError("already-exists", "Não foi possível gerar o convite. Tente novamente.");
+    const user = userSnapshot.data();
+    transaction.create(clanRef, {
+      name: validation.value.name,
+      description: validation.value.description,
+      description: validation.value.description,
+      policy: validation.value.policy,
+      creatorUid: uid,
+      ownerUid: uid,
+      inviteCode,
+      members: [{ uid, displayName: user.displayName || "Jogador", role: "owner", joinedAtMs: Date.now() }],
+      pendingRequests: [],
+      weeklyScores: {},
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    transaction.create(inviteRef, { clanId, createdAt: FieldValue.serverTimestamp() });
+    transaction.create(actionRef, {
+      response,
+      name: validation.value.name,
+      policy: validation.value.policy,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    transaction.update(userRef, { clanId });
+  });
+  return response;
+});
+
+async function addUserToClan(uid, clanId, requiredPolicy = "public") {
+  if (typeof clanId !== "string" || !/^[a-f0-9-]{36}$/i.test(clanId)) {
+    throw new HttpsError("invalid-argument", "Clã inválido.");
+  }
+  const userRef = database.collection("users").doc(uid);
+  const clanRef = database.collection("clans").doc(clanId);
+  await database.runTransaction(async (transaction) => {
+    const [userSnapshot, clanSnapshot] = await Promise.all([
+      transaction.get(userRef),
+      transaction.get(clanRef),
+    ]);
+    if (!userSnapshot.exists || !clanSnapshot.exists) throw new HttpsError("not-found", "Clã ou perfil não encontrado.");
+    if (userSnapshot.get("clanId")) throw new HttpsError("failed-precondition", "Você já pertence a um clã.");
+    const user = userSnapshot.data();
+    const clan = clanSnapshot.data();
+    if (requiredPolicy && clan.policy !== requiredPolicy) {
+      throw new HttpsError("permission-denied", "Este clã exige outra forma de entrada.");
+    }
+    const members = Array.isArray(clan.members) ? clan.members : [];
+    const capacity = canAddClanMember({ memberCount: members.length, capacity: 20 });
+    if (!capacity.allowed) throw new HttpsError("resource-exhausted", "Este clã já tem 20 membros.");
+    if (members.some((member) => member.uid === uid)) throw new HttpsError("already-exists", "Você já está neste clã.");
+    transaction.update(clanRef, {
+      members: [...members, { uid, displayName: user.displayName || "Jogador", role: "member", joinedAtMs: Date.now() }],
+      pendingRequests: (clan.pendingRequests || []).filter((pendingUid) => pendingUid !== uid),
+    });
+    transaction.update(userRef, { clanId });
+  });
+  return { ok: true };
+}
+
+exports.joinSocialClan = onCall(async (request) => {
+  return addUserToClan(authenticatedUid(request), request.data?.clanId, "public");
+});
+
+exports.joinSocialClanByInvite = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const code = typeof request.data?.code === "string" ? request.data.code.trim().toUpperCase() : "";
+  if (!/^[A-Z0-9]{12}$/.test(code)) throw new HttpsError("invalid-argument", "Código de convite inválido.");
+  const invite = await database.collection("clanInviteCodes").doc(code).get();
+  if (!invite.exists) throw new HttpsError("not-found", "Código de convite não encontrado.");
+  return addUserToClan(uid, invite.get("clanId"), "private");
+});
+
+exports.requestSocialClanJoin = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const clanId = request.data?.clanId;
+  if (typeof clanId !== "string" || !/^[a-f0-9-]{36}$/i.test(clanId)) {
+    throw new HttpsError("invalid-argument", "Clã inválido.");
+  }
+  const userRef = database.collection("users").doc(uid);
+  const clanRef = database.collection("clans").doc(clanId);
+  await database.runTransaction(async (transaction) => {
+    const [userSnapshot, clanSnapshot] = await Promise.all([transaction.get(userRef), transaction.get(clanRef)]);
+    if (!userSnapshot.exists || !clanSnapshot.exists) throw new HttpsError("not-found", "Clã ou perfil não encontrado.");
+    if (userSnapshot.get("clanId")) throw new HttpsError("failed-precondition", "Você já pertence a um clã.");
+    const clan = clanSnapshot.data();
+    if (clan.policy !== "approval") throw new HttpsError("permission-denied", "Este clã não aceita solicitações.");
+    const pending = Array.isArray(clan.pendingRequests) ? clan.pendingRequests : [];
+    if (pending.includes(uid)) return;
+    transaction.update(clanRef, { pendingRequests: [...pending, uid] });
+  });
+  return { ok: true };
+});
+
+exports.inviteSocialClanMember = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const clanId = request.data?.clanId;
+  const targetUid = request.data?.targetUid;
+  if (typeof clanId !== "string" || !/^[a-f0-9-]{36}$/i.test(clanId)
+      || typeof targetUid !== "string" || targetUid.length > 128 || targetUid.includes("/")
+      || targetUid === uid) {
+    throw new HttpsError("invalid-argument", "Convite inválido.");
+  }
+  const clanRef = database.collection("clans").doc(clanId);
+  const targetRef = database.collection("users").doc(targetUid);
+  await database.runTransaction(async (transaction) => {
+    const [clanSnapshot, targetSnapshot] = await Promise.all([transaction.get(clanRef), transaction.get(targetRef)]);
+    if (!clanSnapshot.exists || !targetSnapshot.exists) throw new HttpsError("not-found", "Clã ou usuário não encontrado.");
+    const clan = clanSnapshot.data();
+    if (clan.ownerUid !== uid) throw new HttpsError("permission-denied", "Somente o líder pode convidar.");
+    if (targetSnapshot.get("clanId")) throw new HttpsError("failed-precondition", "Este usuário já pertence a um clã.");
+    const members = Array.isArray(clan.members) ? clan.members : [];
+    const capacity = canAddClanMember({ memberCount: members.length, capacity: 20 });
+    if (!capacity.allowed) throw new HttpsError("resource-exhausted", "Este clã já tem 20 membros.");
+    if (members.some((member) => member.uid === targetUid)) {
+      throw new HttpsError("already-exists", "Este usuário já está no clã.");
+    }
+    transaction.set(targetRef.collection("clanInvitations").doc(clanId), {
+      clanId,
+      clanName: clan.name,
+      inviteCode: clan.inviteCode,
+      invitedBy: uid,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+  });
+  return { ok: true };
+});
+
+exports.acceptSocialClanInvite = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const clanId = request.data?.clanId;
+  if (typeof clanId !== "string" || !/^[a-f0-9-]{36}$/i.test(clanId)) {
+    throw new HttpsError("invalid-argument", "Convite inválido.");
+  }
+  const userRef = database.collection("users").doc(uid);
+  const clanRef = database.collection("clans").doc(clanId);
+  const inviteRef = userRef.collection("clanInvitations").doc(clanId);
+  await database.runTransaction(async (transaction) => {
+    const [userSnapshot, clanSnapshot, inviteSnapshot] = await Promise.all([
+      transaction.get(userRef), transaction.get(clanRef), transaction.get(inviteRef),
+    ]);
+    if (!userSnapshot.exists || !clanSnapshot.exists || !inviteSnapshot.exists) {
+      throw new HttpsError("not-found", "Convite ou clã não encontrado.");
+    }
+    if (userSnapshot.get("clanId")) throw new HttpsError("failed-precondition", "Saia do clã atual antes de aceitar.");
+    const clan = clanSnapshot.data();
+    const members = Array.isArray(clan.members) ? clan.members : [];
+    if (inviteSnapshot.get("inviteCode") !== clan.inviteCode) {
+      throw new HttpsError("permission-denied", "Este convite não é mais válido.");
+    }
+    if (!canAddClanMember({ memberCount: members.length, capacity: 20 }).allowed) {
+      throw new HttpsError("resource-exhausted", "Este clã já tem 20 membros.");
+    }
+    transaction.update(clanRef, {
+      members: [...members, {
+        uid,
+        displayName: userSnapshot.get("displayName") || "Jogador",
+        role: "member",
+        joinedAtMs: Date.now(),
+      }],
+    });
+    transaction.update(userRef, { clanId });
+    transaction.delete(inviteRef);
+  });
+  return { ok: true };
+});
+
+exports.approveSocialClanRequest = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const clanId = request.data?.clanId;
+  const targetUid = request.data?.targetUid;
+  const approve = request.data?.approve !== false;
+  if (typeof clanId !== "string" || !/^[a-f0-9-]{36}$/i.test(clanId)
+      || typeof targetUid !== "string" || targetUid.length > 128 || targetUid.includes("/")) {
+    throw new HttpsError("invalid-argument", "Solicitação inválida.");
+  }
+  const clanRef = database.collection("clans").doc(clanId);
+  const userRef = database.collection("users").doc(targetUid);
+  await database.runTransaction(async (transaction) => {
+    const [clanSnapshot, userSnapshot] = await Promise.all([transaction.get(clanRef), transaction.get(userRef)]);
+    if (!clanSnapshot.exists || !userSnapshot.exists) throw new HttpsError("not-found", "Clã ou usuário não encontrado.");
+    const clan = clanSnapshot.data();
+    if (clan.ownerUid !== uid) throw new HttpsError("permission-denied", "Somente o líder pode revisar solicitações.");
+    const pending = Array.isArray(clan.pendingRequests) ? clan.pendingRequests : [];
+    if (!pending.includes(targetUid)) throw new HttpsError("not-found", "Solicitação pendente não encontrada.");
+    if (approve) {
+      if (userSnapshot.get("clanId")) throw new HttpsError("failed-precondition", "O usuário já entrou em outro clã.");
+      const members = Array.isArray(clan.members) ? clan.members : [];
+      if (!canAddClanMember({ memberCount: members.length, capacity: 20 }).allowed) {
+        throw new HttpsError("resource-exhausted", "Este clã já tem 20 membros.");
+      }
+      transaction.update(userRef, { clanId });
+      transaction.update(clanRef, {
+        members: [...members, {
+          uid: targetUid,
+          displayName: userSnapshot.get("displayName") || "Jogador",
+          role: "member",
+          joinedAtMs: Date.now(),
+        }],
+        pendingRequests: pending.filter((memberUid) => memberUid !== targetUid),
+      });
+    } else {
+      transaction.update(clanRef, { pendingRequests: pending.filter((memberUid) => memberUid !== targetUid) });
+    }
+  });
+  return { ok: true };
+});
+
+exports.removeSocialClanMember = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const clanId = request.data?.clanId;
+  const targetUid = request.data?.targetUid;
+  if (typeof clanId !== "string" || !/^[a-f0-9-]{36}$/i.test(clanId)
+      || typeof targetUid !== "string" || targetUid.length > 128 || targetUid.includes("/")) {
+    throw new HttpsError("invalid-argument", "Membro inválido.");
+  }
+  const clanRef = database.collection("clans").doc(clanId);
+  const targetRef = database.collection("users").doc(targetUid);
+  await database.runTransaction(async (transaction) => {
+    const [clanSnapshot, targetSnapshot] = await Promise.all([transaction.get(clanRef), transaction.get(targetRef)]);
+    if (!clanSnapshot.exists || !targetSnapshot.exists) throw new HttpsError("not-found", "Clã ou membro não encontrado.");
+    const clan = clanSnapshot.data();
+    if (clan.ownerUid !== uid || targetUid === uid) throw new HttpsError("permission-denied", "Ação não permitida.");
+    const members = (clan.members || []).filter((member) => member.uid !== targetUid);
+    if (members.length === (clan.members || []).length) throw new HttpsError("not-found", "Membro não encontrado.");
+    transaction.update(clanRef, { members });
+    if (targetSnapshot.get("clanId") === clanId) transaction.update(targetRef, { clanId: FieldValue.delete() });
+  });
+  return { ok: true };
+});
+
+exports.leaveSocialClan = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const clanId = request.data?.clanId;
+  if (typeof clanId !== "string" || !/^[a-f0-9-]{36}$/i.test(clanId)) {
+    throw new HttpsError("invalid-argument", "Clã inválido.");
+  }
+  const clanRef = database.collection("clans").doc(clanId);
+  const userRef = database.collection("users").doc(uid);
+  await database.runTransaction(async (transaction) => {
+    const [clanSnapshot, userSnapshot] = await Promise.all([transaction.get(clanRef), transaction.get(userRef)]);
+    if (!clanSnapshot.exists || !userSnapshot.exists || userSnapshot.get("clanId") !== clanId) {
+      throw new HttpsError("failed-precondition", "Você não pertence a este clã.");
+    }
+    const clan = clanSnapshot.data();
+    const members = (clan.members || []).filter((member) => member.uid !== uid);
+    if (members.length === clan.members?.length) throw new HttpsError("failed-precondition", "Membro do clã inconsistente.");
+    if (members.length === 0) {
+      transaction.delete(clanRef);
+      if (clan.inviteCode) transaction.delete(database.collection("clanInviteCodes").doc(clan.inviteCode));
+    } else {
+      let ownerUid = clan.ownerUid;
+      if (ownerUid === uid) {
+        members[0] = { ...members[0], role: "owner" };
+        ownerUid = members[0].uid;
+      }
+      transaction.update(clanRef, { members, ownerUid });
+    }
+    transaction.update(userRef, { clanId: FieldValue.delete() });
+  });
+  return { ok: true };
+});
+
+exports.claimWeeklyEventReward = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const eventId = request.data?.eventId;
+  const eventIdentity = weeklyEventForDate(new Date());
+  if (!eventIdentity || eventId !== eventIdentity.id) throw new HttpsError("failed-precondition", "O evento semanal expirou.");
+  const userRef = database.collection("users").doc(uid);
+  const rankRef = database.collection("leaderboard").doc(uid);
+  const eventRef = userRef.collection("weeklyEvents").doc(eventId);
+  const transactionRef = userRef.collection("transactions").doc(`weekly_${eventId}`);
+  let balanceCents = 0;
+  await database.runTransaction(async (transaction) => {
+    const [userSnapshot, rankSnapshot, eventSnapshot, transactionSnapshot] = await Promise.all([
+      transaction.get(userRef), transaction.get(rankRef), transaction.get(eventRef), transaction.get(transactionRef),
+    ]);
+    if (!userSnapshot.exists || !rankSnapshot.exists || !eventSnapshot.exists) {
+      throw new HttpsError("failed-precondition", "Evento ou perfil não encontrado.");
+    }
+    const profile = userSnapshot.data();
+    const event = eventSnapshot.data();
+    const claimedIds = Array.isArray(profile.claimedWeeklyEventIds) ? profile.claimedWeeklyEventIds : [];
+    if (claimedIds.includes(eventId) || transactionSnapshot.exists) {
+      balanceCents = profile.balanceCents || 0;
+      return;
+    }
+    if ((event.progress || 0) < eventIdentity.target) {
+      throw new HttpsError("failed-precondition", "Conclua o desafio antes de resgatar a recompensa.");
+    }
+    const rewardCents = eventIdentity.rewardCents;
+    balanceCents = (profile.balanceCents || 0) + rewardCents;
+    if (!Number.isSafeInteger(balanceCents)) throw new HttpsError("failed-precondition", "Saldo resultante inválido.");
+    transaction.update(userRef, {
+      balanceCents,
+      claimedWeeklyEventIds: [...claimedIds, eventId],
+    });
+    transaction.update(rankRef, { balanceCents });
+    transaction.update(eventRef, { claimedAt: FieldValue.serverTimestamp() });
+    transaction.create(transactionRef, {
+      description: "Recompensa do evento semanal",
+      deltaCents: rewardCents,
+      type: "weekly_event_reward",
+      eventId,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+  });
+  return { ok: true, balanceCents };
+});
+
+exports.submitPlayerReport = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const requestId = request.data?.requestId;
+  if (typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)) {
+    throw new HttpsError("invalid-argument", "Identificador da denúncia inválido.");
+  }
+  const validated = validateReport({
+    reporterUid: uid,
+    targetUid: request.data?.targetUid,
+    category: request.data?.category,
+    details: request.data?.details,
+  });
+  if (!validated.valid) throw new HttpsError("invalid-argument", "Denúncia inválida ou incompleta.");
+  const reportRef = database.collection("playerReports").doc(requestId);
+  const userRef = database.collection("users").doc(uid);
+  await database.runTransaction(async (transaction) => {
+    const [existing, target, reporter] = await Promise.all([
+      transaction.get(reportRef),
+      transaction.get(database.collection("users").doc(validated.value.targetUid)),
+      transaction.get(userRef),
+    ]);
+    if (existing.exists) {
+      if (existing.get("reporterUid") === uid) return;
+      throw new HttpsError("already-exists", "Identificador de denúncia já utilizado.");
+    }
+    if (!reporter.exists || !target.exists) throw new HttpsError("not-found", "Jogador não encontrado.");
+    transaction.create(reportRef, {
+      ...validated.value,
+      status: "open",
+      reporterName: reporter.get("displayName") || "Jogador",
+      targetName: target.get("displayName") || "Jogador",
+      createdAtMs: Date.now(),
+      createdAt: FieldValue.serverTimestamp(),
+    });
+  });
+  return { ok: true };
+});
+
+exports.adminListPlayerReports = onCall(async (request) => {
+  requireAdmin(request);
+  const reports = await database.collection("playerReports")
+    .where("status", "in", ["open", "reviewing"])
+    .orderBy("createdAtMs", "desc")
+    .limit(100)
+    .get();
+  return {
+    reports: reports.docs.map((document) => ({ id: document.id, ...document.data() })),
+  };
+});
+
+exports.adminModeratePlayerReport = onCall(async (request) => {
+  const adminUid = requireAdmin(request);
+  const reportId = request.data?.reportId;
+  const nextStatus = request.data?.status;
+  const blockTarget = request.data?.blockTarget === true;
+  const reason = typeof request.data?.reason === "string" ? request.data.reason.trim() : "";
+  if (typeof reportId !== "string" || typeof nextStatus !== "string" || reason.length < 5 || reason.length > 500) {
+    throw new HttpsError("invalid-argument", "Ação, denúncia ou justificativa inválida.");
+  }
+  if (blockTarget && nextStatus !== "resolved") {
+    throw new HttpsError("invalid-argument", "Bloquear o usuário exige resolver a denúncia.");
+  }
+  const reportRef = database.collection("playerReports").doc(reportId);
+  const auditRef = database.collection("adminAuditLogs").doc(`${adminUid}_report_${reportId}_${nextStatus}`);
+  await database.runTransaction(async (transaction) => {
+    const [reportSnapshot, auditSnapshot] = await Promise.all([transaction.get(reportRef), transaction.get(auditRef)]);
+    if (!reportSnapshot.exists) throw new HttpsError("not-found", "Denúncia não encontrada.");
+    const report = reportSnapshot.data();
+    if (auditSnapshot.exists) return;
+    if (!canTransitionReport(report.status, nextStatus)) {
+      throw new HttpsError("failed-precondition", "Transição de denúncia não permitida.");
+    }
+    const targetRef = database.collection("users").doc(report.targetUid);
+    if (blockTarget) {
+      const targetSnapshot = await transaction.get(targetRef);
+      if (!targetSnapshot.exists) throw new HttpsError("not-found", "Usuário denunciado não encontrado.");
+      transaction.update(targetRef, { isBlocked: true, blockedBy: adminUid, blockedAt: FieldValue.serverTimestamp() });
+    }
+    transaction.update(reportRef, {
+      status: nextStatus,
+      reviewedBy: adminUid,
+      reviewReason: reason,
+      reviewedAt: FieldValue.serverTimestamp(),
+      targetBlocked: blockTarget,
+    });
+    transaction.create(auditRef, {
+      actorUid: adminUid,
+      action: "moderate_player_report",
+      reportId,
+      targetUid: report.targetUid,
+      status: nextStatus,
+      targetBlocked: blockTarget,
+      reason,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+  });
+  return { ok: true };
 });

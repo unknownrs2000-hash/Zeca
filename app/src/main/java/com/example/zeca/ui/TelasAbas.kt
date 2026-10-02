@@ -48,11 +48,13 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -848,6 +850,8 @@ fun TelaPerfil(
     onEquiparTitulo: (String?, (String?) -> Unit) -> Unit = { _, concluir -> concluir(null) },
     onAbrirLoja: () -> Unit,
     onSair: () -> Unit,
+    onAbrirConta: () -> Unit = {},
+    confirmarAcoesImportantes: Boolean = true,
 ) {
     var apelidoEditavel by rememberSaveable { mutableStateOf(apelido) }
     var usernameEditavel by rememberSaveable { mutableStateOf(username) }
@@ -856,6 +860,7 @@ fun TelaPerfil(
     var bioEditavel by rememberSaveable { mutableStateOf(bio) }
     var mensagemPerfil by rememberSaveable { mutableStateOf("") }
     var mensagemMoldura by rememberSaveable { mutableStateOf("") }
+    var confirmarSaida by rememberSaveable { mutableStateOf(false) }
     var enviandoFoto by remember { mutableStateOf(false) }
     val seletorFoto = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
@@ -1012,7 +1017,29 @@ fun TelaPerfil(
             if (mensagemMoldura.isNotBlank()) Text(mensagemMoldura, color = Cores.Laranja, fontSize = 12.sp)
         }
         Button(onClick = onAbrirLoja, modifier = Modifier.fillMaxWidth()) { Text("Personalizar avatar e abrir loja") }
-        TextButton(onClick = onSair, modifier = Modifier.fillMaxWidth()) { Text("Sair da conta") }
+        OutlinedButton(onClick = onAbrirConta, modifier = Modifier.fillMaxWidth()) { Text("Central da conta · amigos e configurações") }
+        TextButton(
+            onClick = {
+                if (confirmarAcoesImportantes) confirmarSaida = true else onSair()
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Sair da conta") }
+        if (confirmarSaida) {
+            AlertDialog(
+                onDismissRequest = { confirmarSaida = false },
+                title = { Text("Sair da conta?") },
+                text = { Text("Você precisará entrar novamente para acessar suas partidas e configurações.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmarSaida = false
+                        onSair()
+                    }) { Text("Sair") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmarSaida = false }) { Text("Cancelar") }
+                },
+            )
+        }
     }
 }
 
@@ -1725,4 +1752,3 @@ internal fun parseValorCentavos(texto: String): Long? {
         decimal.multiply(BigDecimal(100)).setScale(0, RoundingMode.HALF_UP).longValueExact()
     }.getOrNull()
 }
-

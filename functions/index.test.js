@@ -6,12 +6,25 @@ const {
   adminAdjustBalance,
   adminDeleteUser,
   adminListUsers,
+  adminListPlayerReports,
   adminUpdateGameSettings,
   adminUpdateUserInventory,
+  acceptSocialClanInvite,
+  claimWeeklyEventReward,
   createTugRoom,
+  createSocialClan,
   cancelJokenpoQueue,
   dissolveChatGroup,
   equipTitle,
+  getSocialDashboard,
+  getAccountSettings,
+  manageFriend,
+  saveAccountSettings,
+  publishAppAnnouncement,
+  createSupportTicket,
+  adminListSupportTickets,
+  getTugRoomMessages,
+  getTugRoomPresets,
   joinTugRoom,
   listFootballMatches,
   listTugRooms,
@@ -19,11 +32,15 @@ const {
   queueJokenpoMatch,
   placeSportsBet,
   pullTugRope,
+  requestJokenpoRematch,
   settleMySportsBets,
   sendChatMessage,
+  sendTugRoomMessage,
+  saveTugRoomPresets,
   signChatAudioUpload,
   startMines,
   startSoloChallenge,
+  submitPlayerReport,
   submitJokenpoChoice,
 } = require("./index");
 
@@ -38,6 +55,39 @@ test("admin callables reject unauthenticated and non-admin requests", async () =
   await assert.rejects(adminUpdateGameSettings(regularUser), (error) => error.code === "permission-denied");
   await assert.rejects(adminUpdateUserInventory(regularUser), (error) => error.code === "permission-denied");
   await assert.rejects(adminDeleteUser(regularUser), (error) => error.code === "permission-denied");
+  await assert.rejects(adminListPlayerReports(regularUser), (error) => error.code === "permission-denied");
+});
+
+test("social callables enforce authentication and validate payloads before database access", async () => {
+  await assert.rejects(getSocialDashboard({ auth: null, data: {} }), (error) => error.code === "unauthenticated");
+  await assert.rejects(claimWeeklyEventReward({ auth: null, data: {} }), (error) => error.code === "unauthenticated");
+  await assert.rejects(acceptSocialClanInvite({ auth: null, data: {} }), (error) => error.code === "unauthenticated");
+  await assert.rejects(
+    createSocialClan({
+      auth: { uid: "player", token: {} },
+      data: {
+        name: "Equipe",
+        description: "",
+        policy: "unrestricted",
+        requestId: "123e4567-e89b-42d3-a456-426614174000",
+      },
+    }),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    submitPlayerReport({
+      auth: { uid: "player", token: {} },
+      data: { targetUid: "other", category: "spam", details: "Mensagem repetida" },
+    }),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    requestJokenpoRematch({
+      auth: { uid: "player", token: {} },
+      data: { matchId: "bad", requestId: "bad" },
+    }),
+    (error) => error.code === "invalid-argument",
+  );
 });
 
 test("admin inventory changes reject unknown items before accessing Firestore", async () => {
@@ -137,6 +187,82 @@ test("audio upload signing and chat sending require authentication", async () =>
     (error) => error.code === "unauthenticated",
   );
 });
+
+test("room presets and game chat validate authentication and payloads before database access", async () => {
+  await assert.rejects(getTugRoomPresets({ auth: null, data: {} }), (error) => error.code === "unauthenticated");
+  await assert.rejects(getTugRoomMessages({ auth: null, data: {} }), (error) => error.code === "unauthenticated");
+  await assert.rejects(sendTugRoomMessage({ auth: null, data: {} }), (error) => error.code === "unauthenticated");
+
+  const player = { auth: { uid: "player", token: {} } };
+  await assert.rejects(
+    getTugRoomMessages({ ...player, data: { roomId: "bad" } }),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    sendTugRoomMessage({
+      ...player,
+      data: { roomId: "bad", requestId: "bad", text: "Olá" },
+    }),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    saveTugRoomPresets({ ...player, data: { presets: Array(6).fill({}) } }),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    saveTugRoomPresets({
+      ...player,
+      data: {
+        presets: [{
+          name: "Inválida",
+          mode: "1v1",
+          gameId: "teamRace",
+          stakeCents: 100,
+        }],
+      },
+    }),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    manageTugRoom({
+      ...player,
+      data: {
+        roomId: "123e4567-e89b-42d3-a456-426614174000",
+        action: "transferLeadership",
+        requestId: "123e4567-e89b-42d3-a456-426614174001",
+        targetUid: "",
+      },
+    }),
+    (error) => error.code === "invalid-argument",
+  );
+});
+
+test("account, friendship, announcement and support callables authenticate and validate requests", async () => {
+  await assert.rejects(getAccountSettings({ auth: null, data: {} }), (error) => error.code === "unauthenticated");
+  await assert.rejects(manageFriend({ auth: null, data: {} }), (error) => error.code === "unauthenticated");
+  await assert.rejects(saveAccountSettings({ auth: null, data: {} }), (error) => error.code === "unauthenticated");
+  await assert.rejects(createSupportTicket({ auth: null, data: {} }), (error) => error.code === "unauthenticated");
+  await assert.rejects(adminListSupportTickets({ auth: null, data: {} }), (error) => error.code === "unauthenticated");
+  await assert.rejects(publishAppAnnouncement({ auth: null, data: {} }), (error) => error.code === "unauthenticated");
+
+  const player = { auth: { uid: "player", token: {} }, data: {} };
+  await assert.rejects(manageFriend({ ...player, data: { action: "not-an-action" } }), (error) => error.code === "invalid-argument");
+  await assert.rejects(
+    saveAccountSettings({ ...player, data: { settings: { profileVisibility: "world" } } }),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    saveAccountSettings({ ...player, data: { settings: { privateKey: "secret" } } }),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    createSupportTicket({
+      ...player,
+      data: { title: "Oi", details: "Curto", category: "help" },
+    }),
+    (error) => error.code === "invalid-argument",
+  );
+});
 test("chat audio rejects untrusted URLs before accessing Firestore", async () => {
   await assert.rejects(
     sendChatMessage({
@@ -210,6 +336,13 @@ test("tug rooms and sports bets reject invalid stakes and duplicate or unknown s
   );
   await assert.rejects(
     createTugRoom({ auth: { uid, token: {} }, data: { stakeCents: 100, requestId, invitedUids: [], password: "", mode: "1v1", gameId: "teamRace" } }),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    createTugRoom({
+      auth: { uid, token: {} },
+      data: { stakeCents: 100, requestId, invitedUids: [], password: "", clanId: "not-a-clan" },
+    }),
     (error) => error.code === "invalid-argument",
   );
   await assert.rejects(

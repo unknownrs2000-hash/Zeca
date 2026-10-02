@@ -2,7 +2,36 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { applyTugPull, teamQuizQuestion } = require("./tug-logic");
+const {
+  applyTugPull,
+  chooseBalancedTeam,
+  recordCompletedRoomExit,
+  teamQuizQuestion,
+  COMPLETED_ROOM_RETENTION_MS,
+} = require("./tug-logic");
+
+test("completed tug rooms start two-minute cleanup after every player exits", () => {
+  const room = {
+    status: "settled",
+    players: [
+      { uid: "a", team: "A" },
+      { uid: "b", team: "B" },
+    ],
+    exitedUids: [],
+  };
+  const firstExit = recordCompletedRoomExit(room, "a", 1_000);
+  assert.deepEqual(firstExit.exitedUids, ["a"]);
+  assert.equal(firstExit.cleanupAfterMs, 0);
+
+  const lastExit = recordCompletedRoomExit({ ...room, ...firstExit }, "b", 1_500);
+  assert.deepEqual(lastExit.exitedUids, ["a", "b"]);
+  assert.equal(lastExit.cleanupAfterMs, 1_500 + COMPLETED_ROOM_RETENTION_MS);
+
+  const repeatedExit = recordCompletedRoomExit({ ...room, ...firstExit, ...lastExit }, "a", 9_000);
+  assert.equal(repeatedExit.cleanupAfterMs, lastExit.cleanupAfterMs);
+  assert.throws(() => recordCompletedRoomExit(room, "outsider", 1_000), /not-a-player/);
+  assert.throws(() => recordCompletedRoomExit({ ...room, status: "active" }, "a", 1_000), /room-not-settled/);
+});
 
 test("tug pulls are restricted to active room members and rate limited", () => {
   const room = {
@@ -54,6 +83,17 @@ test("2v2 teammates contribute to the same team pull count", () => {
   assert.equal(room.teamAPulls, 2);
   room = { ...room, ...applyTugPull(room, "b1", 1_120) };
   assert.equal(room.teamBPulls, 1);
+});
+
+test("automatically assigns the next teammate to the lower-skill team", () => {
+  assert.equal(chooseBalancedTeam([
+    { uid: "a1", team: "A", skill: 12 },
+    { uid: "b1", team: "B", skill: 4 },
+  ], 6), "B");
+  assert.equal(chooseBalancedTeam([
+    { uid: "a1", team: "A", skill: 3 },
+    { uid: "b1", team: "B", skill: 3 },
+  ], 2), "B");
 });
 
 test("batched taps are partially accepted at the rate limit and settle at the winning margin", () => {

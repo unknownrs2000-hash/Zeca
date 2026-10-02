@@ -13,7 +13,7 @@ app.get("/", (_req, res) => res.send("zeca-server ok"));
 
 app.post("/call/:name", async (req, res) => {
   const { name } = req.params;
-  if (!Object.hasOwn(handlers, name)) {
+  if (name.startsWith("_") || !Object.hasOwn(handlers, name)) {
     return res.status(404).json({ error: { code: "not-found", message: "Função não encontrada." } });
   }
   try {
@@ -53,4 +53,13 @@ app.post("/call/:name", async (req, res) => {
 });
 
 const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`zeca-server na porta ${port}`));
+app.listen(port, () => {
+  console.log(`zeca-server na porta ${port}`);
+  const sweepExpiredRooms = () => {
+    handlers._cleanupExpiredTugRooms().catch((error) => {
+      console.error("Falha ao remover salas concluídas expiradas:", error);
+    });
+  };
+  sweepExpiredRooms();
+  setInterval(sweepExpiredRooms, 30_000);
+});

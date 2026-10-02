@@ -57,6 +57,8 @@ import com.example.zeca.ApostaEsportiva
 import com.example.zeca.PernaApostaEsportiva
 import com.example.zeca.PartidaEsportiva
 import com.example.zeca.SalaCaboGuerra
+import com.example.zeca.PredefinicaoSala
+import com.example.zeca.MensagemSalaJogo
 import com.example.zeca.JogadorRanking
 import com.example.zeca.ResultadoCrash
 import com.example.zeca.ResultadoJogo
@@ -98,6 +100,7 @@ fun TelaJogos(
     saldoCentavos: Long,
     partidas: Int,
     uidAtual: String,
+    clanId: String,
     jogadores: List<JogadorRanking>,
     roomInviteId: String,
     onRoomInviteHandled: () -> Unit,
@@ -108,12 +111,17 @@ fun TelaJogos(
     onApostarEsportiva: (List<PernaApostaEsportiva>, Long, String, (Exception?) -> Unit) -> Unit,
     onLiquidarApostasEsportivas: ((Int?, Exception?) -> Unit) -> Unit,
     onCarregarSalasCaboGuerra: ((List<SalaCaboGuerra>, Exception?) -> Unit) -> Unit,
+    onCarregarPredefinicoesSala: ((List<PredefinicaoSala>, Exception?) -> Unit) -> Unit,
+    onSalvarPredefinicoesSala: (List<PredefinicaoSala>, (Exception?) -> Unit) -> Unit,
+    onCarregarMensagensSala: (String, (List<MensagemSalaJogo>, Exception?) -> Unit) -> Unit,
+    onEnviarMensagemSala: (String, String, String, String, (Exception?) -> Unit) -> Unit,
     onObservarFilaJokenpo: ((String, String, Boolean) -> Unit) -> ListenerRegistration,
     onObservarPartidaJokenpo: (String, (PartidaJokenpo?, Exception?) -> Unit) -> ListenerRegistration,
     onBuscarAdversarioJokenpo: (String, String, (String, String, Exception?) -> Unit) -> Unit,
     onCancelarFilaJokenpo: ((Exception?) -> Unit) -> Unit,
     onJogarJokenpo: (String, String, String, (ResultadoJokenpo?, Exception?) -> Unit) -> Unit,
-    onCriarSalaCaboGuerra: (Long, List<String>, String, String, String, String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
+    onPedirRevancheJokenpo: (String, String, (String, String, Exception?) -> Unit) -> Unit,
+    onCriarSalaCaboGuerra: (Long, List<String>, String, String, String, String, String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
     onEntrarSalaCaboGuerra: (String, String, String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
     onGerenciarSalaCaboGuerra: (String, String, String, String, Long, String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
     onIniciarSalaCaboGuerra: (String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
@@ -645,9 +653,11 @@ fun TelaJogos(
                     onBuscarAdversario = onBuscarAdversarioJokenpo,
                     onCancelarFila = onCancelarFilaJokenpo,
                     onJogar = onJogarJokenpo,
+                    onPedirRevanche = onPedirRevancheJokenpo,
                 )
                 "Cabo de guerra", "Corrida em equipe", "Revezamento", "Quiz relâmpago" -> TelaCaboGuerra(
                     uidAtual = uidAtual,
+                    clanId = clanId,
                     modoInicial = categoriaJogos,
                     gameIdInicial = when (jogo) {
                         "Corrida em equipe" -> "teamRace"
@@ -660,6 +670,10 @@ fun TelaJogos(
                     roomInviteId = roomInviteId,
                     onRoomInviteHandled = onRoomInviteHandled,
                     onCarregarSalas = onCarregarSalasCaboGuerra,
+                    onCarregarPredefinicoes = onCarregarPredefinicoesSala,
+                    onSalvarPredefinicoes = onSalvarPredefinicoesSala,
+                    onCarregarMensagens = onCarregarMensagensSala,
+                    onEnviarMensagem = onEnviarMensagemSala,
                     onCriarSala = onCriarSalaCaboGuerra,
                     onEntrarSala = onEntrarSalaCaboGuerra,
                     onGerenciarSala = onGerenciarSalaCaboGuerra,

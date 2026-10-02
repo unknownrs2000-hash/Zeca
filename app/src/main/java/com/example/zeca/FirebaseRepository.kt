@@ -11,6 +11,24 @@ import com.google.firebase.functions.FirebaseFunctions
 import com.google.firebase.functions.FirebaseFunctionsException
 import android.content.ContentResolver
 import android.net.Uri
+import com.example.zeca.ui.CategoriaDenuncia
+import com.example.zeca.ui.ClaSocial
+import com.example.zeca.ui.ConquistaSocial
+import com.example.zeca.ui.ConviteClaSocial
+import com.example.zeca.ui.DenunciaSocial
+import com.example.zeca.ui.EntradaRankingCla
+import com.example.zeca.ui.EstatisticaJogoSocial
+import com.example.zeca.ui.EventoSemanal
+import com.example.zeca.ui.MembroClã
+import com.example.zeca.ui.PartidaHistoricoSocial
+import com.example.zeca.ui.PoliticaCla
+import com.example.zeca.ui.RascunhoCla
+import java.text.SimpleDateFormat
+import java.math.BigDecimal
+import java.text.NumberFormat
+import java.util.Date
+import java.util.Locale
+import java.util.UUID
 
 data class PerfilJogador(
     val uid: String,
@@ -33,6 +51,7 @@ data class PerfilJogador(
     val avatarComoFotoPerfil: Boolean = false,
     val tituloEquipado: String = "",
     val bio: String = "",
+    val clanId: String = "",
 )
 
 data class JogadorRanking(
@@ -318,6 +337,7 @@ data class MembroSalaCaboGuerra(
     val uid: String,
     val nome: String,
     val time: String,
+    val online: Boolean = false,
 )
 
 data class SalaCaboGuerra(
@@ -345,6 +365,8 @@ data class SalaCaboGuerra(
     val puxoesAceitos: Int = 0,
     val gameId: String = "tug",
     val ultimoJogadorPorTime: Map<String, String> = emptyMap(),
+    val jogadoresQueSairam: List<String> = emptyList(),
+    val clanId: String = "",
 )
 
 data class PartidaJokenpo(
@@ -356,6 +378,8 @@ data class PartidaJokenpo(
     val vencedorUid: String,
     val resultado: String,
     val gameId: String = "rps",
+    val revengeRequestedBy: List<String> = emptyList(),
+    val revengeExpiresAtMs: Long = 0L,
 )
 
 data class ResultadoJokenpo(
@@ -377,6 +401,7 @@ private fun Map<*, *>.toSalaCaboGuerra(): SalaCaboGuerra? {
             uid = uid,
             nome = player["name"] as? String ?: "Jogador",
             time = player["team"] as? String ?: "A",
+            online = player["online"] as? Boolean ?: false,
         )
     }.orEmpty().ifEmpty {
         buildList {
@@ -418,6 +443,8 @@ private fun Map<*, *>.toSalaCaboGuerra(): SalaCaboGuerra? {
             }
             ?.toMap()
             .orEmpty(),
+        jogadoresQueSairam = (this["exitedUids"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
+        clanId = this["clanId"] as? String ?: "",
     )
 }
 
@@ -434,6 +461,97 @@ data class EstadoBlackjack(
     val premioCentavos: Long,
     val lucroCentavos: Long,
     val saldoCentavos: Long,
+)
+
+data class ResultadoRecursosSociais(
+    val clas: List<ClaSocial> = emptyList(),
+    val convites: List<ConviteClaSocial> = emptyList(),
+    val atualizacoesDenuncias: List<AtualizacaoDenuncia> = emptyList(),
+    val claAtualId: String? = null,
+    val rankingClas: List<EntradaRankingCla> = emptyList(),
+    val eventoSemanal: EventoSemanal? = null,
+    val conquistas: List<ConquistaSocial> = emptyList(),
+    val historico: List<PartidaHistoricoSocial> = emptyList(),
+    val estatisticasPorJogo: List<EstatisticaJogoSocial> = emptyList(),
+)
+
+data class DenunciaModeracao(
+    val id: String,
+    val denunciante: String,
+    val usuarioAlvoId: String,
+    val usuarioAlvo: String,
+    val categoria: String,
+    val detalhes: String,
+    val status: String,
+)
+
+data class PredefinicaoSala(
+    val nome: String,
+    val modo: String,
+    val gameId: String,
+    val apostaCentavos: Long,
+)
+
+data class AtualizacaoDenuncia(
+    val id: String,
+    val categoria: String,
+    val status: String,
+    val motivo: String,
+    val criadaEmMs: Long,
+)
+
+data class MensagemSalaJogo(
+    val id: String,
+    val uid: String,
+    val nome: String,
+    val texto: String,
+    val rapida: Boolean,
+    val enviadaEmMs: Long,
+)
+
+data class PreferenciasConta(
+    val profileVisibility: String = "public",
+    val customStatus: String = "",
+    val theme: String = "dark",
+    val locale: String = "pt-BR",
+    val accessibilityFontScale: Double = 1.0,
+    val highContrast: Boolean = false,
+    val reduceMotion: Boolean = false,
+    val confirmImportant: Boolean = true,
+    val personalizedRecommendations: Boolean = true,
+    val syncSettings: Boolean = true,
+) {
+    fun paraMapa(): Map<String, Any> = mapOf(
+        "profileVisibility" to profileVisibility,
+        "customStatus" to customStatus,
+        "theme" to theme,
+        "locale" to locale,
+        "accessibilityFontScale" to accessibilityFontScale,
+        "highContrast" to highContrast,
+        "reduceMotion" to reduceMotion,
+        "confirmImportant" to confirmImportant,
+        "personalizedRecommendations" to personalizedRecommendations,
+        "syncSettings" to syncSettings,
+    )
+}
+
+data class AmigoConta(
+    val uid: String,
+    val nome: String,
+    val username: String,
+    val status: String = "",
+    val online: Boolean = false,
+)
+data class AlteracaoConta(val id: String, val fields: List<String>, val createdAtMs: Long)
+data class AvisoApp(val id: String, val title: String, val details: String, val type: String, val expiresAtMs: Long)
+data class RecomendacaoJogo(val gameId: String, val played: Int, val wins: Int)
+data class PainelConta(
+    val preferences: PreferenciasConta = PreferenciasConta(),
+    val friends: List<AmigoConta> = emptyList(),
+    val friendRequests: List<AmigoConta> = emptyList(),
+    val activity: List<AlteracaoConta> = emptyList(),
+    val announcements: List<AvisoApp> = emptyList(),
+    val recommendations: List<RecomendacaoJogo> = emptyList(),
 )
 
 object FirebaseRepository {
@@ -1079,6 +1197,11 @@ object FirebaseRepository {
                     gameId = document.getString("gameId")
                         ?.let { if (it == "jokenpo") "rps" else it }
                         ?: "rps",
+                    revengeRequestedBy = (document.get("rematchRequests") as? Map<*, *>)
+                        ?.keys
+                        ?.filterIsInstance<String>()
+                        .orEmpty(),
+                    revengeExpiresAtMs = document.getLong("rematchExpiresAtMs") ?: 0L,
                 )
             }
             callback(match, error)
@@ -1102,6 +1225,23 @@ object FirebaseRepository {
                 )
             }
             callback(result, error)
+        }
+    }
+
+    fun pedirRevancheJokenpo(
+        matchId: String,
+        requestId: String,
+        callback: (String, String, Exception?) -> Unit,
+    ) {
+        chamarFunction(
+            "requestJokenpoRematch",
+            mapOf("matchId" to matchId, "requestId" to requestId),
+        ) { data, error ->
+            callback(
+                data?.get("status") as? String ?: "",
+                data?.get("matchId") as? String ?: "",
+                error,
+            )
         }
     }
 
@@ -1658,12 +1798,88 @@ object FirebaseRepository {
         }
     }
 
+    fun carregarPredefinicoesSala(callback: (List<PredefinicaoSala>, Exception?) -> Unit) {
+        chamarFunction("getTugRoomPresets", emptyMap()) { data, error ->
+            if (data == null || error != null) {
+                callback(emptyList(), error ?: IllegalStateException("Resposta de predefinições vazia."))
+                return@chamarFunction
+            }
+            val values = (data["presets"] as? List<*>).orEmpty().mapNotNull { raw ->
+                val item = raw as? Map<*, *> ?: return@mapNotNull null
+                val name = item["name"] as? String ?: return@mapNotNull null
+                val gameId = item["gameId"] as? String ?: return@mapNotNull null
+                val mode = item["mode"] as? String ?: return@mapNotNull null
+                val stake = (item["stakeCents"] as? Number)?.toLong() ?: return@mapNotNull null
+                PredefinicaoSala(name, mode, gameId, stake)
+            }
+            callback(values, null)
+        }
+    }
+
+    fun carregarMensagensSala(
+        roomId: String,
+        callback: (List<MensagemSalaJogo>, Exception?) -> Unit,
+    ) {
+        chamarFunction("getTugRoomMessages", mapOf("roomId" to roomId)) { data, error ->
+            val messages = (data?.get("messages") as? List<*>).orEmpty().mapNotNull { raw ->
+                val item = raw as? Map<*, *> ?: return@mapNotNull null
+                MensagemSalaJogo(
+                    id = item["id"] as? String ?: return@mapNotNull null,
+                    uid = item["senderUid"] as? String ?: "",
+                    nome = item["senderName"] as? String ?: "Jogador",
+                    texto = item["text"] as? String ?: "",
+                    rapida = item["quickMessage"] as? Boolean ?: false,
+                    enviadaEmMs = (item["createdAtMs"] as? Number)?.toLong() ?: 0L,
+                )
+            }
+            callback(messages, error)
+        }
+    }
+
+    fun enviarMensagemSala(
+        roomId: String,
+        text: String,
+        quickMessageId: String,
+        requestId: String,
+        callback: (Exception?) -> Unit,
+    ) {
+        chamarFunction(
+            "sendTugRoomMessage",
+            mapOf(
+                "roomId" to roomId,
+                "text" to text,
+                "quickMessageId" to quickMessageId,
+                "requestId" to requestId,
+            ),
+        ) { _, error -> callback(error) }
+    }
+
+    fun salvarPredefinicoesSala(
+        presets: List<PredefinicaoSala>,
+        callback: (Exception?) -> Unit,
+    ) {
+        chamarFunction(
+            "saveTugRoomPresets",
+            mapOf(
+                "presets" to presets.map { preset ->
+                    mapOf(
+                        "name" to preset.nome,
+                        "mode" to preset.modo,
+                        "gameId" to preset.gameId,
+                        "stakeCents" to preset.apostaCentavos,
+                    )
+                },
+            ),
+        ) { _, error -> callback(error) }
+    }
+
     fun criarSalaCaboGuerra(
         apostaCentavos: Long,
         convitesUids: List<String>,
         senha: String,
         modo: String,
         gameId: String,
+        clanId: String,
         requestId: String,
         callback: (SalaCaboGuerra?, Exception?) -> Unit,
     ) {
@@ -1675,6 +1891,7 @@ object FirebaseRepository {
                 "password" to senha,
                 "mode" to modo,
                 "gameId" to gameId,
+                "clanId" to clanId,
                 "requestId" to requestId,
             ),
         ) { data, error -> callback(data?.toSalaCaboGuerra(), error) }
@@ -1824,6 +2041,401 @@ object FirebaseRepository {
         chamarFunction("buyCosmetic", mapOf("itemId" to itemId)) { _, error ->
             callback(error?.localizedMessage)
         }
+    }
+
+    fun carregarRecursosSociais(callback: (ResultadoRecursosSociais?, Exception?) -> Unit) {
+        chamarFunction("getSocialDashboard", emptyMap()) { data, erro ->
+            if (erro != null || data == null) {
+                callback(null, erro ?: IllegalStateException("Resposta social vazia."))
+                return@chamarFunction
+            }
+            callback(data.toResultadoRecursosSociais(), null)
+        }
+    }
+
+    fun carregarPainelConta(callback: (PainelConta?, Exception?) -> Unit) {
+        chamarFunction("getAccountSettings", emptyMap()) { data, error ->
+            if (data == null || error != null) {
+                callback(null, error ?: IllegalStateException("Resposta de configurações vazia."))
+                return@chamarFunction
+            }
+            val settings = data["settings"] as? Map<*, *> ?: emptyMap<Any, Any>()
+            fun accountList(key: String): List<AmigoConta> =
+                (data[key] as? List<*>).orEmpty().mapNotNull { raw ->
+                    val item = raw as? Map<*, *> ?: return@mapNotNull null
+                    val uid = item["uid"] as? String ?: return@mapNotNull null
+                    AmigoConta(
+                        uid = uid,
+                        nome = item["displayName"] as? String ?: "Jogador",
+                        username = item["username"] as? String ?: "",
+                        status = item["status"] as? String ?: "",
+                        online = item["online"] as? Boolean ?: false,
+                    )
+                }
+            val activity = (data["activity"] as? List<*>).orEmpty().mapNotNull { raw ->
+                val item = raw as? Map<*, *> ?: return@mapNotNull null
+                AlteracaoConta(
+                    id = item["id"] as? String ?: return@mapNotNull null,
+                    fields = (item["fields"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
+                    createdAtMs = (item["createdAtMs"] as? Number)?.toLong() ?: 0L,
+                )
+            }
+            val announcements = (data["announcements"] as? List<*>).orEmpty().mapNotNull { raw ->
+                val item = raw as? Map<*, *> ?: return@mapNotNull null
+                AvisoApp(
+                    id = item["id"] as? String ?: return@mapNotNull null,
+                    title = item["title"] as? String ?: "Aviso",
+                    details = item["details"] as? String ?: "",
+                    type = item["type"] as? String ?: "news",
+                    expiresAtMs = (item["expiresAtMs"] as? Number)?.toLong() ?: 0L,
+                )
+            }
+            val recommendations = (data["recommendations"] as? List<*>).orEmpty().mapNotNull { raw ->
+                val item = raw as? Map<*, *> ?: return@mapNotNull null
+                RecomendacaoJogo(
+                    gameId = item["gameId"] as? String ?: return@mapNotNull null,
+                    played = (item["played"] as? Number)?.toInt() ?: 0,
+                    wins = (item["wins"] as? Number)?.toInt() ?: 0,
+                )
+            }
+            callback(
+                PainelConta(
+                    preferences = PreferenciasConta(
+                        profileVisibility = settings["profileVisibility"] as? String ?: "public",
+                        customStatus = settings["customStatus"] as? String ?: "",
+                        theme = settings["theme"] as? String ?: "dark",
+                        locale = settings["locale"] as? String ?: "pt-BR",
+                        accessibilityFontScale = (settings["accessibilityFontScale"] as? Number)?.toDouble() ?: 1.0,
+                        highContrast = settings["highContrast"] as? Boolean ?: false,
+                        reduceMotion = settings["reduceMotion"] as? Boolean ?: false,
+                        confirmImportant = settings["confirmImportant"] as? Boolean ?: true,
+                        personalizedRecommendations = settings["personalizedRecommendations"] as? Boolean ?: true,
+                        syncSettings = settings["syncSettings"] as? Boolean ?: true,
+                    ),
+                    friends = accountList("friends"),
+                    friendRequests = accountList("friendRequests"),
+                    activity = activity,
+                    announcements = announcements,
+                    recommendations = recommendations,
+                ),
+                null,
+            )
+        }
+    }
+
+    fun salvarPreferenciasConta(preferences: PreferenciasConta, callback: (Exception?) -> Unit) {
+        chamarFunction("saveAccountSettings", mapOf("settings" to preferences.paraMapa())) { _, error ->
+            callback(error)
+        }
+    }
+
+    fun gerenciarAmigo(action: String, username: String = "", targetUid: String = "", callback: (Exception?) -> Unit) {
+        chamarFunction(
+            "manageFriend",
+            mapOf("action" to action, "username" to username, "targetUid" to targetUid),
+        ) { _, error -> callback(error) }
+    }
+
+    fun publicarAvisoApp(title: String, details: String, type: String, expiresAtMs: Long, callback: (Exception?) -> Unit) {
+        chamarFunction(
+            "publishAppAnnouncement",
+            mapOf("title" to title, "details" to details, "type" to type, "expiresAtMs" to expiresAtMs),
+        ) { _, error -> callback(error) }
+    }
+
+    fun enviarSolicitacaoSuporte(title: String, details: String, category: String, callback: (Exception?) -> Unit) {
+        chamarFunction(
+            "createSupportTicket",
+            mapOf("title" to title, "details" to details, "category" to category),
+        ) { _, error -> callback(error) }
+    }
+
+    fun carregarSolicitacoesSuporteAdmin(callback: (List<Map<String, Any>>, Exception?) -> Unit) {
+        chamarFunction("adminListSupportTickets", emptyMap()) { data, error ->
+            val tickets = (data?.get("tickets") as? List<*>).orEmpty().mapNotNull { it as? Map<*, *> }
+                .mapNotNull { item ->
+                    val id = item["id"] as? String ?: return@mapNotNull null
+                    item.entries.mapNotNull { (key, value) ->
+                        val stringKey = key as? String ?: return@mapNotNull null
+                        value?.let { stringKey to it }
+                    }.toMap().plus("id" to id)
+                }
+            callback(tickets, error)
+        }
+    }
+
+    fun criarCla(rascunho: RascunhoCla, callback: (Exception?) -> Unit) {
+        executarAcaoSocial(
+            "createSocialClan",
+            mapOf(
+                "name" to rascunho.nome,
+                "description" to rascunho.descricao,
+                "requestId" to UUID.randomUUID().toString(),
+                "policy" to when (rascunho.politica) {
+                    PoliticaCla.PUBLICO -> "public"
+                    PoliticaCla.CONVITE -> "private"
+                    PoliticaCla.APROVACAO -> "approval"
+                },
+            ),
+            callback,
+        )
+    }
+
+    fun entrarCla(clanId: String, callback: (Exception?) -> Unit) =
+        executarAcaoSocial("joinSocialClan", mapOf("clanId" to clanId), callback)
+
+    fun solicitarEntradaCla(clanId: String, callback: (Exception?) -> Unit) =
+        executarAcaoSocial("requestSocialClanJoin", mapOf("clanId" to clanId), callback)
+
+    fun entrarComConvite(codigo: String, callback: (Exception?) -> Unit) =
+        executarAcaoSocial("joinSocialClanByInvite", mapOf("code" to codigo), callback)
+
+    fun aceitarConviteCla(clanId: String, callback: (Exception?) -> Unit) =
+        executarAcaoSocial("acceptSocialClanInvite", mapOf("clanId" to clanId), callback)
+
+    fun sairCla(clanId: String, callback: (Exception?) -> Unit) =
+        executarAcaoSocial("leaveSocialClan", mapOf("clanId" to clanId), callback)
+
+    fun convidarUsuario(clanId: String, usuarioId: String, callback: (Exception?) -> Unit) =
+        executarAcaoSocial(
+            "inviteSocialClanMember",
+            mapOf("clanId" to clanId, "targetUid" to usuarioId),
+            callback,
+        )
+
+    fun aprovarSolicitacaoCla(clanId: String, usuarioId: String, callback: (Exception?) -> Unit) =
+        executarAcaoSocial(
+            "approveSocialClanRequest",
+            mapOf("clanId" to clanId, "targetUid" to usuarioId, "approve" to true),
+            callback,
+        )
+
+    fun removerMembroCla(clanId: String, usuarioId: String, callback: (Exception?) -> Unit) =
+        executarAcaoSocial(
+            "removeSocialClanMember",
+            mapOf("clanId" to clanId, "targetUid" to usuarioId),
+            callback,
+        )
+
+    fun resgatarRecompensaSemanal(eventId: String, callback: (Exception?) -> Unit) =
+        executarAcaoSocial("claimWeeklyEventReward", mapOf("eventId" to eventId), callback)
+
+    fun enviarDenuncia(denuncia: DenunciaSocial, callback: (Exception?) -> Unit) {
+        val categoria = when (denuncia.categoria) {
+            CategoriaDenuncia.ASSÉDIO -> "harassment"
+            CategoriaDenuncia.TRAPAÇA -> "cheating"
+            CategoriaDenuncia.SPAM -> "spam"
+            CategoriaDenuncia.CONTEUDO -> "inappropriate_content"
+            CategoriaDenuncia.OUTRO -> "other"
+        }
+        executarAcaoSocial(
+            "submitPlayerReport",
+            mapOf(
+                "targetUid" to denuncia.usuarioAlvoId.orEmpty(),
+                "category" to categoria,
+                "details" to denuncia.detalhes,
+                "requestId" to UUID.randomUUID().toString(),
+            ),
+            callback,
+        )
+    }
+
+    fun listarDenunciasAdmin(callback: (List<DenunciaModeracao>, Exception?) -> Unit) {
+        chamarFunction("adminListPlayerReports", emptyMap()) { data, erro ->
+            if (erro != null || data == null) {
+                callback(emptyList(), erro ?: IllegalStateException("Resposta de moderação vazia."))
+                return@chamarFunction
+            }
+            val reports = (data["reports"] as? List<*>).orEmpty().mapNotNull { item ->
+                val report = item as? Map<*, *> ?: return@mapNotNull null
+                DenunciaModeracao(
+                    id = report["id"] as? String ?: return@mapNotNull null,
+                    denunciante = report["reporterName"] as? String ?: "Jogador",
+                    usuarioAlvoId = report["targetUid"] as? String ?: "",
+                    usuarioAlvo = report["targetName"] as? String ?: "Jogador",
+                    categoria = report["category"] as? String ?: "other",
+                    detalhes = report["details"] as? String ?: "",
+                    status = report["status"] as? String ?: "open",
+                )
+            }
+            callback(reports, null)
+        }
+    }
+
+    fun moderarDenuncia(
+        reportId: String,
+        status: String,
+        bloquearAlvo: Boolean,
+        motivo: String,
+        callback: (Exception?) -> Unit,
+    ) = executarAcaoSocial(
+        "adminModeratePlayerReport",
+        mapOf(
+            "reportId" to reportId,
+            "status" to status,
+            "blockTarget" to bloquearAlvo,
+            "reason" to motivo,
+        ),
+        callback,
+    )
+
+    private fun executarAcaoSocial(
+        functionName: String,
+        data: Map<String, Any>,
+        callback: (Exception?) -> Unit,
+    ) {
+        chamarFunction(functionName, data) { _, error -> callback(error) }
+    }
+
+    private fun Map<String, Any>.toResultadoRecursosSociais(): ResultadoRecursosSociais {
+        fun objectMap(value: Any?): Map<*, *> = value as? Map<*, *> ?: emptyMap<Any, Any>()
+        fun string(value: Any?, fallback: String = ""): String = value as? String ?: fallback
+        fun integer(value: Any?): Int = (value as? Number)?.toInt() ?: 0
+        val clans = (this["clans"] as? List<*>).orEmpty().mapNotNull { value ->
+            val clan = value as? Map<*, *> ?: return@mapNotNull null
+            val policy = when (string(clan["policy"])) {
+                "private" -> PoliticaCla.CONVITE
+                "approval" -> PoliticaCla.APROVACAO
+                else -> PoliticaCla.PUBLICO
+            }
+            val members = (clan["members"] as? List<*>).orEmpty().mapNotNull { memberValue ->
+                val member = memberValue as? Map<*, *> ?: return@mapNotNull null
+                val memberId = string(member["userId"])
+                if (memberId.isBlank()) return@mapNotNull null
+                MembroClã(
+                    userId = memberId,
+                    nome = string(member["name"], "Jogador"),
+                    isLider = member["isLeader"] == true,
+                    pontuacaoSemanal = integer(member["weeklyScore"]),
+                )
+            }
+            val pending = (clan["pendingRequests"] as? List<*>).orEmpty().mapNotNull { pendingValue ->
+                val pendingMember = pendingValue as? Map<*, *> ?: return@mapNotNull null
+                val pendingId = string(pendingMember["userId"])
+                if (pendingId.isBlank()) return@mapNotNull null
+                MembroClã(pendingId, string(pendingMember["name"], "Jogador"))
+            }
+            val clanId = string(clan["id"])
+            if (clanId.isBlank()) return@mapNotNull null
+            ClaSocial(
+                id = clanId,
+                nome = string(clan["name"], "Clã"),
+                descricao = string(clan["description"]),
+                politica = policy,
+                membros = members,
+                liderId = string(clan["leaderId"]),
+                codigoConvite = string(clan["inviteCode"]).ifBlank { null },
+                solicitacoesPendentes = pending,
+                pontuacaoSemanal = integer(clan["weeklyScore"]),
+            )
+        }
+        val ranking = (this["clanRanking"] as? List<*>).orEmpty().mapNotNull { value ->
+            val entry = value as? Map<*, *> ?: return@mapNotNull null
+            EntradaRankingCla(
+                posicao = integer(entry["position"]),
+                claId = string(entry["clanId"]),
+                nomeCla = string(entry["name"], "Clã"),
+                pontuacao = integer(entry["score"]),
+            )
+        }
+        val invitations = (this["clanInvitations"] as? List<*>).orEmpty().mapNotNull { value ->
+            val invitation = value as? Map<*, *> ?: return@mapNotNull null
+            val id = string(invitation["clanId"])
+            if (id.isBlank()) return@mapNotNull null
+            ConviteClaSocial(
+                clanId = id,
+                nomeCla = string(invitation["clanName"], "Clã"),
+                convidadoPor = string(invitation["invitedBy"]),
+            )
+        }
+        val event = objectMap(this["event"]).takeIf { it.isNotEmpty() }?.let { value ->
+            EventoSemanal(
+                id = string(value["id"]),
+                tema = string(value["title"], "Semana de jogos"),
+                descricao = string(value["description"]),
+                progresso = integer(value["progress"]),
+                meta = integer(value["target"]).coerceAtLeast(1),
+                recompensa = NumberFormat.getCurrencyInstance(Locale.forLanguageTag("pt-BR"))
+                    .format(BigDecimal.valueOf(integer(value["rewardCents"]).toLong(), 2)),
+                recompensaResgatada = value["claimed"] == true,
+            )
+        }
+        val achievements = (this["achievements"] as? List<*>).orEmpty().mapNotNull { value ->
+            val achievement = value as? Map<*, *> ?: return@mapNotNull null
+            val id = string(achievement["id"])
+            if (id.isBlank()) return@mapNotNull null
+            val title = when (id) {
+                "first_game" -> "Primeira partida"
+                "games_played_10" -> "Veterano"
+                "games_played_100" -> "Lenda dos jogos"
+                "first_win" -> "Primeira vitória"
+                "games_won_10" -> "Vencedor"
+                "games_won_100" -> "Campeão"
+                else -> id
+            }
+            val target = integer(achievement["target"])
+            ConquistaSocial(
+                id = id,
+                nome = title,
+                descricao = "Progresso: ${integer(achievement["progress"])} de $target",
+                simbolo = if (achievement["unlocked"] == true) "★" else "☆",
+                desbloqueada = achievement["unlocked"] == true,
+                progresso = integer(achievement["progress"]),
+                meta = target,
+            )
+        }
+        val history = (this["history"] as? List<*>).orEmpty().mapNotNull { value ->
+            val item = value as? Map<*, *> ?: return@mapNotNull null
+            val id = string(item["id"])
+            if (id.isBlank()) return@mapNotNull null
+            val time = (item["atMs"] as? Number)?.toLong() ?: 0L
+            PartidaHistoricoSocial(
+                id = id,
+                nomeJogo = string(item["gameName"], "Minijogo"),
+                resultado = when (string(item["outcome"])) {
+                    "won" -> "Vitória"
+                    "lost" -> "Derrota"
+                    else -> "Empate"
+                },
+                resumo = string(item["summary"]),
+                data = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.forLanguageTag("pt-BR")).format(Date(time)),
+            )
+        }
+        val stats = (this["stats"] as? List<*>).orEmpty().mapNotNull { value ->
+            val item = value as? Map<*, *> ?: return@mapNotNull null
+            val gameId = string(item["gameId"])
+            if (gameId.isBlank()) return@mapNotNull null
+            EstatisticaJogoSocial(
+                nomeJogo = string(item["gameName"], gameId),
+                partidas = integer(item["played"]),
+                vitorias = integer(item["wins"]),
+                derrotas = integer(item["losses"]),
+                sequenciaAtual = integer(item["currentStreak"]),
+            )
+        }
+        val reportUpdates = (this["reportUpdates"] as? List<*>).orEmpty().mapNotNull { value ->
+            val item = value as? Map<*, *> ?: return@mapNotNull null
+            val id = string(item["id"])
+            if (id.isBlank()) return@mapNotNull null
+            AtualizacaoDenuncia(
+                id = id,
+                categoria = string(item["category"], "other"),
+                status = string(item["status"], "open"),
+                motivo = string(item["reviewReason"]),
+                criadaEmMs = (item["createdAtMs"] as? Number)?.toLong() ?: 0L,
+            )
+        }
+        return ResultadoRecursosSociais(
+            clas = clans,
+            convites = invitations,
+            atualizacoesDenuncias = reportUpdates,
+            claAtualId = string(this["currentClanId"]).ifBlank { null },
+            rankingClas = ranking,
+            eventoSemanal = event,
+            conquistas = achievements,
+            historico = history,
+            estatisticasPorJogo = stats,
+        )
     }
 
     fun equiparMoldura(itemId: String, callback: (Exception?) -> Unit) {
@@ -1983,6 +2595,7 @@ object FirebaseRepository {
         avatarComoFotoPerfil = snapshot.getBoolean("avatarAsProfilePhoto") == true,
         tituloEquipado = snapshot.getString("equippedTitle") ?: "",
         bio = snapshot.getString("bio") ?: "",
+        clanId = snapshot.getString("clanId") ?: "",
     )
 
     private fun toJogadorRanking(snapshot: DocumentSnapshot): JogadorRanking? {

@@ -17,14 +17,19 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -49,9 +54,12 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.example.zeca.JogadorRanking
+import com.example.zeca.PredefinicaoSala
 import com.example.zeca.SalaCaboGuerra
 import com.example.zeca.ui.theme.Cores
+import com.example.zeca.MensagemSalaJogo
 import kotlinx.coroutines.delay
 import java.math.BigDecimal
 import java.text.NumberFormat
@@ -74,6 +82,7 @@ private val teamQuizQuestions = listOf(
 @Composable
 fun TelaCaboGuerra(
     uidAtual: String,
+    clanId: String,
     modoInicial: String,
     gameIdInicial: String,
     saldoCentavos: Long,
@@ -81,7 +90,11 @@ fun TelaCaboGuerra(
     roomInviteId: String,
     onRoomInviteHandled: () -> Unit,
     onCarregarSalas: ((List<SalaCaboGuerra>, Exception?) -> Unit) -> Unit,
-    onCriarSala: (Long, List<String>, String, String, String, String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
+    onCarregarPredefinicoes: ((List<PredefinicaoSala>, Exception?) -> Unit) -> Unit,
+    onSalvarPredefinicoes: (List<PredefinicaoSala>, (Exception?) -> Unit) -> Unit,
+    onCarregarMensagens: (String, (List<MensagemSalaJogo>, Exception?) -> Unit) -> Unit,
+    onEnviarMensagem: (String, String, String, String, (Exception?) -> Unit) -> Unit,
+    onCriarSala: (Long, List<String>, String, String, String, String, String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
     onEntrarSala: (String, String, String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
     onGerenciarSala: (String, String, String, String, Long, String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
     onIniciarSala: (String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
@@ -92,11 +105,20 @@ fun TelaCaboGuerra(
     var stakeTexto by rememberSaveable { mutableStateOf("10,00") }
     var senhaSala by rememberSaveable { mutableStateOf("") }
     var senhaEntrada by rememberSaveable { mutableStateOf("") }
+    var filtroSalas by rememberSaveable { mutableStateOf("Todas") }
     var modoSala by rememberSaveable { mutableStateOf(if (gameIdInicial == "tug") modoInicial else "2v2") }
+    var salaDoCla by rememberSaveable { mutableStateOf(false) }
+    var predefinicoes by remember { mutableStateOf<List<PredefinicaoSala>>(emptyList()) }
+    var nomePredefinicao by rememberSaveable(gameIdInicial) { mutableStateOf("") }
+    var chatAberto by rememberSaveable { mutableStateOf(false) }
+    var mensagensSala by remember { mutableStateOf<List<MensagemSalaJogo>>(emptyList()) }
+    var textoMensagemSala by rememberSaveable { mutableStateOf("") }
+    var erroChatSala by remember { mutableStateOf("") }
     var salaParaEntrar by remember { mutableStateOf<SalaCaboGuerra?>(null) }
     var carregando by remember { mutableStateOf(false) }
     var erro by remember { mutableStateOf("") }
     var aviso by remember { mutableStateOf("") }
+    var confirmarAcaoSala by remember { mutableStateOf<Pair<String, String>?>(null) }
     var puxoesPendentes by remember { mutableStateOf(0) }
     var enviandoLotePuxoes by remember { mutableStateOf(false) }
     var ultimoToqueMs by remember { mutableStateOf(0L) }
@@ -140,6 +162,32 @@ fun TelaCaboGuerra(
             }
             delay(refreshInterval)
             atualizarSalas()
+        }
+    }
+
+    LaunchedEffect(chatAberto, salaSelecionada?.id) {
+        val roomId = salaSelecionada?.id
+        if (!chatAberto || roomId == null) {
+            mensagensSala = emptyList()
+            return@LaunchedEffect
+        }
+        while (true) {
+            onCarregarMensagens(roomId) { messages, error ->
+                if (error == null) {
+                    mensagensSala = messages
+                    erroChatSala = ""
+                } else {
+                    erroChatSala = error.localizedMessage ?: "Não foi possível carregar o chat."
+                }
+            }
+            delay(2_000)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        onCarregarPredefinicoes { loaded, error ->
+            if (error == null) predefinicoes = loaded
+            else erro = error.localizedMessage ?: "Não foi possível carregar as predefinições."
         }
     }
 
@@ -241,12 +289,41 @@ fun TelaCaboGuerra(
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text("TIME A · ${room.puxoesTimeA}", color = Cores.Verde, fontWeight = FontWeight.Bold, fontSize = 10.sp)
-                        Text(room.timeA.joinToString(" + ") { it.nome }.ifBlank { "Aguardando jogador" }, color = Color.White, fontSize = 10.sp)
+                        Text(room.timeA.joinToString(" + ") { "${it.nome} · ${if (it.online) "Online" else "Offline"}" }.ifBlank { "Aguardando jogador" }, color = Color.White, fontSize = 10.sp)
                     }
                     Text("×", color = Color.White.copy(alpha = 0.5f), fontWeight = FontWeight.Bold)
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text("TIME B · ${room.puxoesTimeB}", color = Color(0xFFFF8B91), fontWeight = FontWeight.Bold, fontSize = 10.sp)
-                        Text(room.timeB.joinToString(" + ") { it.nome }.ifBlank { "Aguardando jogador" }, color = Color.White, fontSize = 10.sp)
+                        Text(room.timeB.joinToString(" + ") { "${it.nome} · ${if (it.online) "Online" else "Offline"}" }.ifBlank { "Aguardando jogador" }, color = Color.White, fontSize = 10.sp)
+                    }
+                }
+                if (souParticipante && room.status in listOf("ready", "active", "settled")) {
+                    OutlinedButton(onClick = { chatAberto = true }) { Text("Chat da partida") }
+                }
+                if (souCriador && room.status in listOf("waiting", "ready")) {
+                    Text("Transferir liderança", color = Cores.Turquesa, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    (room.timeA + room.timeB).filter { it.uid != uidAtual }.forEach { player ->
+                        TextButton(
+                            enabled = !carregando,
+                            onClick = {
+                                carregando = true
+                                onGerenciarSala(
+                                    room.id,
+                                    "transferLeadership",
+                                    UUID.randomUUID().toString(),
+                                    player.uid,
+                                    0,
+                                    "",
+                                ) { next, error ->
+                                    carregando = false
+                                    if (error != null) erro = error.localizedMessage.orEmpty()
+                                    else {
+                                        salaSelecionada = next
+                                        aviso = "Liderança transferida para ${player.nome}."
+                                    }
+                                }
+                            },
+                        ) { Text("Tornar ${player.nome} anfitrião") }
                     }
                 }
                 when (room.status) {
@@ -324,19 +401,7 @@ fun TelaCaboGuerra(
                                 Text("Compartilhar link de convite", color = Cores.Turquesa)
                             }
                             TextButton(
-                                onClick = {
-                                    carregando = true
-                                    onGerenciarSala(room.id, "dissolve", UUID.randomUUID().toString(), "", 0, "") { _, error ->
-                                        carregando = false
-                                        if (error != null) {
-                                            erro = error.localizedMessage.orEmpty()
-                                        } else {
-                                            salaSelecionada = null
-                                            aviso = "Sala dissolvida. As apostas foram devolvidas."
-                                            atualizarSalas()
-                                        }
-                                    }
-                                },
+                                onClick = { confirmarAcaoSala = "dissolve" to "" },
                                 enabled = !carregando,
                             ) { Text("Dissolver sala e devolver apostas", color = Color(0xFFFF8B91)) }
                         } else if (souParticipante) {
@@ -366,23 +431,14 @@ fun TelaCaboGuerra(
                     "ready" -> {
                         Text("${room.timeA.size + room.timeB.size} jogadores entraram · sala pronta", color = Cores.Verde, fontSize = 12.sp)
                         if (souCriador) {
-                            Button(onClick = {
-                                carregando = true
-                                onIniciarSala(room.id) { next, error ->
-                                    carregando = false
-                                    if (error != null) erro = error.localizedMessage.orEmpty() else salaSelecionada = next
-                                }
-                            }, enabled = !carregando, colors = ButtonDefaults.buttonColors(containerColor = Cores.Verde)) {
+                            Button(onClick = { confirmarAcaoSala = "start" to "" }, enabled = !carregando, colors = ButtonDefaults.buttonColors(containerColor = Cores.Verde)) {
                                 Text("Iniciar partida", color = Color(0xFF101417), fontWeight = FontWeight.Bold)
                             }
                             (room.timeA + room.timeB).filter { it.uid != uidAtual }.forEach { player ->
-                                TextButton(onClick = {
-                                    carregando = true
-                                    onGerenciarSala(room.id, "kick", UUID.randomUUID().toString(), player.uid, 0, "") { next, error ->
-                                        carregando = false
-                                        if (error != null) erro = error.localizedMessage.orEmpty() else salaSelecionada = next
-                                    }
-                                }, enabled = !carregando) { Text("Remover ${player.nome} · reembolsar", color = Color(0xFFFF8B91)) }
+                                TextButton(
+                                    onClick = { confirmarAcaoSala = "kick" to player.uid },
+                                    enabled = !carregando,
+                                ) { Text("Remover ${player.nome} · reembolsar", color = Color(0xFFFF8B91)) }
                             }
                         } else Text("Aguardando o criador iniciar…", color = Color.White.copy(alpha = 0.62f), fontSize = 11.sp)
                     }
@@ -475,6 +531,18 @@ fun TelaCaboGuerra(
                                     atualizarSalas()
                                 }
                             }
+                        } else if (room.status == "settled") {
+                            carregando = true
+                            onGerenciarSala(room.id, "leaveCompleted", UUID.randomUUID().toString(), "", 0, "") { _, error ->
+                                carregando = false
+                                if (error != null) {
+                                    erro = error.localizedMessage.orEmpty()
+                                } else {
+                                    salaSelecionada = null
+                                    aviso = "Você saiu da partida. Após todos saírem, a sala será removida em 2 minutos."
+                                    atualizarSalas()
+                                }
+                            }
                         } else {
                             salaSelecionada = null
                             atualizarSalas()
@@ -487,6 +555,7 @@ fun TelaCaboGuerra(
                             room.status in listOf("waiting", "ready") && souCriador -> "Dissolver sala · reembolsar todos"
                             room.status in listOf("waiting", "ready") -> "Sair da sala · devolver aposta"
                             room.status == "active" -> "Minimizar partida"
+                            room.status == "settled" -> "Sair da partida"
                             else -> "Voltar às salas"
                         },
                         color = if (room.status in listOf("waiting", "ready")) Color(0xFFFF8B91) else Color.White,
@@ -512,6 +581,23 @@ fun TelaCaboGuerra(
             } else {
                 Text("Modo 2v2 · todos os quatro lugares são necessários", color = Cores.Turquesa, fontSize = 11.sp)
             }
+            if (modoSala == "2v2") {
+                Text("O servidor distribui novos jogadores para equilibrar o nível das equipes.", color = Color.White.copy(alpha = 0.62f), fontSize = 11.sp)
+            }
+            val presetsForGame = predefinicoes.filter { it.gameId == gameIdInicial }
+            if (presetsForGame.isNotEmpty()) {
+                Text("Predefinições salvas", color = Cores.Turquesa, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                presetsForGame.forEach { preset ->
+                    TextButton(
+                        enabled = !carregando,
+                        onClick = {
+                            modoSala = preset.modo
+                            stakeTexto = formatarSaldoTug(preset.apostaCentavos).removePrefix("R$ ").trim()
+                                .replace(".", "").replace(",", ".")
+                        },
+                    ) { Text("${preset.nome} · ${preset.modo} · ${formatarSaldoTug(preset.apostaCentavos)}") }
+                }
+            }
             OutlinedTextField(
                 value = stakeTexto,
                 onValueChange = { stakeTexto = it.filter { char -> char.isDigit() || char == ',' || char == '.' }.take(12) },
@@ -521,7 +607,45 @@ fun TelaCaboGuerra(
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             )
+            OutlinedTextField(
+                value = nomePredefinicao,
+                onValueChange = { nomePredefinicao = it.take(24) },
+                label = { Text("Nome para salvar esta configuração") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            TextButton(
+                enabled = nomePredefinicao.trim().length >= 2 && predefinicoes.size < 5 && !carregando,
+                onClick = {
+                    val stake = parseSaldoTug(stakeTexto)
+                    if (stake == null || !apostarEmSala(stake)) return@TextButton
+                    val preset = PredefinicaoSala(nomePredefinicao.trim(), modoSala, gameIdInicial, stake)
+                    if (predefinicoes.any { it.nome.equals(preset.nome, ignoreCase = true) }) {
+                        erro = "Já existe uma predefinição com esse nome."
+                        return@TextButton
+                    }
+                    val updated = predefinicoes + preset
+                    carregando = true
+                    onSalvarPredefinicoes(updated) { error ->
+                        carregando = false
+                        if (error != null) erro = error.localizedMessage ?: "Não foi possível salvar."
+                        else {
+                            predefinicoes = updated
+                            nomePredefinicao = ""
+                            aviso = "Predefinição salva."
+                        }
+                    }
+                },
+            ) {
+                Text(if (predefinicoes.size >= 5) "Limite de 5 predefinições" else "Salvar predefinição")
+            }
             OutlinedTextField(value = senhaSala, onValueChange = { senhaSala = it.take(24) }, modifier = Modifier.fillMaxWidth(), label = { Text("Senha opcional da sala") }, singleLine = true)
+            if (clanId.isNotBlank()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = salaDoCla, onCheckedChange = { salaDoCla = it })
+                    Text("Sala exclusiva para membros do meu clã", color = Color.White, fontSize = 12.sp)
+                }
+            }
             if (jogadoresDisponiveis.isNotEmpty()) {
                 Text("Convide alguém (opcional)", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 Text("${convidados.size}/${if (modoSala == "2v2") 3 else 1} convites selecionados", color = Color.White.copy(alpha = 0.55f), fontSize = 10.sp)
@@ -542,7 +666,15 @@ fun TelaCaboGuerra(
                     val stake = parseSaldoTug(stakeTexto)
                     if (stake == null || !apostarEmSala(stake)) return@Button
                     carregando = true
-                    onCriarSala(stake, convidados.toList(), senhaSala, modoSala, gameIdInicial, UUID.randomUUID().toString()) { room, error ->
+                    onCriarSala(
+                        stake,
+                        convidados.toList(),
+                        senhaSala,
+                        modoSala,
+                        gameIdInicial,
+                        if (salaDoCla) clanId else "",
+                        UUID.randomUUID().toString(),
+                    ) { room, error ->
                         carregando = false
                         if (error != null) erro = error.localizedMessage.orEmpty() else {
                             salaSelecionada = room
@@ -555,17 +687,37 @@ fun TelaCaboGuerra(
                 colors = ButtonDefaults.buttonColors(containerColor = Cores.Turquesa),
             ) { Text("Criar sala", color = Color(0xFF101417), fontWeight = FontWeight.Bold) }
 
-            Text("Salas abertas e convites", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-            val salasDoJogo = salas.filter { it.gameId == gameIdInicial }
+            Text("Salas disponíveis e partidas finalizadas", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("Todas", "Aguardando", "Com vaga", "1v1", "2v2").forEach { filter ->
+                    TextButton(onClick = { filtroSalas = filter }) {
+                        Text(filter, color = if (filter == filtroSalas) Cores.Turquesa else Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
+                    }
+                }
+            }
+            val salasDoJogo = salas.filter { room ->
+                val maxPlayers = if (room.modo == "2v2") 4 else 2
+                room.gameId == gameIdInicial && when (filtroSalas) {
+                    "Aguardando" -> room.status in listOf("waiting", "ready")
+                    "Com vaga" -> room.status == "waiting" && room.timeA.size + room.timeB.size < maxPlayers
+                    "1v1" -> room.modo == "1v1"
+                    "2v2" -> room.modo == "2v2"
+                    else -> true
+                }
+            }
             if (salasDoJogo.isEmpty()) Text("Nenhuma sala disponível agora.", color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp)
             salasDoJogo.forEach { room ->
                 Column(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp)).background(Color.White.copy(alpha = 0.06f)).clickable { salaSelecionada = room }.padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(3.dp),
                 ) {
+                    if (room.clanId.isNotBlank()) {
+                        Text("Sala exclusiva do clã", color = Cores.Turquesa, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
                     Text(
                         when {
                             room.conviteParaMim -> "Convite · ${room.criadorNome}"
+                            room.status == "settled" -> "Partida finalizada · toque para sair"
                             room.criadorUid == uidAtual -> "Sua sala · ${room.status}"
                             else -> "Sala pública · ${room.criadorNome}"
                         },
@@ -584,6 +736,132 @@ fun TelaCaboGuerra(
         }
         if (aviso.isNotBlank()) Text(aviso, color = Cores.Verde, fontSize = 11.sp)
         if (erro.isNotBlank()) Text(erro, modifier = Modifier.fillMaxWidth().background(Color(0xFF34272A), RoundedCornerShape(8.dp)).padding(10.dp), color = Color(0xFFFFB7A7), fontSize = 11.sp)
+    }
+
+    confirmarAcaoSala?.let { (action, targetUid) ->
+        val room = salaSelecionada
+        AlertDialog(
+            onDismissRequest = { confirmarAcaoSala = null },
+            title = {
+                Text(
+                    when (action) {
+                        "dissolve" -> "Dissolver sala?"
+                        "kick" -> "Remover participante?"
+                        else -> "Iniciar partida?"
+                    },
+                )
+            },
+            text = {
+                Text(
+                    when (action) {
+                        "dissolve" -> "A sala será encerrada e as apostas devolvidas a todos os participantes."
+                        "kick" -> "O participante será removido e terá a aposta devolvida."
+                        else -> "Confirma que todos estão prontos para começar?"
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmarAcaoSala = null
+                        if (room == null) return@TextButton
+                        carregando = true
+                        if (action == "start") {
+                            onIniciarSala(room.id) { next, error ->
+                                carregando = false
+                                if (error != null) erro = error.localizedMessage.orEmpty() else salaSelecionada = next
+                            }
+                        } else {
+                            onGerenciarSala(room.id, action, UUID.randomUUID().toString(), targetUid, 0, "") { _, error ->
+                                carregando = false
+                                if (error != null) {
+                                    erro = error.localizedMessage.orEmpty()
+                                } else if (action == "dissolve") {
+                                    salaSelecionada = null
+                                    aviso = "Sala dissolvida. As apostas foram devolvidas."
+                                    atualizarSalas()
+                                } else {
+                                    atualizarSalas()
+                                }
+                            }
+                        }
+                    },
+                ) { Text("Confirmar") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmarAcaoSala = null }) { Text("Cancelar") }
+            },
+        )
+    }
+
+    if (chatAberto) {
+        val roomId = salaSelecionada?.id
+        Dialog(onDismissRequest = { chatAberto = false }) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 600.dp)
+                    .verticalScroll(rememberScrollState())
+                    .background(Color(0xFF17212B), RoundedCornerShape(18.dp))
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text("Chat da partida", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 280.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    if (mensagensSala.isEmpty()) {
+                        Text("Ainda não há mensagens.", color = Color.White.copy(alpha = 0.62f))
+                    }
+                    mensagensSala.forEach { message ->
+                        Text("${message.nome}: ${message.texto}", color = Color.White, fontSize = 13.sp)
+                    }
+                }
+                if (erroChatSala.isNotBlank()) Text(erroChatSala, color = Color(0xFFFF8B91), fontSize = 11.sp)
+                Text("Mensagens rápidas", color = Cores.Turquesa, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                listOf(
+                    "good_luck" to "Boa sorte!",
+                    "well_played" to "Boa partida!",
+                    "nice_move" to "Boa jogada!",
+                    "ready" to "Estou pronto.",
+                    "thanks" to "Obrigado!",
+                    "reaction_laugh" to "😂",
+                    "reaction_fire" to "🔥",
+                    "reaction_heart" to "❤️",
+                    "reaction_clap" to "👏",
+                ).forEach { (code, label) ->
+                    TextButton(
+                        enabled = roomId != null && !carregando,
+                        onClick = {
+                            onEnviarMensagem(roomId.orEmpty(), "", code, UUID.randomUUID().toString()) { error ->
+                                if (error != null) erroChatSala = error.localizedMessage ?: "Não foi possível enviar a mensagem."
+                            }
+                        },
+                    ) { Text(label) }
+                }
+                OutlinedTextField(
+                    value = textoMensagemSala,
+                    onValueChange = { textoMensagemSala = it.take(140) },
+                    label = { Text("Mensagem para esta partida") },
+                    enabled = roomId != null && !carregando,
+                )
+                Button(
+                    enabled = roomId != null && textoMensagemSala.isNotBlank() && !carregando,
+                    onClick = {
+                        onEnviarMensagem(roomId.orEmpty(), textoMensagemSala.trim(), "", UUID.randomUUID().toString()) { error ->
+                            if (error != null) erroChatSala = error.localizedMessage ?: "Não foi possível enviar a mensagem."
+                            else textoMensagemSala = ""
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Enviar") }
+                TextButton(onClick = { chatAberto = false }, modifier = Modifier.fillMaxWidth()) { Text("Fechar") }
+            }
+        }
     }
 }
 

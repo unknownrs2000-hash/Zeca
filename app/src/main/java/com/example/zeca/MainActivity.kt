@@ -1,9 +1,13 @@
 package com.example.zeca
 
 import android.content.Intent
+import android.app.Activity
+import android.app.KeyguardManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.AnimatedVisibility
@@ -36,6 +40,8 @@ import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
@@ -43,6 +49,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -59,8 +66,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import kotlinx.coroutines.delay
@@ -69,10 +78,15 @@ import com.example.zeca.ui.TelaConfigurarPerfil
 import com.example.zeca.ui.TelaAutenticacao
 import com.example.zeca.ui.TelaAdmin
 import com.example.zeca.ui.TelaChat
+import com.example.zeca.ui.TelaDenunciasAdmin
+import com.example.zeca.ui.TelaAtividadesExtras
+import com.example.zeca.ui.TelaCentralConta
 import com.example.zeca.ui.TelaInicio
 import com.example.zeca.ui.TelaJogos
+import com.example.zeca.ui.TelaRecursosSociais
 import com.example.zeca.ui.TelaLoja
 import com.example.zeca.ui.TelaPerfil
+import com.example.zeca.ui.EstadoCarregamentoSocial
 import com.example.zeca.ui.theme.CassinoTheme
 import com.example.zeca.ui.theme.Cores
 import java.text.SimpleDateFormat
@@ -92,6 +106,9 @@ enum class Aba(val titulo: String, val icone: ImageVector) {
     Jogos("Jogos", Icons.Filled.Casino),
     Carteira("Carteira", Icons.Filled.AccountBalanceWallet),
     Chat("Chat", Icons.AutoMirrored.Filled.Chat),
+    Comunidade("Comunidade", Icons.Filled.Groups),
+    Extras("Extras", Icons.Filled.Explore),
+    Conta("Conta", Icons.Filled.Settings),
     Perfil("Perfil", Icons.Filled.Person),
     Admin("Admin", Icons.Filled.Settings),
 }
@@ -121,6 +138,13 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         tugInviteRoomId.value = roomIdFromIntent(intent)
         pixPaymentLink.value = pixPaymentLinkFromIntent(intent)
+        val visualPrefs = getSharedPreferences("zeca_preferences", MODE_PRIVATE)
+        Cores.aplicarTema(visualPrefs.getString("theme", "dark").orEmpty())
+        Cores.aplicarAcessibilidade(
+            visualPrefs.getFloat("accessibilityFontScale", 1f),
+            visualPrefs.getBoolean("highContrast", false),
+            visualPrefs.getBoolean("reduceMotion", false),
+        )
         enableEdgeToEdge()
         setContent {
             CassinoTheme {
@@ -188,7 +212,15 @@ fun CassinoApp(
     if (usuarioAtual == null) {
         TelaAutenticacao(onAutenticado = { usuario = it })
     } else {
-        AppAutenticado(usuarioAtual, appForeground, tugInviteRoomId, pixPaymentLink, onTugInviteHandled, onPixPaymentLinkHandled)
+        val systemDensity = LocalDensity.current
+        CompositionLocalProvider(
+            LocalDensity provides Density(
+                density = systemDensity.density,
+                fontScale = systemDensity.fontScale * Cores.EscalaTexto,
+            ),
+        ) {
+            AppAutenticado(usuarioAtual, appForeground, tugInviteRoomId, pixPaymentLink, onTugInviteHandled, onPixPaymentLinkHandled)
+        }
     }
 }
 
@@ -202,8 +234,61 @@ fun CassinoApp(
         onPixPaymentLinkHandled: () -> Unit,
     ) {
     val contexto = LocalContext.current
+    val deviceLockPreferences = remember(usuario.uid) {
+        contexto.getSharedPreferences("zeca_preferences", android.content.Context.MODE_PRIVATE)
+    }
+    var bloqueioDispositivoAtivo by remember(usuario.uid) {
+        mutableStateOf(deviceLockPreferences.getBoolean("device_lock_enabled", false))
+    }
+    var dispositivoDesbloqueado by remember(usuario.uid) { mutableStateOf(!bloqueioDispositivoAtivo) }
+    var solicitacaoAutenticacaoPendente by remember(usuario.uid) { mutableStateOf(false) }
+    var tentativaAutenticacao by remember(usuario.uid) { mutableStateOf(0) }
+    var promptDispensado by remember(usuario.uid) { mutableStateOf(false) }
+    var mudancaBloqueioPendente by remember(usuario.uid) { mutableStateOf<Boolean?>(null) }
+    val autenticadorDispositivo = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val desiredState = mudancaBloqueioPendente
+        solicitacaoAutenticacaoPendente = false
+        mudancaBloqueioPendente = null
+        if (result.resultCode == Activity.RESULT_OK) {
+            val newState = desiredState ?: true
+            deviceLockPreferences.edit().putBoolean("device_lock_enabled", newState).apply()
+            bloqueioDispositivoAtivo = newState
+            dispositivoDesbloqueado = true
+            promptDispensado = false
+        } else {
+            promptDispensado = true
+            android.widget.Toast.makeText(contexto, "Autenticação cancelada.", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+    LaunchedEffect(appForeground, bloqueioDispositivoAtivo, tentativaAutenticacao) {
+        if (!appForeground) {
+            if (!solicitacaoAutenticacaoPendente) {
+                dispositivoDesbloqueado = !bloqueioDispositivoAtivo
+                promptDispensado = false
+            }
+            return@LaunchedEffect
+        }
+        if (bloqueioDispositivoAtivo && !dispositivoDesbloqueado
+            && !solicitacaoAutenticacaoPendente && !promptDispensado) {
+            val keyguard = contexto.getSystemService(KeyguardManager::class.java)
+            val intent = keyguard?.createConfirmDeviceCredentialIntent(
+                "Desbloquear Zeca",
+                "Confirme seu PIN, padrão ou senha do dispositivo.",
+            )
+            if (intent == null) {
+                promptDispensado = true
+                android.widget.Toast.makeText(contexto, "Configure um bloqueio de tela no Android primeiro.", android.widget.Toast.LENGTH_LONG).show()
+            } else {
+                solicitacaoAutenticacaoPendente = true
+                autenticadorDispositivo.launch(intent)
+            }
+        }
+    }
     var aba by rememberSaveable { mutableStateOf(Aba.Inicio) }
     var ehAdmin by remember(usuario.uid) { mutableStateOf(false) }
+    var mostrarDenunciasAdmin by rememberSaveable(usuario.uid) { mutableStateOf(false) }
     var mostrarLoja by rememberSaveable { mutableStateOf(false) }
     var perfil by remember(usuario.uid) { mutableStateOf<PerfilJogador?>(null) }
     var erroPerfil by rememberSaveable { mutableStateOf("") }
@@ -212,8 +297,188 @@ fun CassinoApp(
     val itensComprados = remember { mutableStateListOf<String>() }
     val notificacoes = remember { mutableStateListOf<NotificacaoApp>() }
     var presencasChat by remember { mutableStateOf<List<PresencaChat>>(emptyList()) }
+    var recursosSociais by remember(usuario.uid) { mutableStateOf(ResultadoRecursosSociais()) }
+    var recursosSociaisCarregando by remember(usuario.uid) { mutableStateOf(false) }
+    var erroRecursosSociais by remember(usuario.uid) { mutableStateOf<String?>(null) }
+    var statusDenunciasConhecidos by remember(usuario.uid) { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var statusDenunciasInicializado by remember(usuario.uid) { mutableStateOf(false) }
+    var painelConta by remember(usuario.uid) { mutableStateOf<PainelConta?>(null) }
+    var erroPainelConta by remember(usuario.uid) { mutableStateOf("") }
+    var carregandoPainelConta by remember(usuario.uid) { mutableStateOf(false) }
+    var estadosSalasConhecidos by remember(usuario.uid) { mutableStateOf<Map<String, String>?>(null) }
     val convitesCaboNotificados = remember(usuario.uid) { mutableSetOf<String>() }
     val stateHolder = rememberSaveableStateHolder()
+
+    fun notificar(notificacao: NotificacaoApp) {
+        if (notificacoes.none { it.id == notificacao.id }) {
+            notificacoes.add(notificacao)
+            if (notificacoes.size > 4) notificacoes.removeAt(0)
+        }
+    }
+
+    fun carregarRecursosSociais() {
+        recursosSociaisCarregando = true
+        FirebaseRepository.carregarRecursosSociais { result, error ->
+            recursosSociaisCarregando = false
+            if (result != null) {
+                val novosStatus = result.atualizacoesDenuncias.associate { it.id to it.status }
+                if (statusDenunciasInicializado) {
+                    result.atualizacoesDenuncias.forEach { report ->
+                        val statusAnterior = statusDenunciasConhecidos[report.id]
+                        if (statusAnterior != null && statusAnterior != report.status) {
+                            val notificationId = "report-update:${report.id}:${report.status}"
+                            if (notificacoes.none { it.id == notificationId }) {
+                                notificacoes.add(
+                                    NotificacaoApp(
+                                        id = notificationId,
+                                        titulo = "Atualização de denúncia",
+                                        detalhe = when (report.status) {
+                                            "reviewing" -> "Sua denúncia entrou em análise."
+                                            "resolved" -> "Sua denúncia foi resolvida."
+                                            "dismissed" -> "Sua denúncia foi encerrada sem ação."
+                                            else -> "O status da sua denúncia foi atualizado."
+                                        },
+                                        aba = Aba.Comunidade,
+                                    ),
+                                )
+                                if (notificacoes.size > 4) notificacoes.removeAt(0)
+                            }
+                        }
+                    }
+                }
+                statusDenunciasConhecidos = novosStatus
+                statusDenunciasInicializado = true
+                recursosSociais = result
+                erroRecursosSociais = null
+            } else {
+                erroRecursosSociais = error?.localizedMessage ?: "Não foi possível carregar os dados da comunidade."
+            }
+        }
+    }
+
+    fun concluirAcaoSocial(callback: (Exception?) -> Unit): (Exception?) -> Unit = { error ->
+        if (error == null) carregarRecursosSociais()
+        callback(error)
+    }
+
+    fun carregarPainelConta() {
+        carregandoPainelConta = true
+        FirebaseRepository.carregarPainelConta { result, error ->
+            carregandoPainelConta = false
+            if (result == null) {
+                erroPainelConta = error?.localizedMessage ?: "Não foi possível carregar as configurações da conta."
+                return@carregarPainelConta
+            }
+            erroPainelConta = ""
+            val savedPreferences = result.preferences
+            val localPreferences = if (savedPreferences.syncSettings) {
+                savedPreferences
+            } else {
+                savedPreferences.copy(
+                    theme = deviceLockPreferences.getString("theme", savedPreferences.theme).orEmpty(),
+                    locale = deviceLockPreferences.getString("locale", savedPreferences.locale).orEmpty(),
+                    accessibilityFontScale = deviceLockPreferences.getFloat(
+                        "accessibilityFontScale",
+                        savedPreferences.accessibilityFontScale.toFloat(),
+                    ).toDouble(),
+                    highContrast = deviceLockPreferences.getBoolean("highContrast", savedPreferences.highContrast),
+                    reduceMotion = deviceLockPreferences.getBoolean("reduceMotion", savedPreferences.reduceMotion),
+                    confirmImportant = deviceLockPreferences.getBoolean("confirmImportant", savedPreferences.confirmImportant),
+                    personalizedRecommendations = deviceLockPreferences.getBoolean(
+                        "personalizedRecommendations",
+                        savedPreferences.personalizedRecommendations,
+                    ),
+                )
+            }
+            painelConta = result.copy(preferences = localPreferences)
+            Cores.aplicarTema(localPreferences.theme)
+            Cores.aplicarAcessibilidade(
+                localPreferences.accessibilityFontScale.toFloat(),
+                localPreferences.highContrast,
+                localPreferences.reduceMotion,
+            )
+            Locale.setDefault(Locale.forLanguageTag(localPreferences.locale))
+            deviceLockPreferences.edit()
+                .putString("theme", localPreferences.theme)
+                .putString("locale", localPreferences.locale)
+                .putFloat("accessibilityFontScale", localPreferences.accessibilityFontScale.toFloat())
+                .putBoolean("highContrast", localPreferences.highContrast)
+                .putBoolean("reduceMotion", localPreferences.reduceMotion)
+                .putBoolean("confirmImportant", localPreferences.confirmImportant)
+                .putBoolean("personalizedRecommendations", localPreferences.personalizedRecommendations)
+                .apply()
+            result.announcements.forEach { announcement ->
+                notificar(
+                    NotificacaoApp(
+                        id = "announcement:${announcement.id}",
+                        titulo = if (announcement.type == "maintenance") "Aviso de manutenção" else "Novidade no app",
+                        detalhe = announcement.title,
+                        aba = Aba.Conta,
+                    ),
+                )
+            }
+        }
+    }
+
+    LaunchedEffect(usuario.uid, aba) {
+        if (aba == Aba.Comunidade || aba == Aba.Extras) carregarRecursosSociais()
+        if (aba == Aba.Conta) carregarPainelConta()
+    }
+
+    LaunchedEffect(usuario.uid, appForeground) {
+        if (!appForeground) return@LaunchedEffect
+        carregarPainelConta()
+        while (true) {
+            delay(60_000)
+            carregarPainelConta()
+        }
+    }
+
+    LaunchedEffect(usuario.uid, appForeground) {
+        if (!appForeground) return@LaunchedEffect
+        while (true) {
+            delay(60_000)
+            carregarRecursosSociais()
+        }
+    }
+
+    LaunchedEffect(usuario.uid, appForeground) {
+        if (!appForeground) return@LaunchedEffect
+        while (true) {
+            FirebaseRepository.listarSalasCaboGuerra { rooms, error ->
+                if (error == null) {
+                    val current = rooms.associate { it.id to it.status }
+                    val previous = estadosSalasConhecidos
+                    if (previous != null) {
+                        rooms.forEach { room ->
+                            val oldStatus = previous[room.id]
+                            if (oldStatus == "waiting" && room.status == "ready") {
+                                notificar(
+                                    NotificacaoApp(
+                                        id = "room-full:${room.id}",
+                                        titulo = "Sala cheia",
+                                        detalhe = "A sala de ${room.criadorNome} está pronta para começar.",
+                                        aba = Aba.Jogos,
+                                    ),
+                                )
+                            } else if (oldStatus in listOf("waiting", "ready") && room.status == "active") {
+                                notificar(
+                                    NotificacaoApp(
+                                        id = "room-started:${room.id}",
+                                        titulo = "Partida iniciada",
+                                        detalhe = "A partida de ${room.criadorNome} começou.",
+                                        aba = Aba.Jogos,
+                                    ),
+                                )
+                            }
+                        }
+                    }
+                    estadosSalasConhecidos = current
+                }
+            }
+            delay(30_000)
+        }
+    }
 
     LaunchedEffect(usuario.uid) {
         FirebaseRepository.verificarAdmin { ehAdmin = it }
@@ -246,13 +511,6 @@ fun CassinoApp(
         while (true) {
             FirebaseRepository.atualizarPresencaChat(online = true, jogoAtivo = jogoAtivo)
             delay(60_000)
-        }
-    }
-
-    fun notificar(notificacao: NotificacaoApp) {
-        if (notificacoes.none { it.id == notificacao.id }) {
-            notificacoes.add(notificacao)
-            if (notificacoes.size > 4) notificacoes.removeAt(0)
         }
     }
 
@@ -386,7 +644,26 @@ fun CassinoApp(
     }
 
     val jogador = perfil
-    if (jogador == null) {
+    if (bloqueioDispositivoAtivo && !dispositivoDesbloqueado) {
+        Box(
+            Modifier.fillMaxSize().background(Cores.Fundo),
+            contentAlignment = Alignment.Center,
+        ) {
+            androidx.compose.foundation.layout.Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                androidx.compose.material3.Text("Zeca bloqueado", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                androidx.compose.material3.Text("Confirme sua identidade para continuar.", color = Color.White.copy(alpha = 0.7f))
+                androidx.compose.material3.Button(onClick = {
+                    promptDispensado = false
+                    tentativaAutenticacao += 1
+                }) { androidx.compose.material3.Text("Tentar desbloquear") }
+                androidx.compose.material3.TextButton(onClick = {
+                    mudancaBloqueioPendente = false
+                    promptDispensado = false
+                    tentativaAutenticacao += 1
+                }) { androidx.compose.material3.Text("Desativar proteção", color = Cores.Turquesa) }
+            }
+        }
+    } else if (jogador == null) {
         Box(Modifier.fillMaxSize().background(Cores.Fundo), contentAlignment = Alignment.Center) {
             androidx.compose.foundation.layout.Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 androidx.compose.material3.CircularProgressIndicator(color = Cores.Verde)
@@ -419,7 +696,13 @@ fun CassinoApp(
         )
     } else {
         Box(Modifier.fillMaxSize().background(Cores.Fundo)) {
-            Crossfade(targetState = aba, label = "aba") { atual ->
+            Crossfade(
+                targetState = aba,
+                animationSpec = androidx.compose.animation.core.tween(
+                    durationMillis = if (Cores.ReduzirMovimento) 0 else 220,
+                ),
+                label = "aba",
+            ) { atual ->
                 stateHolder.SaveableStateProvider(atual.name) {
                     when (atual) {
                         Aba.Inicio -> TelaInicio(
@@ -443,6 +726,7 @@ fun CassinoApp(
                             saldoCentavos = jogador.saldoCentavos,
                             partidas = jogador.partidas,
                             uidAtual = usuario.uid,
+                            clanId = jogador.clanId,
                             jogadores = ranking,
                             roomInviteId = tugInviteRoomId,
                             onRoomInviteHandled = onTugInviteHandled,
@@ -465,6 +749,16 @@ fun CassinoApp(
                                 FirebaseRepository.liquidarApostasEsportivas(concluir)
                             },
                             onCarregarSalasCaboGuerra = { concluir -> FirebaseRepository.listarSalasCaboGuerra(concluir) },
+                            onCarregarPredefinicoesSala = { concluir -> FirebaseRepository.carregarPredefinicoesSala(concluir) },
+                            onSalvarPredefinicoesSala = { predefs, concluir ->
+                                FirebaseRepository.salvarPredefinicoesSala(predefs, concluir)
+                            },
+                            onCarregarMensagensSala = { roomId, concluir ->
+                                FirebaseRepository.carregarMensagensSala(roomId, concluir)
+                            },
+                            onEnviarMensagemSala = { roomId, text, quickId, requestId, concluir ->
+                                FirebaseRepository.enviarMensagemSala(roomId, text, quickId, requestId, concluir)
+                            },
                             onObservarFilaJokenpo = { callback -> FirebaseRepository.observarFilaJokenpo(callback) },
                             onObservarPartidaJokenpo = { matchId, callback -> FirebaseRepository.observarPartidaJokenpo(matchId, callback) },
                             onBuscarAdversarioJokenpo = { gameId, requestId, concluir ->
@@ -474,8 +768,11 @@ fun CassinoApp(
                             onJogarJokenpo = { matchId, escolha, requestId, concluir ->
                                 FirebaseRepository.jogarJokenpo(matchId, escolha, requestId, concluir)
                             },
-                            onCriarSalaCaboGuerra = { aposta, convites, senha, modo, gameId, requestId, concluir ->
-                                FirebaseRepository.criarSalaCaboGuerra(aposta, convites, senha, modo, gameId, requestId, concluir)
+                            onPedirRevancheJokenpo = { matchId, requestId, concluir ->
+                                FirebaseRepository.pedirRevancheJokenpo(matchId, requestId, concluir)
+                            },
+                            onCriarSalaCaboGuerra = { aposta, convites, senha, modo, gameId, clanId, requestId, concluir ->
+                                FirebaseRepository.criarSalaCaboGuerra(aposta, convites, senha, modo, gameId, clanId, requestId, concluir)
                             },
                             onEntrarSalaCaboGuerra = { roomId, senha, requestId, concluir ->
                                 FirebaseRepository.entrarSalaCaboGuerra(roomId, senha, requestId, concluir)
@@ -516,6 +813,127 @@ fun CassinoApp(
                             onAcaoBlackjack = { gameId, acao, requestId, concluir ->
                                 FirebaseRepository.acaoBlackjack(gameId, acao, requestId) { estado, error -> concluir(estado, error) }
                             },
+                        )
+                        Aba.Comunidade -> TelaRecursosSociais(
+                            usuarioAtualId = usuario.uid,
+                            clas = recursosSociais.clas,
+                            convites = recursosSociais.convites,
+                            claAtualId = recursosSociais.claAtualId,
+                            rankingClas = recursosSociais.rankingClas,
+                            eventoSemanal = recursosSociais.eventoSemanal,
+                            conquistas = recursosSociais.conquistas,
+                            historico = recursosSociais.historico,
+                            estatisticasPorJogo = recursosSociais.estatisticasPorJogo,
+                            atualizacoesDenuncias = recursosSociais.atualizacoesDenuncias,
+                            estado = EstadoCarregamentoSocial(
+                                clãsCarregando = recursosSociaisCarregando,
+                                eventoCarregando = recursosSociaisCarregando,
+                                conquistasCarregando = recursosSociaisCarregando,
+                                historicoCarregando = recursosSociaisCarregando,
+                                erros = erroRecursosSociais?.let {
+                                    mapOf("clãs" to it, "evento" to it, "conquistas" to it, "histórico" to it)
+                                }.orEmpty(),
+                            ),
+                            onCriarCla = { rascunho, concluir ->
+                                FirebaseRepository.criarCla(rascunho, concluirAcaoSocial(concluir))
+                            },
+                            onEntrarCla = { id, concluir ->
+                                FirebaseRepository.entrarCla(id, concluirAcaoSocial(concluir))
+                            },
+                            onSolicitarEntradaCla = { id, concluir ->
+                                FirebaseRepository.solicitarEntradaCla(id, concluirAcaoSocial(concluir))
+                            },
+                            onEntrarComConvite = { codigo, concluir ->
+                                FirebaseRepository.entrarComConvite(codigo, concluirAcaoSocial(concluir))
+                            },
+                            onAceitarConvite = { clanId, concluir ->
+                                FirebaseRepository.aceitarConviteCla(clanId, concluirAcaoSocial(concluir))
+                            },
+                            onSairCla = { id, concluir ->
+                                FirebaseRepository.sairCla(id, concluirAcaoSocial(concluir))
+                            },
+                            onConvidarUsuario = { claId, usuarioId, concluir ->
+                                FirebaseRepository.convidarUsuario(claId, usuarioId, concluirAcaoSocial(concluir))
+                            },
+                            onAprovarSolicitacao = { claId, usuarioId, concluir ->
+                                FirebaseRepository.aprovarSolicitacaoCla(claId, usuarioId, concluirAcaoSocial(concluir))
+                            },
+                            onRemoverMembro = { claId, usuarioId, concluir ->
+                                FirebaseRepository.removerMembroCla(claId, usuarioId, concluirAcaoSocial(concluir))
+                            },
+                            onResgatarRecompensa = { eventId, concluir ->
+                                FirebaseRepository.resgatarRecompensaSemanal(eventId, concluirAcaoSocial(concluir))
+                            },
+                            onEnviarDenuncia = { denuncia, concluir ->
+                                FirebaseRepository.enviarDenuncia(denuncia, concluir)
+                            },
+                        )
+                        Aba.Extras -> TelaAtividadesExtras(
+                            eventoSemanal = recursosSociais.eventoSemanal,
+                            onClose = { aba = Aba.Jogos },
+                        )
+                        Aba.Conta -> TelaCentralConta(
+                            painel = painelConta,
+                            carregando = carregandoPainelConta,
+                            erro = erroPainelConta,
+                            bloqueioDispositivoAtivo = bloqueioDispositivoAtivo,
+                            isAdmin = ehAdmin,
+                            onRecarregar = { carregarPainelConta() },
+                            onSalvarPreferencias = { preferences, complete ->
+                                FirebaseRepository.salvarPreferenciasConta(preferences) { error ->
+                                    if (error == null) {
+                                        Cores.aplicarTema(preferences.theme)
+                                        Cores.aplicarAcessibilidade(
+                                            preferences.accessibilityFontScale.toFloat(),
+                                            preferences.highContrast,
+                                            preferences.reduceMotion,
+                                        )
+                                        Locale.setDefault(Locale.forLanguageTag(preferences.locale))
+                                        deviceLockPreferences.edit()
+                                            .putString("theme", preferences.theme)
+                                            .putString("locale", preferences.locale)
+                                            .putFloat("accessibilityFontScale", preferences.accessibilityFontScale.toFloat())
+                                            .putBoolean("highContrast", preferences.highContrast)
+                                            .putBoolean("reduceMotion", preferences.reduceMotion)
+                                            .putBoolean("confirmImportant", preferences.confirmImportant)
+                                            .putBoolean("personalizedRecommendations", preferences.personalizedRecommendations)
+                                            .apply()
+                                    }
+                                    complete(error)
+                                }
+                            },
+                            onGerenciarAmigo = { action, username, targetUid, complete ->
+                                FirebaseRepository.gerenciarAmigo(action, username, targetUid, complete)
+                            },
+                            onDefinirBloqueio = { enabled ->
+                                val keyguard = contexto.getSystemService(KeyguardManager::class.java)
+                                if (keyguard?.isDeviceSecure != true) {
+                                    android.widget.Toast.makeText(
+                                        contexto,
+                                        "Configure PIN, padrão ou senha de bloqueio no Android primeiro.",
+                                        android.widget.Toast.LENGTH_LONG,
+                                    ).show()
+                                } else {
+                                    val intent = keyguard.createConfirmDeviceCredentialIntent(
+                                        "Confirmar proteção do Zeca",
+                                        "Confirme sua identidade para alterar esta configuração.",
+                                    )
+                                    if (intent == null) {
+                                        android.widget.Toast.makeText(contexto, "Não foi possível abrir a autenticação do dispositivo.", android.widget.Toast.LENGTH_LONG).show()
+                                    } else {
+                                        mudancaBloqueioPendente = enabled
+                                        solicitacaoAutenticacaoPendente = true
+                                        autenticadorDispositivo.launch(intent)
+                                    }
+                                }
+                            },
+                            onPublicarAviso = { title, details, type, expiresAtMs, complete ->
+                                FirebaseRepository.publicarAvisoApp(title, details, type, expiresAtMs, complete)
+                            },
+                            onEnviarSuporte = { title, details, category, complete ->
+                                FirebaseRepository.enviarSolicitacaoSuporte(title, details, category, complete)
+                            },
+                            onVoltar = { aba = Aba.Perfil },
                         )
                         Aba.Carteira -> TelaCarteira(
                             linkPagamentoRecebido = pixPaymentLink,
@@ -636,7 +1054,16 @@ fun CassinoApp(
                             },
                         )
                         Aba.Admin -> if (ehAdmin) {
-                            TelaAdmin(
+                            if (mostrarDenunciasAdmin) {
+                                TelaDenunciasAdmin(
+                                    onVoltar = { mostrarDenunciasAdmin = false },
+                                    onCarregar = { concluir -> FirebaseRepository.listarDenunciasAdmin(concluir) },
+                                    onModerar = { id, status, bloquear, motivo, concluir ->
+                                        FirebaseRepository.moderarDenuncia(id, status, bloquear, motivo, concluir)
+                                    },
+                                )
+                            } else TelaAdmin(
+                                onAbrirDenuncias = { mostrarDenunciasAdmin = true },
                                 onCarregarUsuarios = { cursor, concluir ->
                                     FirebaseRepository.listarUsuariosAdmin(cursor, concluir)
                                 },
@@ -663,6 +1090,11 @@ fun CassinoApp(
                                 },
                                 onExcluirUsuario = { uid, confirmUid, motivo, requestId, concluir ->
                                     FirebaseRepository.excluirUsuarioAdmin(uid, confirmUid, motivo, requestId, concluir)
+                                },
+                                onCarregarTicketsSuporte = { concluir ->
+                                    FirebaseRepository.carregarSolicitacoesSuporteAdmin { tickets, error ->
+                                        concluir(tickets, error)
+                                    }
                                 },
                             )
                         } else {
@@ -728,6 +1160,8 @@ fun CassinoApp(
                                 },
                                 onAbrirLoja = { mostrarLoja = true },
                                 onSair = { FirebaseRepository.sair() },
+                                onAbrirConta = { aba = Aba.Conta },
+                                confirmarAcoesImportantes = painelConta?.preferences?.confirmImportant ?: true,
                             )
                         }
                     }
@@ -736,8 +1170,10 @@ fun CassinoApp(
             AnimatedVisibility(
                 visible = notificacaoAtual != null,
                 modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().zIndex(1f),
-                enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
-                exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
+                enter = if (Cores.ReduzirMovimento) fadeIn(androidx.compose.animation.core.tween(0))
+                else slideInVertically(initialOffsetY = { -it }) + fadeIn(),
+                exit = if (Cores.ReduzirMovimento) fadeOut(androidx.compose.animation.core.tween(0))
+                else slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
             ) {
                 notificacaoAtual?.let { notificacao ->
                     Row(
@@ -799,11 +1235,11 @@ fun BarraInferior(
             )
             .border(1.dp, Color.White.copy(alpha = 0.26f), CircleShape)
             .padding(5.dp)
-            .animateContentSize(),
+            .then(if (Cores.ReduzirMovimento) Modifier else Modifier.animateContentSize()),
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Aba.entries.filter { mostrarAdmin || it != Aba.Admin }.forEach { aba ->
+        Aba.entries.filter { (mostrarAdmin || it != Aba.Admin) && it != Aba.Conta }.forEach { aba ->
             val selecionada = aba == atual
             Row(
                 modifier = Modifier
@@ -814,7 +1250,7 @@ fun BarraInferior(
                     )
                     .clickable { onSelecionar(aba) }
                     .padding(horizontal = if (selecionada) 14.dp else 11.dp, vertical = 11.dp)
-                    .animateContentSize(),
+                    .then(if (Cores.ReduzirMovimento) Modifier else Modifier.animateContentSize()),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
