@@ -467,13 +467,15 @@ fun CassinoApp(
                             onCarregarSalasCaboGuerra = { concluir -> FirebaseRepository.listarSalasCaboGuerra(concluir) },
                             onObservarFilaJokenpo = { callback -> FirebaseRepository.observarFilaJokenpo(callback) },
                             onObservarPartidaJokenpo = { matchId, callback -> FirebaseRepository.observarPartidaJokenpo(matchId, callback) },
-                            onBuscarAdversarioJokenpo = { requestId, concluir -> FirebaseRepository.buscarAdversarioJokenpo(requestId, concluir) },
+                            onBuscarAdversarioJokenpo = { gameId, requestId, concluir ->
+                                FirebaseRepository.buscarAdversarioJokenpo(gameId, requestId, concluir)
+                            },
                             onCancelarFilaJokenpo = { concluir -> FirebaseRepository.cancelarFilaJokenpo(concluir) },
                             onJogarJokenpo = { matchId, escolha, requestId, concluir ->
                                 FirebaseRepository.jogarJokenpo(matchId, escolha, requestId, concluir)
                             },
-                            onCriarSalaCaboGuerra = { aposta, convites, senha, modo, requestId, concluir ->
-                                FirebaseRepository.criarSalaCaboGuerra(aposta, convites, senha, modo, requestId, concluir)
+                            onCriarSalaCaboGuerra = { aposta, convites, senha, modo, gameId, requestId, concluir ->
+                                FirebaseRepository.criarSalaCaboGuerra(aposta, convites, senha, modo, gameId, requestId, concluir)
                             },
                             onEntrarSalaCaboGuerra = { roomId, senha, requestId, concluir ->
                                 FirebaseRepository.entrarSalaCaboGuerra(roomId, senha, requestId, concluir)

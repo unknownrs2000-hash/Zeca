@@ -63,6 +63,7 @@ async function seedPlayer(uid, balanceCents = 50_000) {
       avatarUrl: "",
       avatarAsProfilePhoto: false,
       equippedAvatarItems: [],
+      equippedFrame: "",
     });
   });
 }
@@ -108,6 +109,7 @@ test("chat accepts an authenticated Cloudinary voice note but rejects arbitrary 
     senderAvatarUrl: "",
     senderAvatarItems: [],
     senderAvatarAsProfilePhoto: false,
+    senderEquippedFrame: "",
     text: "",
     createdAt: serverTimestamp(),
     type: "audio",
@@ -186,6 +188,7 @@ async function writePrivateMessage(senderUid, recipientUid, messageId, senderUid
       senderAvatarUrl: "",
       senderAvatarItems: [],
       senderAvatarAsProfilePhoto: false,
+      senderEquippedFrame: "",
       text: "Olá",
       createdAt: serverTimestamp(),
     });
@@ -380,6 +383,7 @@ test("allows a new account to create an incomplete profile before choosing its u
       avatarUrl: "",
       avatarAsProfilePhoto: false,
       equippedAvatarItems: [],
+      equippedFrame: "",
     });
   }));
 });

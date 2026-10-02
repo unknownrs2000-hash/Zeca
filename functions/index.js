@@ -24,10 +24,14 @@ const {
   colorWheelResult,
   diceSumResult,
   rangePickResult,
+  doubleCoinResult,
+  tripleDiceResult,
+  luckySuitResult,
+  safeVaultResult,
   rockPaperScissorsResult,
   parityDiceResult,
   rouletteResult,
-  resolveRockPaperScissors,
+  resolveOnlineDuel,
   scratchCardResult,
   settleBlackjack,
   spinSlots,
@@ -341,6 +345,7 @@ exports.ensurePlayerProfile = onCall(async (request) => {
       avatarUrl: existing.avatarUrl || authUser.photoURL || "",
       avatarAsProfilePhoto: existing.avatarAsProfilePhoto === true,
       equippedAvatarItems: Array.isArray(existing.equippedAvatarItems) ? existing.equippedAvatarItems : [],
+      equippedFrame: typeof existing.equippedFrame === "string" ? existing.equippedFrame : "",
       equippedTitle: typeof existing.equippedTitle === "string" ? existing.equippedTitle : "",
       username,
       profileSetupComplete: existing.profileSetupComplete === true && username !== "",
@@ -359,6 +364,7 @@ exports.ensurePlayerProfile = onCall(async (request) => {
       avatarUrl: profile.avatarUrl,
       avatarAsProfilePhoto: profile.avatarAsProfilePhoto,
       equippedAvatarItems: profile.equippedAvatarItems,
+      equippedFrame: profile.equippedFrame,
       username: profile.username,
     };
 
@@ -623,6 +629,7 @@ exports.playGame = onCall(async (request) => {
   if (!new Set([
     "slots", "roulette", "coin", "dice", "parity", "scratch", "football",
     "rps", "higherLower", "luckyNumber", "luckyDoors", "diceSum", "cardPair", "colorWheel", "rangePick",
+    "doubleCoin", "tripleDice", "luckySuit", "safeVault",
   ]).has(game)
       || typeof requestId !== "string"
       || !/^[a-f0-9-]{36}$/i.test(requestId)) {
@@ -687,6 +694,10 @@ exports.playGame = onCall(async (request) => {
         else if (game === "cardPair") result = cardPairResult(request.data?.selection, amountCents);
         else if (game === "colorWheel") result = colorWheelResult(request.data?.selection, amountCents);
         else if (game === "rangePick") result = rangePickResult(request.data?.selection, amountCents);
+        else if (game === "doubleCoin") result = doubleCoinResult(request.data?.selection, amountCents);
+        else if (game === "tripleDice") result = tripleDiceResult(request.data?.selection, amountCents);
+        else if (game === "luckySuit") result = luckySuitResult(request.data?.selection, amountCents);
+        else if (game === "safeVault") result = safeVaultResult(request.data?.selection, amountCents);
         else result = scratchCardResult(amountCents);
         returnedCents = result.payoutCents;
       } catch {
@@ -721,6 +732,10 @@ exports.playGame = onCall(async (request) => {
       cardPair: "Duas cartas",
       colorWheel: "Roda colorida",
       rangePick: "Faixa premiada",
+      doubleCoin: "Moedas gêmeas",
+      tripleDice: "Trio de dados",
+      luckySuit: "Naipe secreto",
+      safeVault: "Cofre numerado",
     };
     const description = game === "slots"
       ? `Slots · ${result.reels.join(" ")}`
@@ -770,7 +785,9 @@ exports.playGame = onCall(async (request) => {
 exports.queueJokenpoMatch = onCall(async (request) => {
   const uid = authenticatedUid(request);
   const requestId = request.data?.requestId;
-  if (typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)) {
+  const gameId = request.data?.gameId || "rps";
+  if (typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)
+      || !["rps", "duelParity", "duelCoin", "duelCards"].includes(gameId)) {
     throw new HttpsError("invalid-argument", "Identificador de busca inválido.");
   }
 
@@ -804,7 +821,7 @@ exports.queueJokenpoMatch = onCall(async (request) => {
     let opponentQueue = null;
     let opponentProfile = null;
     const candidates = [...waitingSnapshot.docs]
-      .filter((document) => document.id !== uid)
+      .filter((document) => document.id !== uid && normalizeJokenpoGameId(document.get("gameId")) === gameId)
       .sort((left, right) => (left.get("createdAtMs") || 0) - (right.get("createdAtMs") || 0));
     for (const candidate of candidates) {
       const ageMs = nowMs - (candidate.get("createdAtMs") || 0);
@@ -827,7 +844,7 @@ exports.queueJokenpoMatch = onCall(async (request) => {
       transaction.set(queueRef, {
         uid,
         status: "waiting",
-        gameId: "jokenpo",
+        gameId,
         requestId,
         createdAtMs: nowMs,
         hasPlayed: false,
@@ -844,7 +861,7 @@ exports.queueJokenpoMatch = onCall(async (request) => {
       [opponentQueue.id]: safeName(opponentProfile.get("displayName"), "Jogador"),
     };
     transaction.create(matchRef, {
-      gameId: "jokenpo",
+      gameId,
       playerUids,
       playerNames,
       status: "playing",
@@ -858,6 +875,10 @@ exports.queueJokenpoMatch = onCall(async (request) => {
   });
   return response;
 });
+
+function normalizeJokenpoGameId(gameId) {
+  return !gameId || gameId === "jokenpo" ? "rps" : gameId;
+}
 
 exports.cancelJokenpoQueue = onCall(async (request) => {
   const uid = authenticatedUid(request);
@@ -880,9 +901,10 @@ exports.submitJokenpoChoice = onCall(async (request) => {
   const matchId = request.data?.matchId;
   const choice = request.data?.choice;
   const requestId = request.data?.requestId;
+  const choiceSupported = ["rock", "paper", "scissors", "even", "odd", "heads", "tails", "1", "2", "3", "4", "5", "6"].includes(String(choice));
   if (typeof matchId !== "string" || !/^[a-f0-9-]{36}$/i.test(matchId)
       || typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)
-      || !["rock", "paper", "scissors"].includes(choice)) {
+      || !choiceSupported) {
     throw new HttpsError("invalid-argument", "Partida, jogada ou identificador inválido.");
   }
 
@@ -905,6 +927,15 @@ exports.submitJokenpoChoice = onCall(async (request) => {
     }
     if (!matchSnapshot.exists) throw new HttpsError("not-found", "Partida não encontrada.");
     const match = matchSnapshot.data();
+    const gameId = normalizeJokenpoGameId(match.gameId);
+    const validChoice = gameId === "rps"
+      ? ["rock", "paper", "scissors"].includes(choice)
+      : gameId === "duelParity"
+        ? ["even", "odd"].includes(choice)
+        : gameId === "duelCoin"
+          ? ["heads", "tails"].includes(choice)
+          : gameId === "duelCards" && /^[1-6]$/.test(String(choice));
+    if (!validChoice) throw new HttpsError("invalid-argument", "Jogada inválida para este minijogo.");
     const playerUids = Array.isArray(match.playerUids) ? match.playerUids : [];
     if (!playerUids.includes(uid)) throw new HttpsError("permission-denied", "Você não participa desta partida.");
     if (match.status !== "playing") throw new HttpsError("failed-precondition", "A partida já terminou.");
@@ -928,14 +959,9 @@ exports.submitJokenpoChoice = onCall(async (request) => {
         [opponentUid]: opponentMoveSnapshot.get("choice"),
       };
       const orderedChoices = playerUids.map((playerUid) => choices[playerUid]);
-      const result = resolveRockPaperScissors(orderedChoices[0], orderedChoices[1]);
-      const winnerUid = result.outcome === "draw"
-        ? ""
-        : result.winnerChoice === orderedChoices[0] ? playerUids[0] : playerUids[1];
-      const labels = { rock: "Pedra", paper: "Papel", scissors: "Tesoura" };
-      const resultText = result.outcome === "draw"
-        ? `Empate · ${labels[orderedChoices[0]]} contra ${labels[orderedChoices[1]]}`
-        : `${labels[orderedChoices[0]]} contra ${labels[orderedChoices[1]]}`;
+      const result = resolveOnlineDuel(gameId, orderedChoices[0], orderedChoices[1]);
+      const winnerUid = result.winnerIndex < 0 ? "" : playerUids[result.winnerIndex];
+      const resultText = `${result.result.displayText}${winnerUid ? "" : " · Empate"}`;
       transaction.update(matchRef, {
         choices,
         status: "completed",
@@ -1571,6 +1597,15 @@ function tugPlayerLimit(room) {
   return room.mode === "2v2" ? 4 : 2;
 }
 
+function tugGameName(gameId) {
+  return ({
+    tug: "Cabo de guerra",
+    teamRace: "Corrida em equipe",
+    teamRelay: "Revezamento",
+    teamBlitz: "Toque relâmpago",
+  })[gameId] || "Cabo de guerra";
+}
+
 const TUG_ROOM_IDLE_TTL_MS = 10 * 60 * 1_000;
 
 function publicTugRoom(room, includeInvites = false) {
@@ -1578,6 +1613,7 @@ function publicTugRoom(room, includeInvites = false) {
   return {
     roomId: room.roomId,
     mode: room.mode || "1v1",
+    gameId: room.gameId || "tug",
     creatorUid: room.creatorUid,
     creatorName: room.creatorName || "Jogador",
     opponentUid: room.opponentUid || "",
@@ -1593,6 +1629,7 @@ function publicTugRoom(room, includeInvites = false) {
     teamAPulls: room.teamAPulls ?? room.creatorPulls ?? 0,
     teamBPulls: room.teamBPulls ?? room.opponentPulls ?? 0,
     acceptedPulls: room.acceptedPulls || 0,
+    lastPlayerByTeam: room.lastPlayerByTeam || {},
     winnerUid: room.winnerUid || "",
     winnerTeam: room.winnerTeam || "",
     inviteVersion: room.inviteVersion || 0,
@@ -1621,7 +1658,7 @@ async function expireIdleTugRoom(roomRef) {
       transaction.update(userSnapshot.ref, { balanceCents });
       transaction.update(rankSnapshot.ref, { balanceCents });
       transaction.create(userSnapshot.ref.collection("transactions").doc(`tug_expire_${room.roomId}`), {
-        description: "Cabo de guerra · sala inativa, aposta devolvida",
+        description: `${tugGameName(room.gameId)} · sala inativa, aposta devolvida`,
         deltaCents: room.stakeCents,
         type: "tug_refund",
         roomId: room.roomId,
@@ -1687,10 +1724,13 @@ exports.createTugRoom = onCall(async (request) => {
   const requestId = request.data?.requestId;
   const invitedUids = request.data?.invitedUids;
   const mode = request.data?.mode || "1v1";
+  const gameId = request.data?.gameId || "tug";
   const password = typeof request.data?.password === "string" ? request.data.password : "";
   if (!validateWager(stakeCents, MAX_TRANSFER_CENTS)
       || typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)
       || !["1v1", "2v2"].includes(mode)
+      || !["tug", "teamRace", "teamRelay", "teamBlitz"].includes(gameId)
+      || (gameId !== "tug" && mode !== "2v2")
       || !Array.isArray(invitedUids) || invitedUids.some((targetUid) => typeof targetUid !== "string" || !targetUid || targetUid === uid)
       || invitedUids.length > 20 || new Set(invitedUids).size !== invitedUids.length
       || password.length > 24) {
@@ -1722,7 +1762,7 @@ exports.createTugRoom = onCall(async (request) => {
     transaction.update(userRef, { balanceCents: balance - stakeCents });
     transaction.update(rankRef, { balanceCents: balance - stakeCents });
     transaction.create(historyRef, {
-      description: `Cabo de guerra · aposta na sala ${requestId.slice(0, 8)}`,
+      description: `${tugGameName(gameId)} · aposta na sala ${requestId.slice(0, 8)}`,
       deltaCents: -stakeCents,
       type: "tug_wager",
       roomId: requestId,
@@ -1733,6 +1773,7 @@ exports.createTugRoom = onCall(async (request) => {
     const room = {
       roomId: requestId,
       mode,
+      gameId,
       creatorUid: uid,
       creatorName,
       opponentUid: "",
@@ -1826,7 +1867,7 @@ exports.joinTugRoom = onCall(async (request) => {
     transaction.update(rankRef, { balanceCents: balance - room.stakeCents });
     transaction.update(roomRef, updatedRoom);
     transaction.create(historyRef, {
-      description: `Cabo de guerra · entrada na sala ${roomId.slice(0, 8)}`,
+      description: `${tugGameName(room.gameId)} · entrada na sala ${roomId.slice(0, 8)}`,
       deltaCents: -room.stakeCents,
       type: "tug_wager",
       roomId,
@@ -1940,7 +1981,7 @@ exports.manageTugRoom = onCall(async (request) => {
         transaction.update(player.userSnapshot.ref, { balanceCents: balance - difference });
         transaction.update(player.rankSnapshot.ref, { balanceCents: balance - difference });
         transaction.create(player.userSnapshot.ref.collection("transactions").doc(`tug_adjust_${requestId}_${uidKey}`), {
-          description: "Cabo de guerra · ajuste da aposta da sala",
+          description: `${tugGameName(room.gameId)} · ajuste da aposta da sala`,
           deltaCents: -difference,
           type: "tug_wager_adjustment",
           roomId,
@@ -1980,7 +2021,9 @@ exports.manageTugRoom = onCall(async (request) => {
         transaction.update(player.rankSnapshot.ref, { balanceCents: refundedBalance });
         const uidKey = createHash("sha256").update(player.uid).digest("hex").slice(0, 12);
         transaction.create(player.userSnapshot.ref.collection("transactions").doc(`tug_refund_${roomId}_${requestId}_${uidKey}`), {
-          description: action === "leave" ? "Cabo de guerra · saída da sala, aposta devolvida" : "Cabo de guerra · sala dissolvida, aposta devolvida",
+          description: action === "leave"
+            ? `${tugGameName(room.gameId)} · saída da sala, aposta devolvida`
+            : `${tugGameName(room.gameId)} · sala dissolvida, aposta devolvida`,
           deltaCents: room.stakeCents,
           type: "tug_refund",
           roomId,
@@ -2012,7 +2055,7 @@ exports.manageTugRoom = onCall(async (request) => {
       transaction.update(kicked.rankSnapshot.ref, { balanceCents: refundedBalance });
       const kickedUidKey = createHash("sha256").update(kicked.uid).digest("hex").slice(0, 12);
       transaction.create(kicked.userSnapshot.ref.collection("transactions").doc(`tug_refund_${roomId}_${requestId}_${kickedUidKey}`), {
-        description: "Cabo de guerra · remoção da sala, aposta devolvida",
+        description: `${tugGameName(room.gameId)} · remoção da sala, aposta devolvida`,
         deltaCents: room.stakeCents,
         type: "tug_refund",
         roomId,
@@ -2060,6 +2103,7 @@ exports.startTugRoom = onCall(async (request) => {
       startedAt: FieldValue.serverTimestamp(),
       startedAtMs,
       lastPullAtMs: Object.fromEntries(players.map((player) => [player.uid, startedAtMs])),
+      lastPlayerByTeam: {},
       lastUpdatedAtMs: startedAtMs,
     };
     transaction.update(roomRef, update);
@@ -2108,6 +2152,7 @@ exports.pullTugRope = onCall(async (request) => {
       pull = applyTugPull(currentRoom.data(), uid, Date.now(), pullCount);
     } catch (error) {
       if (error.message === "pull-too-fast") throw new HttpsError("resource-exhausted", "Puxe novamente em um instante.");
+      if (error.message === "relay-turn") throw new HttpsError("failed-precondition", "No revezamento, um colega precisa jogar antes de você novamente.");
       if (error.message === "not-a-player") throw new HttpsError("permission-denied", "Você não está nesta partida.");
       if (error.message === "invalid-pull-count") throw new HttpsError("invalid-argument", "Quantidade de toques inválida.");
       throw new HttpsError("failed-precondition", "A partida não está ativa.");
@@ -2156,7 +2201,7 @@ exports.pullTugRope = onCall(async (request) => {
       });
       transaction.update(rankRefs[index], { balanceCents: settlement.balanceCents, level: settlement.progression.level });
       transaction.create(userRefs[index].collection("transactions").doc(`tug_settlement_${roomId}`), {
-        description: settlement.won ? "Cabo de guerra · vitória" : "Cabo de guerra · derrota",
+        description: `${tugGameName(room.gameId)} · ${settlement.won ? "vitória" : "derrota"}`,
         deltaCents: settlement.won ? payoutPerWinnerCents : 0,
         type: "tug_settlement",
         roomId,
@@ -2717,9 +2762,13 @@ exports.equipFrame = onCall(async (request) => {
   }
 
   const userRef = database.collection("users").doc(uid);
+  const rankRef = database.collection("leaderboard").doc(uid);
   await database.runTransaction(async (transaction) => {
-    const userSnapshot = await transaction.get(userRef);
-    if (!userSnapshot.exists) {
+    const [userSnapshot, rankSnapshot] = await Promise.all([
+      transaction.get(userRef),
+      transaction.get(rankRef),
+    ]);
+    if (!userSnapshot.exists || !rankSnapshot.exists) {
       throw new HttpsError("failed-precondition", "Perfil ainda não foi criado.");
     }
     if (itemId !== "") {
@@ -2729,6 +2778,7 @@ exports.equipFrame = onCall(async (request) => {
       }
     }
     transaction.update(userRef, { equippedFrame: itemId });
+    transaction.update(rankRef, { equippedFrame: itemId });
   });
 
   return { ok: true, equippedFrame: itemId };
@@ -3029,8 +3079,12 @@ exports.adminUpdateUserInventory = onCall(async (request) => {
       : inventory.filter((ownedItemId) => ownedItemId !== itemId);
     const userUpdate = { inventory: nextInventory };
     let equippedAvatarItems;
+    const rankUpdate = {};
     if (action === "remove") {
-      if (userSnapshot.get("equippedFrame") === itemId) userUpdate.equippedFrame = "";
+      if (userSnapshot.get("equippedFrame") === itemId) {
+        userUpdate.equippedFrame = "";
+        rankUpdate.equippedFrame = "";
+      }
       if (userSnapshot.get("equippedTitle") === itemId) userUpdate.equippedTitle = "";
       const currentEquipped = Array.isArray(userSnapshot.get("equippedAvatarItems"))
         ? userSnapshot.get("equippedAvatarItems")
@@ -3041,8 +3095,9 @@ exports.adminUpdateUserInventory = onCall(async (request) => {
       }
     }
     transaction.update(userRef, userUpdate);
-    if (equippedAvatarItems && rankSnapshot.exists) {
-      transaction.update(rankRef, { equippedAvatarItems });
+    if (equippedAvatarItems) rankUpdate.equippedAvatarItems = equippedAvatarItems;
+    if (Object.keys(rankUpdate).length > 0 && rankSnapshot.exists) {
+      transaction.update(rankRef, rankUpdate);
     }
     response = { ok: true, uid: targetUid, action, itemId, inventory: nextInventory };
     transaction.create(auditRef, {
@@ -3795,6 +3850,7 @@ exports.sendChatMessage = onCall(async (request) => {
       senderAvatarUrl: sender.avatarUrl || "",
       senderAvatarItems: Array.isArray(sender.equippedAvatarItems) ? sender.equippedAvatarItems : [],
       senderAvatarAsProfilePhoto: sender.avatarAsProfilePhoto === true,
+      senderEquippedFrame: typeof sender.equippedFrame === "string" ? sender.equippedFrame : "",
       text,
       createdAt: now,
     };

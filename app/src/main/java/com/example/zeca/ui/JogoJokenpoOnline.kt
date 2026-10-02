@@ -44,9 +44,11 @@ import java.util.UUID
 @Composable
 internal fun JogoJokenpoOnline(
     uidAtual: String,
+    gameId: String,
+    gameName: String,
     onObservarFila: ((String, String, Boolean) -> Unit) -> ListenerRegistration,
     onObservarPartida: (String, (PartidaJokenpo?, Exception?) -> Unit) -> ListenerRegistration,
-    onBuscarAdversario: (String, (String, String, Exception?) -> Unit) -> Unit,
+    onBuscarAdversario: (String, String, (String, String, Exception?) -> Unit) -> Unit,
     onCancelarFila: ((Exception?) -> Unit) -> Unit,
     onJogar: (String, String, String, (ResultadoJokenpo?, Exception?) -> Unit) -> Unit,
 ) {
@@ -94,6 +96,19 @@ internal fun JogoJokenpoOnline(
         partida?.vencedorUid == uidAtual -> "Você venceu"
         else -> "Seu adversário venceu"
     }
+    val gameIdPartida = partida?.gameId ?: gameId
+    val opcoes = when (gameIdPartida) {
+        "duelParity" -> listOf("even" to "Par", "odd" to "Ímpar")
+        "duelCoin" -> listOf("heads" to "Cara", "tails" to "Coroa")
+        "duelCards" -> (1..6).map { it.toString() to it.toString() }
+        else -> listOf("rock" to "Pedra", "paper" to "Papel", "scissors" to "Tesoura")
+    }
+    val instrucoes = when (gameIdPartida) {
+        "duelParity" -> "Escolham par ou ímpar; um dado decide. Se ambos acertarem ou errarem, empata."
+        "duelCoin" -> "Escolham cara ou coroa. A moeda decide; só uma previsão certa vence."
+        "duelCards" -> "Escolha uma carta de 1 a 6. A carta mais alta vence."
+        else -> "Partida amistosa · sem aposta"
+    }
 
     Column(
         modifier = Modifier
@@ -112,8 +127,8 @@ internal fun JogoJokenpoOnline(
                 Text("1v1", color = Cores.Turquesa, fontSize = 12.sp, fontWeight = FontWeight.Black)
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("Jokenpô online", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                Text("Partida amistosa · sem aposta", color = Color.White.copy(alpha = 0.58f), fontSize = 11.sp)
+                Text(gameName, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Text(instrucoes, color = Color.White.copy(alpha = 0.58f), fontSize = 11.sp)
             }
         }
 
@@ -125,7 +140,7 @@ internal fun JogoJokenpoOnline(
                     onClick = {
                         ocupado = true
                         erro = ""
-                        onBuscarAdversario(UUID.randomUUID().toString()) { status, newMatchId, error ->
+                        onBuscarAdversario(gameId, UUID.randomUUID().toString()) { status, newMatchId, error ->
                             ocupado = false
                             if (error != null) erro = error.localizedMessage ?: "Não foi possível buscar uma partida."
                             else {
@@ -157,36 +172,39 @@ internal fun JogoJokenpoOnline(
                     }
                 } else {
                     Text("Escolha sua jogada", color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp)
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf("rock" to "Pedra", "paper" to "Papel", "scissors" to "Tesoura").forEach { (value, label) ->
-                            Button(
-                                onClick = {
-                                    ocupado = true
-                                    erro = ""
-                                    onJogar(matchId, value, UUID.randomUUID().toString()) { result, error ->
-                                        ocupado = false
-                                        if (error != null || result == null) {
-                                            erro = error?.localizedMessage ?: "Não foi possível enviar sua jogada."
-                                        } else {
-                                            jaEscolheu = true
-                                            if (result.status == "completed") {
-                                                partida = partida?.copy(
-                                                    status = result.status,
-                                                    vencedorUid = result.vencedorUid,
-                                                    resultado = result.resultado,
-                                                )
+                    opcoes.chunked(3).forEach { linha ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            linha.forEach { (value, label) ->
+                                Button(
+                                    onClick = {
+                                        ocupado = true
+                                        erro = ""
+                                        onJogar(matchId, value, UUID.randomUUID().toString()) { result, error ->
+                                            ocupado = false
+                                            if (error != null || result == null) {
+                                                erro = error?.localizedMessage ?: "Não foi possível enviar sua jogada."
+                                            } else {
+                                                jaEscolheu = true
+                                                if (result.status == "completed") {
+                                                    partida = partida?.copy(
+                                                        status = result.status,
+                                                        vencedorUid = result.vencedorUid,
+                                                        resultado = result.resultado,
+                                                    )
+                                                }
                                             }
                                         }
-                                    }
-                                },
-                                enabled = !ocupado,
-                                modifier = Modifier.weight(1f),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = if (ocupado) Color.White.copy(alpha = 0.1f) else Cores.Turquesa.copy(alpha = 0.9f),
-                                ),
-                            ) {
-                                Text(label, color = Color(0xFF10201D), fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                                    },
+                                    enabled = !ocupado,
+                                    modifier = Modifier.weight(1f),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (ocupado) Color.White.copy(alpha = 0.1f) else Cores.Turquesa.copy(alpha = 0.9f),
+                                    ),
+                                ) {
+                                    Text(label, color = Color(0xFF10201D), fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                                }
                             }
+                            repeat(3 - linha.size) { Spacer(Modifier.weight(1f)) }
                         }
                     }
                 }
@@ -222,12 +240,12 @@ internal fun JogoJokenpoOnline(
                 }
             }
             else -> {
-                Text("Encontre alguém online para uma partida rápida de Jokenpô.", color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp)
+                Text("Encontre alguém online para jogar $gameName.", color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp)
                 Button(
                     onClick = {
                         ocupado = true
                         erro = ""
-                        onBuscarAdversario(UUID.randomUUID().toString()) { status, newMatchId, error ->
+                        onBuscarAdversario(gameId, UUID.randomUUID().toString()) { status, newMatchId, error ->
                             ocupado = false
                             if (error != null) erro = error.localizedMessage ?: "Não foi possível buscar uma partida."
                             else {

@@ -100,6 +100,19 @@ private val miniJogosSolo = listOf(
     MiniJogoSolo("Faixa premiada", "rangePick", "Escolha 0–3, 4–5 ou 6–9. As faixas externas pagam 2,38x; centro paga 4,75x.", listOf(
         EscolhaMiniJogo("Baixa · 0–3", "low"), EscolhaMiniJogo("Central · 4–5", "middle"), EscolhaMiniJogo("Alta · 6–9", "high"),
     )),
+    MiniJogoSolo("Moedas gêmeas", "doubleCoin", "Adivinhe se duas moedas sairão iguais ou diferentes. Acerto paga 1,90x.", listOf(
+        EscolhaMiniJogo("Iguais", "same"), EscolhaMiniJogo("Diferentes", "different"),
+    )),
+    MiniJogoSolo("Trio de dados", "tripleDice", "Preveja a soma baixa (3–7), média (8–13) ou alta (14–18).", listOf(
+        EscolhaMiniJogo("Baixa · 3–7", "low"), EscolhaMiniJogo("Média · 8–13", "middle"), EscolhaMiniJogo("Alta · 14–18", "high"),
+    )),
+    MiniJogoSolo("Naipe secreto", "luckySuit", "Escolha um dos quatro naipes. Acerto paga 3,80x.", listOf(
+        EscolhaMiniJogo("Espadas ♠", "spades"), EscolhaMiniJogo("Copas ♥", "hearts"),
+        EscolhaMiniJogo("Ouros ♦", "diamonds"), EscolhaMiniJogo("Paus ♣", "clubs"),
+    )),
+    MiniJogoSolo("Cofre numerado", "safeVault", "Escolha um dos cinco cofres. O prêmio paga 4,75x.", (1..5).map {
+        EscolhaMiniJogo("Cofre $it", it.toString())
+    }),
 )
 
 private val jogosSoloPorGrupo = linkedMapOf(
@@ -126,10 +139,10 @@ fun TelaJogos(
     onCarregarSalasCaboGuerra: ((List<SalaCaboGuerra>, Exception?) -> Unit) -> Unit,
     onObservarFilaJokenpo: ((String, String, Boolean) -> Unit) -> ListenerRegistration,
     onObservarPartidaJokenpo: (String, (PartidaJokenpo?, Exception?) -> Unit) -> ListenerRegistration,
-    onBuscarAdversarioJokenpo: (String, (String, String, Exception?) -> Unit) -> Unit,
+    onBuscarAdversarioJokenpo: (String, String, (String, String, Exception?) -> Unit) -> Unit,
     onCancelarFilaJokenpo: ((Exception?) -> Unit) -> Unit,
     onJogarJokenpo: (String, String, String, (ResultadoJokenpo?, Exception?) -> Unit) -> Unit,
-    onCriarSalaCaboGuerra: (Long, List<String>, String, String, String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
+    onCriarSalaCaboGuerra: (Long, List<String>, String, String, String, String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
     onEntrarSalaCaboGuerra: (String, String, String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
     onGerenciarSalaCaboGuerra: (String, String, String, String, Long, String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
     onIniciarSalaCaboGuerra: (String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
@@ -335,8 +348,14 @@ fun TelaJogos(
             }
             val jogosVisiveis = when (categoriaJogos) {
                 "Solo" -> jogosSoloPorGrupo[grupoSolo].orEmpty()
-                "1v1" -> listOf("Jokenpô online", "Cabo de guerra")
-                else -> listOf("Cabo de guerra")
+                "1v1" -> listOf(
+                    "Jokenpô online",
+                    "Duelo de par ou ímpar",
+                    "Duelo de cara ou coroa",
+                    "Duelo de cartas",
+                    "Cabo de guerra",
+                )
+                else -> listOf("Cabo de guerra", "Corrida em equipe", "Revezamento", "Toque relâmpago")
             }
             Text(
                 if (categoriaJogos == "Solo") "${jogosVisiveis.size} jogos · $grupoSolo" else "Salas multiplayer · ${categoriaJogos}",
@@ -354,7 +373,17 @@ fun TelaJogos(
                 lucroUltimo = 0L
                 resultado = "Escolha um jogo para começar"
             }
-            if (jogo !in listOf("Apostas esportivas", "Cabo de guerra", "Jokenpô online")) {
+            if (jogo !in listOf(
+                    "Apostas esportivas",
+                    "Cabo de guerra",
+                    "Corrida em equipe",
+                    "Revezamento",
+                    "Toque relâmpago",
+                    "Jokenpô online",
+                    "Duelo de par ou ímpar",
+                    "Duelo de cara ou coroa",
+                    "Duelo de cartas",
+                )) {
                 OutlinedTextField(
                     value = apostaTexto,
                     onValueChange = { apostaTexto = it; mensagem = "" },
@@ -625,17 +654,30 @@ fun TelaJogos(
                     onApostar = onApostarEsportiva,
                     onLiquidar = onLiquidarApostasEsportivas,
                 )
-                "Jokenpô online" -> JogoJokenpoOnline(
+                "Jokenpô online", "Duelo de par ou ímpar", "Duelo de cara ou coroa", "Duelo de cartas" -> JogoJokenpoOnline(
                     uidAtual = uidAtual,
+                    gameId = when (jogo) {
+                        "Duelo de par ou ímpar" -> "duelParity"
+                        "Duelo de cara ou coroa" -> "duelCoin"
+                        "Duelo de cartas" -> "duelCards"
+                        else -> "rps"
+                    },
+                    gameName = jogo,
                     onObservarFila = onObservarFilaJokenpo,
                     onObservarPartida = onObservarPartidaJokenpo,
                     onBuscarAdversario = onBuscarAdversarioJokenpo,
                     onCancelarFila = onCancelarFilaJokenpo,
                     onJogar = onJogarJokenpo,
                 )
-                "Cabo de guerra" -> TelaCaboGuerra(
+                "Cabo de guerra", "Corrida em equipe", "Revezamento", "Toque relâmpago" -> TelaCaboGuerra(
                     uidAtual = uidAtual,
                     modoInicial = categoriaJogos,
+                    gameIdInicial = when (jogo) {
+                        "Corrida em equipe" -> "teamRace"
+                        "Revezamento" -> "teamRelay"
+                        "Toque relâmpago" -> "teamBlitz"
+                        else -> "tug"
+                    },
                     saldoCentavos = saldoCentavos,
                     jogadores = jogadores,
                     roomInviteId = roomInviteId,

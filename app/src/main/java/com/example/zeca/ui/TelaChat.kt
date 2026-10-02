@@ -251,6 +251,7 @@ fun TelaChat(
                 it.username,
                 it.avatarItensEquipados,
                 it.avatarComoFotoPerfil,
+                it.molduraEquipada,
             )
         }
     val conversaGrupo = conversas.firstOrNull { it.id == grupoUid && it.tipo == "group" }
@@ -518,6 +519,7 @@ fun TelaChat(
                             avatarUrl = jogador?.avatarUrl.orEmpty(),
                             avatarItems = jogador?.avatarItensEquipados.orEmpty(),
                             avatarAsProfilePhoto = jogador?.avatarComoFotoPerfil == true,
+                            molduraEquipada = jogador?.molduraEquipada.orEmpty(),
                             foguinhoDias = diasFoguinho,
                             foguinhoNivel = nivelFoguinho,
                             onClick = { destinatarioUid = conversa.outroUid; erro = "" },
@@ -609,6 +611,7 @@ fun TelaChat(
                             avatarUrl = jogador.avatarUrl,
                             avatarItems = jogador.avatarItensEquipados,
                             avatarAsProfilePhoto = jogador.avatarComoFotoPerfil,
+                            molduraEquipada = jogador.molduraEquipada,
                             onClick = { destinatarioUid = jogador.uid; erro = "" },
                             onPerfil = { perfilUid = jogador.uid },
                             onEnviarMensagem = { destinatarioUid = jogador.uid; erro = "" },
@@ -685,6 +688,7 @@ fun TelaChat(
                             avatarUrl = if (emGrupo) conversaGrupo?.fotoGrupoUrl.orEmpty() else destinatario?.avatarUrl.orEmpty(),
                             avatarItems = destinatario?.avatarItensEquipados.orEmpty(),
                             avatarAsProfilePhoto = destinatario?.avatarComoFotoPerfil == true,
+                            molduraEquipada = if (emGrupo) "" else destinatario?.molduraEquipada.orEmpty(),
                             detalhe = if (emGrupo) {
                                 buildList {
                                     add("${conversaGrupo?.participantes?.size ?: 0} pessoas")
@@ -842,6 +846,7 @@ fun TelaChat(
                                 photoUrl = jogador.avatarUrl,
                                 avatarItems = jogador.avatarItensEquipados,
                                 avatarAsProfilePhoto = jogador.avatarComoFotoPerfil,
+                                molduraEquipada = jogador.molduraEquipada,
                             )
                             Column(Modifier.padding(start = 10.dp)) {
                                 Text(jogador.apelido, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
@@ -1018,6 +1023,7 @@ fun TelaChat(
                                 photoUrl = jogador?.avatarUrl.orEmpty(),
                                 avatarItems = jogador?.avatarItensEquipados.orEmpty(),
                                 avatarAsProfilePhoto = jogador?.avatarComoFotoPerfil == true,
+                                molduraEquipada = jogador?.molduraEquipada.orEmpty(),
                             )
                             Column(Modifier.weight(1f).clickable {
                                 grupoConfigId = ""
@@ -1107,7 +1113,14 @@ fun TelaChat(
                                         else membrosParaAdicionar.remove(jogador.uid)
                                     },
                                 )
-                                AvatarChat(jogador.apelido, 32.dp, photoUrl = jogador.avatarUrl, avatarItems = jogador.avatarItensEquipados, avatarAsProfilePhoto = jogador.avatarComoFotoPerfil)
+                                AvatarChat(
+                                    jogador.apelido,
+                                    32.dp,
+                                    photoUrl = jogador.avatarUrl,
+                                    avatarItems = jogador.avatarItensEquipados,
+                                    avatarAsProfilePhoto = jogador.avatarComoFotoPerfil,
+                                    molduraEquipada = jogador.molduraEquipada,
+                                )
                                 Text(jogador.apelido, modifier = Modifier.padding(start = 9.dp), color = Color.White, fontSize = 12.sp)
                             }
                         }
@@ -1342,15 +1355,21 @@ private fun AvatarChat(
     photoUrl: String = "",
     avatarItems: List<String> = emptyList(),
     avatarAsProfilePhoto: Boolean = false,
+    molduraEquipada: String = "",
 ) {
     val cor = CORES_AVATAR[(nome.hashCode() and Int.MAX_VALUE) % CORES_AVATAR.size]
+    val coresDaMoldura = coresMoldura(molduraEquipada)
     Box(
         modifier = Modifier
             .size(tamanho)
             .clip(CircleShape)
             .then(modifier)
             .background(cor)
-            .border(1.dp, Color.White.copy(alpha = 0.25f), CircleShape),
+            .border(1.dp, Color.White.copy(alpha = 0.25f), CircleShape)
+            .then(
+                if (coresDaMoldura == null) Modifier
+                else Modifier.border(3.dp, Brush.sweepGradient(coresDaMoldura), CircleShape),
+            ),
         contentAlignment = Alignment.Center,
     ) {
         if (avatarAsProfilePhoto) {
@@ -1380,6 +1399,7 @@ private fun CabecalhoConversa(
     avatarUrl: String,
     avatarItems: List<String>,
     avatarAsProfilePhoto: Boolean,
+    molduraEquipada: String = "",
     onVoltar: () -> Unit,
     onPerfil: () -> Unit,
     onConfiguracoes: (() -> Unit)? = null,
@@ -1410,6 +1430,7 @@ private fun CabecalhoConversa(
                 photoUrl = avatarUrl,
                 avatarItems = avatarItems,
                 avatarAsProfilePhoto = avatarAsProfilePhoto,
+                molduraEquipada = molduraEquipada,
             )
             Column {
                 Text(nome, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -1457,6 +1478,7 @@ private fun PerfilChat(
                     photoUrl = jogador.avatarUrl,
                     avatarItems = jogador.avatarItensEquipados,
                     avatarAsProfilePhoto = jogador.avatarComoFotoPerfil,
+                    molduraEquipada = jogador.molduraEquipada,
                 )
                 Text(
                     jogador.apelido + if (ehVoce) " (você)" else "",
@@ -1501,6 +1523,7 @@ private fun LinhaJogador(
     avatarUrl: String = "",
     avatarItems: List<String> = emptyList(),
     avatarAsProfilePhoto: Boolean = false,
+    molduraEquipada: String = "",
     foguinhoDias: Int = 0,
     foguinhoNivel: Int = 0,
     onClick: () -> Unit,
@@ -1524,6 +1547,7 @@ private fun LinhaJogador(
             avatarUrl,
             avatarItems,
             avatarAsProfilePhoto,
+            molduraEquipada,
         )
         Column(modifier = Modifier.weight(1f)) {
             Text(nome, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -1849,10 +1873,12 @@ private fun TelaConversa(
                     val mensagemTemAvatarSalvo = mensagem.avatarUrlAutor.isNotBlank()
                         || mensagem.avatarItensAutor.isNotEmpty()
                         || mensagem.avatarComoFotoAutor
+                        || mensagem.molduraAutor.isNotBlank()
                     val mensagemComAvatar = if (mensagemTemAvatarSalvo) mensagem else mensagem.copy(
                         avatarUrlAutor = avatarDoRanking?.avatarUrl.orEmpty(),
                         avatarItensAutor = avatarDoRanking?.avatarItensEquipados.orEmpty(),
                         avatarComoFotoAutor = avatarDoRanking?.avatarComoFotoPerfil == true,
+                        molduraAutor = avatarDoRanking?.molduraEquipada.orEmpty(),
                     )
                     val visualizada = mensagem.minha
                         && mensagem.statusEnvio != "sending"
@@ -2222,6 +2248,7 @@ private fun BolhaMensagem(
                     avatarUrl,
                     mensagem.avatarItensAutor,
                     mensagem.avatarComoFotoAutor,
+                    mensagem.molduraAutor,
                 )
                 Spacer(Modifier.width(8.dp))
             }

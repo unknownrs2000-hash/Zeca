@@ -3,6 +3,9 @@
 const PULL_COOLDOWN_MS = 120;
 const WINNING_PULL_MARGIN = 8;
 const MAX_PULLS_PER_BATCH = 8;
+const TEAM_RACE_TARGET = 24;
+const TEAM_RELAY_TARGET = 12;
+const TEAM_BLITZ_TARGET = 36;
 
 function playersInRoom(room) {
   if (Array.isArray(room?.players)) return room.players;
@@ -26,13 +29,32 @@ function applyTugPull(room, uid, nowMs, pullCount = 1) {
   const teamAPulls = room.teamAPulls ?? room.creatorPulls ?? 0;
   const teamBPulls = room.teamBPulls ?? room.opponentPulls ?? 0;
   const lead = teamAPulls - teamBPulls;
-  const pullsToWin = player.team === "A" ? WINNING_PULL_MARGIN - lead : WINNING_PULL_MARGIN + lead;
+  const gameId = room.gameId || "tug";
+  const lastPlayerByTeam = { ...(room.lastPlayerByTeam || {}) };
+  if (gameId === "teamRelay" && lastPlayerByTeam[player.team] === uid) {
+    throw new Error("relay-turn");
+  }
+  const pullsToWin = gameId === "teamRace"
+    ? TEAM_RACE_TARGET - (player.team === "A" ? teamAPulls : teamBPulls)
+    : gameId === "teamRelay"
+      ? TEAM_RELAY_TARGET - (player.team === "A" ? teamAPulls : teamBPulls)
+      : gameId === "teamBlitz"
+        ? TEAM_BLITZ_TARGET - (player.team === "A" ? teamAPulls : teamBPulls)
+        : player.team === "A" ? WINNING_PULL_MARGIN - lead : WINNING_PULL_MARGIN + lead;
   const appliedPulls = Math.min(pullCount, allowedPulls, pullsToWin);
-  const nextTeamAPulls = teamAPulls + (player.team === "A" ? appliedPulls : 0);
-  const nextTeamBPulls = teamBPulls + (player.team === "B" ? appliedPulls : 0);
+  const scoringPulls = gameId === "teamBlitz" ? appliedPulls * 2 : appliedPulls;
+  const nextTeamAPulls = teamAPulls + (player.team === "A" ? scoringPulls : 0);
+  const nextTeamBPulls = teamBPulls + (player.team === "B" ? scoringPulls : 0);
   const nextLead = nextTeamAPulls - nextTeamBPulls;
-  const winnerTeam = nextLead >= WINNING_PULL_MARGIN ? "A" : nextLead <= -WINNING_PULL_MARGIN ? "B" : "";
+  const winnerTeam = gameId === "teamRace" || gameId === "teamRelay" || gameId === "teamBlitz"
+    ? nextTeamAPulls >= (gameId === "teamRace" ? TEAM_RACE_TARGET : gameId === "teamRelay" ? TEAM_RELAY_TARGET : TEAM_BLITZ_TARGET)
+      ? "A"
+      : nextTeamBPulls >= (gameId === "teamRace" ? TEAM_RACE_TARGET : gameId === "teamRelay" ? TEAM_RELAY_TARGET : TEAM_BLITZ_TARGET)
+        ? "B"
+        : ""
+    : nextLead >= WINNING_PULL_MARGIN ? "A" : nextLead <= -WINNING_PULL_MARGIN ? "B" : "";
   const winner = winnerTeam ? playersInRoom(room).find((member) => member.team === winnerTeam) : null;
+  if (appliedPulls > 0 && gameId === "teamRelay") lastPlayerByTeam[player.team] = uid;
   return {
     teamAPulls: nextTeamAPulls,
     teamBPulls: nextTeamBPulls,
@@ -41,6 +63,7 @@ function applyTugPull(room, uid, nowMs, pullCount = 1) {
     winnerTeam,
     winnerUid: winner?.uid || "",
     acceptedPulls: appliedPulls,
+    lastPlayerByTeam,
     status: winnerTeam ? "settled" : "active",
     lastPullAtMs: { ...(room.lastPullAtMs || {}), [uid]: nowMs },
   };

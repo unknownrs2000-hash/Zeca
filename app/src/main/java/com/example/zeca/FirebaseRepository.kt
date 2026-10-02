@@ -44,6 +44,7 @@ data class JogadorRanking(
     val username: String = "",
     val avatarItensEquipados: List<String> = emptyList(),
     val avatarComoFotoPerfil: Boolean = false,
+    val molduraEquipada: String = "",
 )
 
 data class MensagemChat(
@@ -63,6 +64,7 @@ data class MensagemChat(
     val avatarUrlAutor: String = "",
     val avatarItensAutor: List<String> = emptyList(),
     val avatarComoFotoAutor: Boolean = false,
+    val molduraAutor: String = "",
     val audioUrl: String = "",
     val audioDurationMs: Int = 0,
     val statusEnvio: String = "sent",
@@ -341,6 +343,8 @@ data class SalaCaboGuerra(
     val versaoConvite: Int = 0,
     val timeVencedor: String = "",
     val puxoesAceitos: Int = 0,
+    val gameId: String = "tug",
+    val ultimoJogadorPorTime: Map<String, String> = emptyMap(),
 )
 
 data class PartidaJokenpo(
@@ -351,6 +355,7 @@ data class PartidaJokenpo(
     val escolhas: Map<String, String>,
     val vencedorUid: String,
     val resultado: String,
+    val gameId: String = "rps",
 )
 
 data class ResultadoJokenpo(
@@ -404,6 +409,15 @@ private fun Map<*, *>.toSalaCaboGuerra(): SalaCaboGuerra? {
         versaoConvite = (this["inviteVersion"] as? Number)?.toInt() ?: 0,
         timeVencedor = this["winnerTeam"] as? String ?: "",
         puxoesAceitos = (this["acceptedPulls"] as? Number)?.toInt() ?: 0,
+        gameId = this["gameId"] as? String ?: "tug",
+        ultimoJogadorPorTime = (this["lastPlayerByTeam"] as? Map<*, *>)
+            ?.mapNotNull { (team, uid) ->
+                val teamName = team as? String ?: return@mapNotNull null
+                val playerUid = uid as? String ?: return@mapNotNull null
+                teamName to playerUid
+            }
+            ?.toMap()
+            .orEmpty(),
     )
 }
 
@@ -454,6 +468,7 @@ object FirebaseRepository {
                     "avatarUrl" to (user.photoUrl?.toString() ?: ""),
                     "avatarAsProfilePhoto" to false,
                     "equippedAvatarItems" to emptyList<String>(),
+                    "equippedFrame" to "",
                     "pixKey" to "",
                     "pixKeyType" to "",
                     "pixKeyHash" to "",
@@ -495,6 +510,7 @@ object FirebaseRepository {
                     .ifBlank { user.photoUrl?.toString().orEmpty() }
                 val avatarAsProfilePhoto = profile["avatarAsProfilePhoto"] as? Boolean ?: false
                 val equippedAvatarItems = (profile["equippedAvatarItems"] as? List<*>)?.filterIsInstance<String>().orEmpty()
+                val equippedFrame = profile["equippedFrame"] as? String ?: ""
                 if ("avatarAsProfilePhoto" !in profile) updates["avatarAsProfilePhoto"] = false
                 if ("equippedAvatarItems" !in profile) updates["equippedAvatarItems"] = emptyList<String>()
                 if (updates.isNotEmpty()) transaction.update(userRef, updates)
@@ -506,6 +522,7 @@ object FirebaseRepository {
                     "avatarUrl" to profileAvatar,
                     "avatarAsProfilePhoto" to avatarAsProfilePhoto,
                     "equippedAvatarItems" to equippedAvatarItems,
+                    "equippedFrame" to equippedFrame,
                 )
                 if (!rankSnapshot.exists()) transaction.set(rankRef, publicProfile)
                 else transaction.update(
@@ -518,6 +535,7 @@ object FirebaseRepository {
                         "avatarUrl" to profileAvatar,
                         "avatarAsProfilePhoto" to avatarAsProfilePhoto,
                         "equippedAvatarItems" to equippedAvatarItems,
+                        "equippedFrame" to equippedFrame,
                     ),
                 )
             }
@@ -628,6 +646,7 @@ object FirebaseRepository {
                     avatarUrlAutor = data["senderAvatarUrl"] as? String ?: "",
                     avatarItensAutor = (data["senderAvatarItems"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
                     avatarComoFotoAutor = data["senderAvatarAsProfilePhoto"] as? Boolean ?: false,
+                    molduraAutor = data["senderEquippedFrame"] as? String ?: "",
                     audioUrl = data["audioUrl"] as? String ?: "",
                     audioDurationMs = (data["audioDurationMs"] as? Number)?.toInt() ?: 0,
                 )
@@ -1001,10 +1020,11 @@ object FirebaseRepository {
     }
 
     fun buscarAdversarioJokenpo(
+        gameId: String,
         requestId: String,
         callback: (String, String, Exception?) -> Unit,
     ) {
-        chamarFunction("queueJokenpoMatch", mapOf("requestId" to requestId)) { data, error ->
+        chamarFunction("queueJokenpoMatch", mapOf("gameId" to gameId, "requestId" to requestId)) { data, error ->
             callback(data?.get("status") as? String ?: "", data?.get("matchId") as? String ?: "", error)
         }
     }
@@ -1056,6 +1076,9 @@ object FirebaseRepository {
                     escolhas = if (document.getString("status") == "completed") choices else emptyMap(),
                     vencedorUid = document.getString("winnerUid") ?: "",
                     resultado = document.getString("resultText") ?: "",
+                    gameId = document.getString("gameId")
+                        ?.let { if (it == "jokenpo") "rps" else it }
+                        ?: "rps",
                 )
             }
             callback(match, error)
@@ -1626,6 +1649,7 @@ object FirebaseRepository {
         convitesUids: List<String>,
         senha: String,
         modo: String,
+        gameId: String,
         requestId: String,
         callback: (SalaCaboGuerra?, Exception?) -> Unit,
     ) {
@@ -1636,6 +1660,7 @@ object FirebaseRepository {
                 "invitedUids" to convitesUids,
                 "password" to senha,
                 "mode" to modo,
+                "gameId" to gameId,
                 "requestId" to requestId,
             ),
         ) { data, error -> callback(data?.toSalaCaboGuerra(), error) }
@@ -1957,6 +1982,7 @@ object FirebaseRepository {
             username = data["username"] as? String ?: "",
             avatarItensEquipados = (data["equippedAvatarItems"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
             avatarComoFotoPerfil = data["avatarAsProfilePhoto"] as? Boolean ?: false,
+            molduraEquipada = data["equippedFrame"] as? String ?: "",
         )
     }
 

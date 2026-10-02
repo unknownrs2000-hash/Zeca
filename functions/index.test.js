@@ -72,6 +72,13 @@ test("Jokenpô matchmaking validates request IDs and choices before Firestore ac
     (error) => error.code === "invalid-argument",
   );
   await assert.rejects(
+    queueJokenpoMatch({
+      ...player,
+      data: { gameId: "unknown-duel", requestId: "123e4567-e89b-42d3-a456-426614174000" },
+    }),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
     submitJokenpoChoice({
       ...player,
       data: {
@@ -163,6 +170,10 @@ test("tug rooms and sports bets reject invalid stakes and duplicate or unknown s
   );
   await assert.rejects(
     createTugRoom({ auth: { uid, token: {} }, data: { stakeCents: 100, requestId, invitedUids: [], password: "", mode: "3v3" } }),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    createTugRoom({ auth: { uid, token: {} }, data: { stakeCents: 100, requestId, invitedUids: [], password: "", mode: "1v1", gameId: "teamRace" } }),
     (error) => error.code === "invalid-argument",
   );
   await assert.rejects(

@@ -222,12 +222,13 @@ service cloud.firestore {
         && request.auth.uid == userId
         && request.resource.data.keys().hasOnly([
           'displayName', 'balanceCents', 'level', 'avatarUrl', 'username',
-          'avatarAsProfilePhoto', 'equippedAvatarItems'
+          'avatarAsProfilePhoto', 'equippedAvatarItems', 'equippedFrame'
         ])
         && request.resource.data.avatarUrl is string
         && request.resource.data.username is string
         && request.resource.data.avatarAsProfilePhoto is bool
         && request.resource.data.equippedAvatarItems is list
+        && request.resource.data.get('equippedFrame', '') == ''
         && request.resource.data.username
           == getAfter(/databases/$(database)/documents/users/$(userId)).data.username
         && request.resource.data.displayName
@@ -247,7 +248,7 @@ service cloud.firestore {
         && request.auth.uid == userId
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'displayName', 'balanceCents', 'username', 'level', 'avatarUrl',
-          'avatarAsProfilePhoto', 'equippedAvatarItems'
+          'avatarAsProfilePhoto', 'equippedAvatarItems', 'equippedFrame'
         ])
         && validDisplayName(request.resource.data.displayName)
         && request.resource.data.displayName
@@ -263,7 +264,9 @@ service cloud.firestore {
         && request.resource.data.avatarAsProfilePhoto
           == getAfter(/databases/$(database)/documents/users/$(userId)).data.avatarAsProfilePhoto
         && request.resource.data.equippedAvatarItems
-          == getAfter(/databases/$(database)/documents/users/$(userId)).data.equippedAvatarItems;
+          == getAfter(/databases/$(database)/documents/users/$(userId)).data.equippedAvatarItems
+        && request.resource.data.get('equippedFrame', '')
+          == getAfter(/databases/$(database)/documents/users/$(userId)).data.get('equippedFrame', '');
     }
 
     match /usernames/{username} {
@@ -345,7 +348,7 @@ service cloud.firestore {
         allow create: if activeUser()
           && request.resource.data.keys().hasOnly([
             'senderUid', 'senderName', 'senderUsername', 'senderAvatarUrl', 'senderAvatarItems',
-            'senderAvatarAsProfilePhoto', 'text', 'createdAt',
+            'senderAvatarAsProfilePhoto', 'senderEquippedFrame', 'text', 'createdAt',
             'replyToId', 'replyToName', 'replyToText', 'forwarded',
             'type', 'audioUrl', 'audioPublicId', 'audioDurationMs'
           ])
@@ -360,6 +363,8 @@ service cloud.firestore {
             == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.equippedAvatarItems
           && request.resource.data.senderAvatarAsProfilePhoto
             == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.avatarAsProfilePhoto
+          && request.resource.data.senderEquippedFrame
+            == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('equippedFrame', '')
           && request.resource.data.text is string
           && request.resource.data.text.size() <= 500
           && (request.resource.data.text.size() >= 1

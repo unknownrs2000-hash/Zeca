@@ -249,14 +249,14 @@ fun TelaInicio(
                         ) {
                             AvatarComMoldura(
                                 inicial = jogador.apelido.take(1).uppercase(),
-                                moldura = "",
+                                moldura = jogador.molduraEquipada,
                                 tamanho = 34.dp,
                                 modifier = Modifier.clickable(onClickLabel = "Ampliar foto de ${jogador.apelido}") {
                                     val perfilAtual = perfilPublico?.takeIf { it.uid == jogador.uid }
                                     fotoAmpliada = FotoPerfilAmpliada(
                                         apelido = jogador.apelido,
                                         username = jogador.username,
-                                        moldura = perfilAtual?.molduraEquipada.orEmpty(),
+                                        moldura = perfilAtual?.molduraEquipada ?: jogador.molduraEquipada,
                                         avatarUrl = jogador.avatarUrl,
                                         avatarItens = jogador.avatarItensEquipados,
                                         avatarComoFoto = jogador.avatarComoFotoPerfil,

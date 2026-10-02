@@ -19,7 +19,12 @@ const {
   colorWheelResult,
   diceSumResult,
   rangePickResult,
+  doubleCoinResult,
+  tripleDiceResult,
+  luckySuitResult,
+  safeVaultResult,
   resolveRockPaperScissors,
+  resolveOnlineDuel,
   rockPaperScissorsResult,
   settleBlackjack,
   minesCashoutPayout,
@@ -155,6 +160,14 @@ test("online rock-paper-scissors resolves server-submitted choices deterministic
   assert.throws(() => resolveRockPaperScissors("lizard", "paper"), RangeError);
 });
 
+test("online duel variants resolve coin, parity, and card choices on the server", () => {
+  assert.equal(resolveOnlineDuel("duelParity", "even", "odd", () => 1).winnerIndex, 0);
+  assert.equal(resolveOnlineDuel("duelCoin", "heads", "tails", () => 1).winnerIndex, 1);
+  assert.equal(resolveOnlineDuel("duelCards", "6", "4").winnerIndex, 0);
+  assert.equal(resolveOnlineDuel("duelCards", "3", "3").winnerIndex, -1);
+  assert.throws(() => resolveOnlineDuel("duelCards", "7", "3"), RangeError);
+});
+
 test("higher-lower cards push on ties and pay only correct predictions", () => {
   const higherSequence = [4, 8];
   assert.equal(higherLowerResult("higher", 1_000, () => higherSequence.shift()).payoutCents, 1_900);
@@ -202,4 +215,23 @@ test("range picks pay according to the selected range probability", () => {
   assert.equal(rangePickResult("high", 1_000, () => 9).payoutCents, 2_380);
   assert.equal(rangePickResult("high", 1_000, () => 0).payoutCents, 0);
   assert.throws(() => rangePickResult("other", 1_000, () => 0), RangeError);
+});
+
+test("new solo mini-games validate selections and calculate fixed payouts", () => {
+  assert.equal(doubleCoinResult("same", 1_000, () => 0).payoutCents, 1_900);
+  assert.equal(doubleCoinResult("different", 1_000, () => 0).payoutCents, 0);
+  assert.throws(() => doubleCoinResult("heads", 1_000, () => 0), RangeError);
+
+  assert.equal(tripleDiceResult("low", 1_000, () => 0).payoutCents, 5_980);
+  assert.equal(tripleDiceResult("middle", 1_000, () => 2).payoutCents, 1_430);
+  assert.equal(tripleDiceResult("high", 1_000, () => 5).payoutCents, 5_980);
+  assert.throws(() => tripleDiceResult("seven", 1_000, () => 0), RangeError);
+
+  assert.equal(luckySuitResult("spades", 1_000, () => 0).payoutCents, 3_800);
+  assert.equal(luckySuitResult("clubs", 1_000, () => 0).payoutCents, 0);
+  assert.throws(() => luckySuitResult("joker", 1_000, () => 0), RangeError);
+
+  assert.equal(safeVaultResult("3", 1_000, () => 2).payoutCents, 4_750);
+  assert.equal(safeVaultResult("2", 1_000, () => 2).payoutCents, 0);
+  assert.throws(() => safeVaultResult("0", 1_000, () => 0), RangeError);
 });

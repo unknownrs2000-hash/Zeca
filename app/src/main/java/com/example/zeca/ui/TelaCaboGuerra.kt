@@ -62,12 +62,13 @@ import java.util.UUID
 fun TelaCaboGuerra(
     uidAtual: String,
     modoInicial: String,
+    gameIdInicial: String,
     saldoCentavos: Long,
     jogadores: List<JogadorRanking>,
     roomInviteId: String,
     onRoomInviteHandled: () -> Unit,
     onCarregarSalas: ((List<SalaCaboGuerra>, Exception?) -> Unit) -> Unit,
-    onCriarSala: (Long, List<String>, String, String, String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
+    onCriarSala: (Long, List<String>, String, String, String, String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
     onEntrarSala: (String, String, String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
     onGerenciarSala: (String, String, String, String, Long, String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
     onIniciarSala: (String, (SalaCaboGuerra?, Exception?) -> Unit) -> Unit,
@@ -78,7 +79,7 @@ fun TelaCaboGuerra(
     var stakeTexto by rememberSaveable { mutableStateOf("10,00") }
     var senhaSala by rememberSaveable { mutableStateOf("") }
     var senhaEntrada by rememberSaveable { mutableStateOf("") }
-    var modoSala by rememberSaveable { mutableStateOf(modoInicial) }
+    var modoSala by rememberSaveable { mutableStateOf(if (gameIdInicial == "tug") modoInicial else "2v2") }
     var salaParaEntrar by remember { mutableStateOf<SalaCaboGuerra?>(null) }
     var carregando by remember { mutableStateOf(false) }
     var erro by remember { mutableStateOf("") }
@@ -92,8 +93,9 @@ fun TelaCaboGuerra(
     val haptic = LocalHapticFeedback.current
     val contexto = LocalContext.current
 
-    LaunchedEffect(modoInicial) {
-        modoSala = if (modoInicial == "2v2") "2v2" else "1v1"
+    LaunchedEffect(modoInicial, gameIdInicial) {
+        modoSala = if (gameIdInicial != "tug" || modoInicial == "2v2") "2v2" else "1v1"
+        if (roomInviteId.isBlank() && salaSelecionada?.gameId != gameIdInicial) salaSelecionada = null
     }
 
     fun atualizarSalas() {
@@ -192,8 +194,9 @@ fun TelaCaboGuerra(
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column {
-                Text("Cabo de guerra · ${salaSelecionada?.modo ?: modoSala}", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                Text("Toque para puxar · vantagem de 8 vence", color = Color.White.copy(alpha = 0.58f), fontSize = 11.sp)
+                        val gameId = salaSelecionada?.gameId ?: gameIdInicial
+                        Text("${nomeJogoEquipe(gameId)} · ${salaSelecionada?.modo ?: modoSala}", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        Text(regraJogoEquipe(gameId), color = Color.White.copy(alpha = 0.58f), fontSize = 11.sp)
             }
             TextButton(onClick = { atualizarSalas() }, enabled = !carregando) { Text("Atualizar") }
         }
@@ -376,6 +379,9 @@ fun TelaCaboGuerra(
                         Text("Time A: $puxoesTimeAVisual  ·  $puxoesTimeBVisual :Time B", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         TugRopeVisual(lead)
                         Text("Toques registrados na hora${if (puxoesPendentes > 0) " · +$puxoesPendentes" else ""}", modifier = Modifier.fillMaxWidth(), color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp, textAlign = TextAlign.Center)
+                        val meuTime = if (souTimeA) "A" else "B"
+                        val vezDoColega = room.gameId == "teamRelay"
+                            && room.ultimoJogadorPorTime[meuTime] == uidAtual
                         Button(
                             onClick = {
                                 val nowMs = SystemClock.elapsedRealtime()
@@ -386,13 +392,25 @@ fun TelaCaboGuerra(
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 }
                             },
-                            enabled = true,
+                            enabled = !enviandoLotePuxoes && !vezDoColega,
                             modifier = Modifier.fillMaxWidth().height(72.dp).graphicsLayer {
                                 scaleX = buttonScale
                                 scaleY = buttonScale
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = if (souTimeA) Cores.Verde else Color(0xFFFF8B91)),
-                        ) { Text("TOQUE PARA PUXAR", color = Color(0xFF101417), fontWeight = FontWeight.Black) }
+                        ) {
+                            Text(
+                                when {
+                                    vezDoColega -> "AGUARDE SEU COLEGA"
+                                    room.gameId == "teamRace" -> "TOQUE PARA CORRER"
+                                    room.gameId == "teamRelay" -> "TOQUE PARA REVEZAR"
+                                    room.gameId == "teamBlitz" -> "TOQUE PARA MARCAR"
+                                    else -> "TOQUE PARA PUXAR"
+                                },
+                                color = Color(0xFF101417),
+                                fontWeight = FontWeight.Black,
+                            )
+                        }
                     }
                     "settled" -> {
                         val venceu = if (room.timeVencedor.isNotBlank()) {
@@ -438,16 +456,20 @@ fun TelaCaboGuerra(
 
         if (salaSelecionada == null) {
             Text("Formato da sala", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("1v1", "2v2").forEach { mode ->
-                    Button(
-                        onClick = { modoSala = mode },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (modoSala == mode) Cores.Turquesa else Color.White.copy(alpha = 0.12f),
-                        ),
-                    ) { Text(mode, color = if (modoSala == mode) Color(0xFF101417) else Color.White, fontWeight = FontWeight.Bold) }
+            if (gameIdInicial == "tug") {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("1v1", "2v2").forEach { mode ->
+                        Button(
+                            onClick = { modoSala = mode },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (modoSala == mode) Cores.Turquesa else Color.White.copy(alpha = 0.12f),
+                            ),
+                        ) { Text(mode, color = if (modoSala == mode) Color(0xFF101417) else Color.White, fontWeight = FontWeight.Bold) }
+                    }
                 }
+            } else {
+                Text("Modo 2v2 · todos os quatro lugares são necessários", color = Cores.Turquesa, fontSize = 11.sp)
             }
             OutlinedTextField(
                 value = stakeTexto,
@@ -479,7 +501,7 @@ fun TelaCaboGuerra(
                     val stake = parseSaldoTug(stakeTexto)
                     if (stake == null || !apostarEmSala(stake)) return@Button
                     carregando = true
-                    onCriarSala(stake, convidados.toList(), senhaSala, modoSala, UUID.randomUUID().toString()) { room, error ->
+                    onCriarSala(stake, convidados.toList(), senhaSala, modoSala, gameIdInicial, UUID.randomUUID().toString()) { room, error ->
                         carregando = false
                         if (error != null) erro = error.localizedMessage.orEmpty() else {
                             salaSelecionada = room
@@ -493,8 +515,9 @@ fun TelaCaboGuerra(
             ) { Text("Criar sala", color = Color(0xFF101417), fontWeight = FontWeight.Bold) }
 
             Text("Salas abertas e convites", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-            if (salas.isEmpty()) Text("Nenhuma sala disponível agora.", color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp)
-            salas.forEach { room ->
+            val salasDoJogo = salas.filter { it.gameId == gameIdInicial }
+            if (salasDoJogo.isEmpty()) Text("Nenhuma sala disponível agora.", color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp)
+            salasDoJogo.forEach { room ->
                 Column(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp)).background(Color.White.copy(alpha = 0.06f)).clickable { salaSelecionada = room }.padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(3.dp),
@@ -521,6 +544,20 @@ fun TelaCaboGuerra(
         if (aviso.isNotBlank()) Text(aviso, color = Cores.Verde, fontSize = 11.sp)
         if (erro.isNotBlank()) Text(erro, modifier = Modifier.fillMaxWidth().background(Color(0xFF34272A), RoundedCornerShape(8.dp)).padding(10.dp), color = Color(0xFFFFB7A7), fontSize = 11.sp)
     }
+}
+
+private fun nomeJogoEquipe(gameId: String): String = when (gameId) {
+    "teamRace" -> "Corrida em equipe"
+    "teamRelay" -> "Revezamento"
+    "teamBlitz" -> "Toque relâmpago"
+    else -> "Cabo de guerra"
+}
+
+private fun regraJogoEquipe(gameId: String): String = when (gameId) {
+    "teamRace" -> "Primeiro time a 24 pontos vence"
+    "teamRelay" -> "Alterne os toques entre colegas · 12 pontos vencem"
+    "teamBlitz" -> "Cada toque vale 2 pontos · primeiro a 36 vence"
+    else -> "Toque para puxar · vantagem de 8 vence"
 }
 
 @Composable

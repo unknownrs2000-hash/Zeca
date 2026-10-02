@@ -176,6 +176,52 @@ function resolveRockPaperScissors(firstChoice, secondChoice) {
   return { winnerChoice: firstWins ? firstChoice : secondChoice, outcome: "win" };
 }
 
+function resolveOnlineDuel(gameId, firstChoice, secondChoice, secureRandomInt = randomInt) {
+  if (gameId === "rps") {
+    const result = resolveRockPaperScissors(firstChoice, secondChoice);
+    return { winnerIndex: result.outcome === "draw" ? -1 : result.winnerChoice === firstChoice ? 0 : 1, result };
+  }
+  if (gameId === "duelParity") {
+    const choices = ["even", "odd"];
+    if (!choices.includes(firstChoice) || !choices.includes(secondChoice)) throw new RangeError("Invalid parity choice.");
+    const roll = secureRandomInt(6) + 1;
+    const outcome = roll % 2 === 0 ? "even" : "odd";
+    const firstCorrect = firstChoice === outcome;
+    const secondCorrect = secondChoice === outcome;
+    const winnerIndex = firstCorrect === secondCorrect ? -1 : firstCorrect ? 0 : 1;
+    return {
+      winnerIndex,
+      result: { displayText: `Saiu ${roll} (${outcome === "even" ? "par" : "ímpar"})` },
+    };
+  }
+  if (gameId === "duelCoin") {
+    const choices = ["heads", "tails"];
+    if (!choices.includes(firstChoice) || !choices.includes(secondChoice)) throw new RangeError("Invalid coin choice.");
+    const outcome = secureRandomInt(2) === 0 ? "heads" : "tails";
+    const firstCorrect = firstChoice === outcome;
+    const secondCorrect = secondChoice === outcome;
+    const winnerIndex = firstCorrect === secondCorrect ? -1 : firstCorrect ? 0 : 1;
+    return {
+      winnerIndex,
+      result: { displayText: `A moeda deu ${outcome === "heads" ? "cara" : "coroa"}` },
+    };
+  }
+  if (gameId === "duelCards") {
+    if (!/^[1-6]$/.test(String(firstChoice))
+        || !/^[1-6]$/.test(String(secondChoice))) {
+      throw new RangeError("Invalid card choice.");
+    }
+    const firstCard = Number(firstChoice);
+    const secondCard = Number(secondChoice);
+    const winnerIndex = firstCard === secondCard ? -1 : firstCard > secondCard ? 0 : 1;
+    return {
+      winnerIndex,
+      result: { displayText: `Carta ${firstCard} contra carta ${secondCard}` },
+    };
+  }
+  throw new RangeError("Invalid duel game.");
+}
+
 function higherLowerResult(selection, wagerCents, secureRandomInt = randomInt) {
   if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER) || !["higher", "lower"].includes(selection)) {
     throw new RangeError("Invalid higher-lower wager.");
@@ -302,6 +348,76 @@ function rangePickResult(selection, wagerCents, secureRandomInt = randomInt) {
   };
 }
 
+function doubleCoinResult(selection, wagerCents, secureRandomInt = randomInt) {
+  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER) || !["same", "different"].includes(selection)) {
+    throw new RangeError("Invalid double-coin wager.");
+  }
+  const first = secureRandomInt(2);
+  const second = secureRandomInt(2);
+  const outcome = first === second ? "same" : "different";
+  const won = selection === outcome;
+  return {
+    displayText: `${first === 0 ? "Cara" : "Coroa"} + ${second === 0 ? "Cara" : "Coroa"} · ${won ? "Acertou" : "Errou"}`,
+    outcome,
+    won,
+    payoutCents: won ? Math.floor(wagerCents * 190 / 100) : 0,
+    multiplier: won ? 190 : 0,
+  };
+}
+
+function tripleDiceResult(selection, wagerCents, secureRandomInt = randomInt) {
+  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER) || !["low", "middle", "high"].includes(selection)) {
+    throw new RangeError("Invalid triple-dice wager.");
+  }
+  const dice = Array.from({ length: 3 }, () => secureRandomInt(6) + 1);
+  const sum = dice.reduce((total, value) => total + value, 0);
+  const outcome = sum <= 7 ? "low" : sum <= 13 ? "middle" : "high";
+  const multiplier = outcome === "middle" ? 143 : 598;
+  const won = selection === outcome;
+  return {
+    displayText: `Dados ${dice.join(" + ")} = ${sum} · ${won ? "Acertou" : "Errou"}`,
+    dice,
+    sum,
+    outcome,
+    won,
+    payoutCents: won ? Math.floor(wagerCents * multiplier / 100) : 0,
+    multiplier: won ? multiplier : 0,
+  };
+}
+
+function luckySuitResult(selection, wagerCents, secureRandomInt = randomInt) {
+  const suits = ["spades", "hearts", "diamonds", "clubs"];
+  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER) || !suits.includes(selection)) {
+    throw new RangeError("Invalid lucky-suit wager.");
+  }
+  const outcome = suits[secureRandomInt(suits.length)];
+  const won = selection === outcome;
+  const labels = { spades: "Espadas", hearts: "Copas", diamonds: "Ouros", clubs: "Paus" };
+  return {
+    displayText: `Naipe ${labels[outcome]} · ${won ? "Acertou" : "Errou"}`,
+    outcome,
+    won,
+    payoutCents: won ? Math.floor(wagerCents * 380 / 100) : 0,
+    multiplier: won ? 380 : 0,
+  };
+}
+
+function safeVaultResult(selection, wagerCents, secureRandomInt = randomInt) {
+  if (!validateWager(wagerCents, Number.MAX_SAFE_INTEGER)
+      || !/^[1-5]$/.test(String(selection))) {
+    throw new RangeError("Invalid safe-vault wager.");
+  }
+  const outcome = secureRandomInt(5) + 1;
+  const won = Number(selection) === outcome;
+  return {
+    displayText: `Cofre ${outcome} · ${won ? "Encontrou o prêmio" : "Vazio"}`,
+    outcome,
+    won,
+    payoutCents: won ? Math.floor(wagerCents * 475 / 100) : 0,
+    multiplier: won ? 475 : 0,
+  };
+}
+
 function rouletteResult(betType, selection, number, wagerCents) {
   if (!Number.isInteger(number) || number < 0 || number > 36) {
     throw new RangeError("Roulette number must be between 0 and 36.");
@@ -412,7 +528,12 @@ module.exports = {
   colorWheelResult,
   diceSumResult,
   rangePickResult,
+  doubleCoinResult,
+  tripleDiceResult,
+  luckySuitResult,
+  safeVaultResult,
   resolveRockPaperScissors,
+  resolveOnlineDuel,
   rockPaperScissorsResult,
   rouletteResult,
   scratchCardResult,

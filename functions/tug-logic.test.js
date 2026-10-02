@@ -79,3 +79,58 @@ test("batched taps are partially accepted at the rate limit and settle at the wi
   assert.equal(current.creatorPulls, 8);
   assert.equal(current.status, "settled");
 });
+
+test("team race and blitz use their own score targets", () => {
+  const players = [
+    { uid: "a1", team: "A" },
+    { uid: "a2", team: "A" },
+    { uid: "b1", team: "B" },
+    { uid: "b2", team: "B" },
+  ];
+  let race = {
+    status: "active",
+    mode: "2v2",
+    gameId: "teamRace",
+    players,
+    teamAPulls: 0,
+    teamBPulls: 0,
+    startedAtMs: 1_000,
+    lastPullAtMs: {},
+  };
+  for (let pull = 0; pull < 24; pull += 1) {
+    race = { ...race, ...applyTugPull(race, "a1", 1_120 + pull * 121) };
+  }
+  assert.equal(race.status, "settled");
+  assert.equal(race.winnerTeam, "A");
+  assert.equal(race.teamAPulls, 24);
+
+  let blitz = { ...race, status: "active", gameId: "teamBlitz", teamAPulls: 0, teamBPulls: 0, lastPullAtMs: {} };
+  for (let pull = 0; pull < 18; pull += 1) {
+    blitz = { ...blitz, ...applyTugPull(blitz, "a1", 1_120 + pull * 121) };
+  }
+  assert.equal(blitz.status, "settled");
+  assert.equal(blitz.teamAPulls, 36);
+});
+
+test("relay requires teammates to alternate before each side scores", () => {
+  let room = {
+    status: "active",
+    mode: "2v2",
+    gameId: "teamRelay",
+    players: [
+      { uid: "a1", team: "A" },
+      { uid: "a2", team: "A" },
+      { uid: "b1", team: "B" },
+      { uid: "b2", team: "B" },
+    ],
+    teamAPulls: 0,
+    teamBPulls: 0,
+    startedAtMs: 1_000,
+    lastPullAtMs: {},
+  };
+  room = { ...room, ...applyTugPull(room, "a1", 1_120) };
+  assert.throws(() => applyTugPull(room, "a1", 1_241), /relay-turn/);
+  room = { ...room, ...applyTugPull(room, "a2", 1_241) };
+  assert.equal(room.teamAPulls, 2);
+  assert.equal(room.lastPlayerByTeam.A, "a2");
+});
