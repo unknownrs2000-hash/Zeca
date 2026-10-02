@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -44,11 +45,59 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.example.zeca.Aba
 import com.example.zeca.EstadoMissoes
 import com.example.zeca.JogadorRanking
 import com.example.zeca.PerfilPublico
 import com.example.zeca.ui.theme.Cores
+
+private data class FotoPerfilAmpliada(
+    val apelido: String,
+    val username: String,
+    val moldura: String,
+    val avatarUrl: String,
+    val avatarItens: List<String>,
+    val avatarComoFoto: Boolean,
+)
+
+@Composable
+private fun DialogoFotoPerfil(foto: FotoPerfilAmpliada, onFechar: () -> Unit) {
+    Dialog(
+        onDismissRequest = onFechar,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(
+            modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.94f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            IconButton(
+                onClick = onFechar,
+                modifier = Modifier.align(Alignment.TopEnd).padding(16.dp),
+            ) {
+                Icon(Icons.Filled.Close, contentDescription = "Fechar foto", tint = Color.White)
+            }
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                AvatarComMoldura(
+                    inicial = foto.apelido.take(1).uppercase(),
+                    moldura = foto.moldura,
+                    tamanho = 260.dp,
+                    photoUrl = foto.avatarUrl,
+                    avatarItems = foto.avatarItens,
+                    avatarAsProfilePhoto = foto.avatarComoFoto,
+                )
+                Text(foto.apelido, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                if (foto.username.isNotBlank()) {
+                    Text("@${foto.username}", color = Cores.Turquesa, fontSize = 14.sp)
+                }
+            }
+        }
+    }
+}
 
 @Composable
 fun TelaInicio(
@@ -65,6 +114,7 @@ fun TelaInicio(
 ) {
     var jogadorAberto by remember { mutableStateOf<JogadorRanking?>(null) }
     var perfilPublico by remember { mutableStateOf<PerfilPublico?>(null) }
+    var fotoAmpliada by remember { mutableStateOf<FotoPerfilAmpliada?>(null) }
     var erroPerfil by remember { mutableStateOf("") }
     var carregandoPerfil by remember { mutableStateOf(false) }
     var missoes by remember { mutableStateOf<EstadoMissoes?>(null) }
@@ -201,6 +251,17 @@ fun TelaInicio(
                                 inicial = jogador.apelido.take(1).uppercase(),
                                 moldura = "",
                                 tamanho = 34.dp,
+                                modifier = Modifier.clickable(onClickLabel = "Ampliar foto de ${jogador.apelido}") {
+                                    val perfilAtual = perfilPublico?.takeIf { it.uid == jogador.uid }
+                                    fotoAmpliada = FotoPerfilAmpliada(
+                                        apelido = jogador.apelido,
+                                        username = jogador.username,
+                                        moldura = perfilAtual?.molduraEquipada.orEmpty(),
+                                        avatarUrl = jogador.avatarUrl,
+                                        avatarItens = jogador.avatarItensEquipados,
+                                        avatarComoFoto = jogador.avatarComoFotoPerfil,
+                                    )
+                                },
                                 photoUrl = jogador.avatarUrl,
                                 avatarItems = jogador.avatarItensEquipados,
                                 avatarAsProfilePhoto = jogador.avatarComoFotoPerfil,
@@ -231,6 +292,9 @@ fun TelaInicio(
                 erro = erroPerfil,
                 onFechar = { jogadorAberto = null },
             )
+        }
+        fotoAmpliada?.let { foto ->
+            DialogoFotoPerfil(foto = foto, onFechar = { fotoAmpliada = null })
         }
     }
 }
@@ -356,6 +420,7 @@ internal fun TelaPerfilJogador(
     onConversar: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
+    var fotoAmpliada by remember { mutableStateOf<FotoPerfilAmpliada?>(null) }
     BackHandler(onBack = onFechar)
     Box(
         modifier = Modifier
@@ -386,6 +451,16 @@ internal fun TelaPerfilJogador(
                     jogador.apelido.take(1).uppercase(),
                     perfil?.molduraEquipada.orEmpty(),
                     112.dp,
+                    modifier = Modifier.clickable(onClickLabel = "Ampliar foto de ${jogador.apelido}") {
+                        fotoAmpliada = FotoPerfilAmpliada(
+                            apelido = jogador.apelido,
+                            username = perfil?.username ?: jogador.username,
+                            moldura = perfil?.molduraEquipada.orEmpty(),
+                            avatarUrl = perfil?.avatarUrl ?: jogador.avatarUrl,
+                            avatarItens = perfil?.avatarItensEquipados ?: jogador.avatarItensEquipados,
+                            avatarComoFoto = perfil?.avatarComoFotoPerfil ?: jogador.avatarComoFotoPerfil,
+                        )
+                    },
                     photoUrl = perfil?.avatarUrl ?: jogador.avatarUrl,
                     avatarItems = perfil?.avatarItensEquipados ?: jogador.avatarItensEquipados,
                     avatarAsProfilePhoto = perfil?.avatarComoFotoPerfil ?: jogador.avatarComoFotoPerfil,
@@ -480,6 +555,9 @@ internal fun TelaPerfilJogador(
                     }
                 }
             }
+        }
+        fotoAmpliada?.let { foto ->
+            DialogoFotoPerfil(foto = foto, onFechar = { fotoAmpliada = null })
         }
     }
 }
