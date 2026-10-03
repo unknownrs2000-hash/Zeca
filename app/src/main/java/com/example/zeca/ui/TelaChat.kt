@@ -244,15 +244,15 @@ fun TelaChat(
     val perfilJogador = jogadores.firstOrNull { it.uid == perfilUid }
         ?: perfilPublico?.takeIf { it.uid == perfilUid }?.let {
             JogadorRanking(
-                it.uid,
-                it.apelido,
-                it.saldoCentavos,
-                it.nivel,
-                it.avatarUrl,
-                it.username,
-                it.avatarItensEquipados,
-                it.avatarComoFotoPerfil,
-                it.molduraEquipada,
+                uid = it.uid,
+                apelido = it.apelido,
+                saldoCentavos = it.saldoCentavos,
+                nivel = it.nivel,
+                avatarUrl = it.avatarUrl,
+                username = it.username,
+                avatarItensEquipados = it.avatarItensEquipados,
+                avatarComoFotoPerfil = it.avatarComoFotoPerfil,
+                molduraEquipada = it.molduraEquipada,
             )
         }
     val conversaGrupo = conversas.firstOrNull { it.id == grupoUid && it.tipo == "group" }

@@ -52,6 +52,8 @@ import com.example.zeca.EstadoMissoes
 import com.example.zeca.JogadorRanking
 import com.example.zeca.PerfilPublico
 import com.example.zeca.ui.theme.Cores
+import java.math.BigDecimal
+import java.math.RoundingMode
 
 private data class FotoPerfilAmpliada(
     val apelido: String,
@@ -110,6 +112,7 @@ fun TelaInicio(
     onCarregarMissoes: ((EstadoMissoes?, Exception?) -> Unit) -> Unit,
     onAbrirAba: (Aba) -> Unit,
     onAbrirLoja: () -> Unit,
+    onAbrirTrabalho: () -> Unit,
     onBuscarPerfil: (String, (PerfilPublico?, Exception?) -> Unit) -> Unit,
 ) {
     var jogadorAberto by remember { mutableStateOf<JogadorRanking?>(null) }
@@ -173,6 +176,8 @@ fun TelaInicio(
                 }
                 Spacer(Modifier.height(14.dp))
                 AcaoCarteira("Ir para a loja", Modifier.fillMaxWidth(), true) { onAbrirLoja() }
+                Spacer(Modifier.height(8.dp))
+                AcaoCarteira("Trabalhar um turno", Modifier.fillMaxWidth(), false) { onAbrirTrabalho() }
             }
 
             missoes?.let { state ->
@@ -276,7 +281,28 @@ fun TelaInicio(
                                     fontSize = 11.sp,
                                 )
                             }
-                            Text(formatarReais(jogador.saldoCentavos), color = Cores.Turquesa, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            val saldoFormatado = if (jogador.currencyCode.isNotBlank()
+                                && jogador.currencyRateDate.isNotBlank()
+                                && jogador.currencyRate.isFinite()
+                                && jogador.currencyRate > 0.0
+                            ) {
+                                val saldoNaMoeda = BigDecimal.valueOf(jogador.saldoCentavos)
+                                    .multiply(BigDecimal.valueOf(jogador.currencyRate))
+                                    .setScale(0, RoundingMode.HALF_UP)
+                                    .min(BigDecimal.valueOf(Long.MAX_VALUE))
+                                    .toLong()
+                                "${formatarValorNaMoeda(jogador.currencyCode, jogador.countryCode, saldoNaMoeda)} ${jogador.currencyCode}"
+                            } else {
+                                "Moeda indisponível"
+                            }
+                            Text(
+                                saldoFormatado,
+                                color = Cores.Turquesa,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false,
+                            )
                         }
                     }
                 }

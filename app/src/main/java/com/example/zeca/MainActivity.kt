@@ -85,6 +85,7 @@ import com.example.zeca.ui.TelaCentralConta
 import com.example.zeca.ui.TelaInicio
 import com.example.zeca.ui.TelaJogos
 import com.example.zeca.ui.TelaRecursosSociais
+import com.example.zeca.ui.TelaTrabalho
 import com.example.zeca.ui.TelaLoja
 import com.example.zeca.ui.TelaPerfil
 import com.example.zeca.ui.EstadoCarregamentoSocial
@@ -120,6 +121,19 @@ data class Movimento(
     val id: String = "",
     val ehTransferenciaPix: Boolean = false,
     val ehPremioNivel: Boolean = false,
+    val contrapartida: String = "",
+    val valorBaseCentavos: Long = 0L,
+    val valorRemetenteCentavos: Long = 0L,
+    val valorDestinatarioCentavos: Long = 0L,
+    val debitoRemetenteCentavos: Long = 0L,
+    val taxaBaseCentavos: Long = 0L,
+    val taxaRemetenteCentavos: Long = 0L,
+    val moedaRemetente: String = "BRL",
+    val moedaDestinatario: String = "BRL",
+    val paisRemetente: String = "BR",
+    val paisDestinatario: String = "BR",
+    val cotacaoTransferencia: Double = 1.0,
+    val dataCotacao: String = "",
 )
 
 private data class NotificacaoApp(
@@ -330,6 +344,7 @@ fun CassinoApp(
     var ehAdmin by remember(usuario.uid) { mutableStateOf(false) }
     var mostrarDenunciasAdmin by rememberSaveable(usuario.uid) { mutableStateOf(false) }
     var mostrarLoja by rememberSaveable { mutableStateOf(false) }
+    var mostrarTrabalho by rememberSaveable { mutableStateOf(false) }
     var perfil by remember(usuario.uid) { mutableStateOf<PerfilJogador?>(null) }
     var erroPerfil by rememberSaveable { mutableStateOf("") }
     val ranking = remember { mutableStateListOf<JogadorRanking>() }
@@ -756,6 +771,12 @@ fun CassinoApp(
                             onAbrirAba = { aba = it },
                             onAbrirLoja = {
                                 mostrarLoja = true
+                                mostrarTrabalho = false
+                                aba = Aba.Perfil
+                            },
+                            onAbrirTrabalho = {
+                                mostrarLoja = false
+                                mostrarTrabalho = true
                                 aba = Aba.Perfil
                             },
                             onBuscarPerfil = { uid, concluir ->
@@ -1209,6 +1230,20 @@ fun CassinoApp(
                                     FirebaseRepository.equiparTitulo(itemId) { error -> concluir(error?.localizedMessage) }
                                 },
                             )
+                        } else if (mostrarTrabalho) {
+                            TelaTrabalho(
+                                onVoltar = { mostrarTrabalho = false },
+                                onCarregar = { concluir -> FirebaseRepository.carregarCarreiraTrabalho(concluir) },
+                                onCandidatar = { slug, concluir -> FirebaseRepository.candidatarTrabalho(slug, concluir) },
+                                onDemitir = { concluir -> FirebaseRepository.pedirDemissaoTrabalho(concluir) },
+                                onPromover = { concluir -> FirebaseRepository.solicitarPromocaoTrabalho(concluir) },
+                                onIniciarTurno = { requestId, concluir ->
+                                    FirebaseRepository.iniciarTurnoTrabalho(requestId, concluir)
+                                },
+                                onConcluirTurno = { sessionId, answer, concluir ->
+                                    FirebaseRepository.concluirTurnoTrabalho(sessionId, answer, concluir)
+                                },
+                            )
                         } else {
                             TelaPerfil(
                                 apelido = jogador.apelido,
@@ -1292,6 +1327,7 @@ fun CassinoApp(
                 onSelecionar = {
                     aba = it
                     mostrarLoja = false
+                    mostrarTrabalho = false
                 },
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
@@ -1365,4 +1401,3 @@ fun BarraInferior(
         }
     }
 }
-

@@ -30,6 +30,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.Currency
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicInteger
 
 data class PerfilJogador(
     val uid: String,
@@ -61,10 +62,60 @@ data class JogadorRanking(
     val saldoCentavos: Long,
     val nivel: Int,
     val avatarUrl: String,
+    val countryCode: String = "",
+    val currencyCode: String = "",
+    val currencyRate: Double = 1.0,
+    val currencyRateDate: String = "",
     val username: String = "",
     val avatarItensEquipados: List<String> = emptyList(),
     val avatarComoFotoPerfil: Boolean = false,
     val molduraEquipada: String = "",
+)
+
+data class VagaTrabalho(
+    val slug: String,
+    val nome: String,
+    val tier: Int,
+    val nomeTier: String,
+    val nivelMinimo: Int,
+    val salarioMinimoCentavos: Long,
+    val salarioMaximoCentavos: Long,
+    val turnosParaPromocao: Int,
+)
+
+data class EstadoDesafioTrabalho(
+    val id: String,
+    val cargo: String,
+    val pergunta: String,
+    val opcoes: List<Int>,
+    val expiraEmMs: Long,
+)
+
+data class CarreiraTrabalho(
+    val cargoSlug: String = "",
+    val categoriaDesbloqueada: Int = 1,
+    val turnosNaCategoria: Int = 0,
+    val ultimoTurnoMs: Long = 0,
+    val recontratacaoAposMs: Long = 0,
+)
+
+data class EstadoCarreiraTrabalho(
+    val vagas: List<VagaTrabalho>,
+    val carreira: CarreiraTrabalho,
+    val cargoAtual: VagaTrabalho?,
+    val nivel: Int,
+    val saldoCentavos: Long,
+    val esperaProximoTurnoMs: Long,
+    val desafioAtivo: EstadoDesafioTrabalho?,
+)
+
+data class ResultadoTurnoTrabalho(
+    val cargo: String,
+    val salarioCentavos: Long,
+    val respostaCorreta: Boolean,
+    val saldoCentavos: Long,
+    val turnosNaCategoria: Int,
+    val turnosParaPromocao: Int,
 )
 
 data class MensagemChat(
@@ -172,9 +223,14 @@ data class ResultadoTransferencia(
     val nomeDestino: String,
     val saldoCentavos: Long,
     val valorTransferidoCentavos: Long,
+    val valorDestinatarioCentavos: Long,
+    val debitoRemetenteCentavos: Long,
     val taxaCentavos: Long,
+    val taxaRemetenteCentavos: Long,
     val moedaRemetente: String,
     val moedaDestinatario: String,
+    val paisRemetente: String,
+    val paisDestinatario: String,
     val cotacao: Double,
     val dataCotacao: String,
 )
@@ -802,13 +858,69 @@ object FirebaseRepository {
             callback(snapshot?.let(::toPerfil))
         }
 
-    fun observarRanking(callback: (List<JogadorRanking>) -> Unit): ListenerRegistration =
-        database.collection("leaderboard")
+    private fun enriquecerMoedasRanking(
+        jogadores: List<JogadorRanking>,
+        atualizarSempre: Boolean = false,
+        callback: (List<JogadorRanking>, Exception?) -> Unit,
+    ) {
+        if (jogadores.isEmpty() || (!atualizarSempre
+                && jogadores.all { it.currencyCode.isNotBlank() && it.currencyRateDate.isNotBlank() })
+        ) {
+            callback(jogadores, null)
+            return
+        }
+        chamarFunction("getLeaderboardCurrencyInfo", mapOf("uids" to jogadores.map { it.uid })) { data, error ->
+            if (error != null) {
+                callback(emptyList(), error)
+                return@chamarFunction
+            }
+            val metadata = (data?.get("players") as? List<*>).orEmpty().mapNotNull { raw ->
+                val player = raw as? Map<*, *> ?: return@mapNotNull null
+                val uid = player["uid"] as? String ?: return@mapNotNull null
+                uid to player
+            }.toMap()
+            val enriquecidos = jogadores.map { jogador ->
+                val info = metadata[jogador.uid] ?: return@map jogador
+                jogador.copy(
+                    countryCode = info["countryCode"] as? String ?: jogador.countryCode,
+                    currencyCode = info["currencyCode"] as? String ?: jogador.currencyCode,
+                    currencyRate = (info["currencyRate"] as? Number)?.toDouble()
+                        ?.takeIf { it.isFinite() && it > 0.0 } ?: jogador.currencyRate,
+                    currencyRateDate = info["currencyRateDate"] as? String ?: jogador.currencyRateDate,
+                )
+            }
+            if (enriquecidos.any {
+                    it.currencyCode.isBlank() || it.currencyRateDate.isBlank()
+                        || !it.currencyRate.isFinite() || it.currencyRate <= 0.0
+                }
+            ) {
+                callback(emptyList(), IllegalStateException("Não foi possível carregar a moeda de todos os jogadores."))
+            } else {
+                callback(enriquecidos, null)
+            }
+        }
+    }
+
+    fun observarRanking(callback: (List<JogadorRanking>) -> Unit): ListenerRegistration {
+        val metadataRequest = AtomicInteger()
+        return database.collection("leaderboard")
             .orderBy("balanceCents", Query.Direction.DESCENDING)
             .limit(50)
-            .addSnapshotListener { snapshot, _ ->
-                callback(snapshot?.documents.orEmpty().mapNotNull(::toJogadorRanking))
+            .addSnapshotListener { snapshot, error ->
+                val jogadores = snapshot?.documents.orEmpty().mapNotNull(::toJogadorRanking)
+                if (error != null || jogadores.isEmpty()
+                    || jogadores.all { it.currencyCode.isNotBlank() && it.currencyRateDate.isNotBlank() }
+                ) {
+                    callback(jogadores)
+                    return@addSnapshotListener
+                }
+                val request = metadataRequest.incrementAndGet()
+                enriquecerMoedasRanking(jogadores) { enriquecidos, hydrationError ->
+                    if (metadataRequest.get() != request) return@enriquecerMoedasRanking
+                    callback(if (hydrationError == null) enriquecidos else jogadores)
+                }
             }
+    }
 
     fun buscarJogadoresPorUsername(prefixo: String, callback: (List<JogadorRanking>, Exception?) -> Unit) {
         val prefixoNormalizado = prefixo.trim().removePrefix("@").lowercase(java.util.Locale.ROOT)
@@ -823,7 +935,11 @@ object FirebaseRepository {
             .limit(5)
             .get()
             .addOnSuccessListener { snapshot ->
-                callback(snapshot.documents.mapNotNull(::toJogadorRanking), null)
+                enriquecerMoedasRanking(
+                    snapshot.documents.mapNotNull(::toJogadorRanking),
+                    atualizarSempre = true,
+                    callback = callback,
+                )
             }
             .addOnFailureListener { error -> callback(emptyList(), error) }
     }
@@ -1213,7 +1329,8 @@ object FirebaseRepository {
                     val description = data["description"] as? String ?: "Movimentação"
                     val delta = (data["deltaCents"] as? Number)?.toLong() ?: 0L
                     val transfer = data["type"] == "pix_transfer"
-                    val counterparty = description.removePrefix("De ").removePrefix("Para ")
+                    val counterparty = data["counterpartyName"] as? String
+                        ?: description.removePrefix("De ").removePrefix("Para ")
                     Movimento(
                         titulo = when {
                             transfer && delta > 0L -> "Recebido de $counterparty"
@@ -1227,6 +1344,19 @@ object FirebaseRepository {
                         id = doc.id,
                         ehTransferenciaPix = transfer,
                         ehPremioNivel = data["type"] == "level_reward",
+                        contrapartida = counterparty,
+                        valorBaseCentavos = (data["amountCents"] as? Number)?.toLong() ?: 0L,
+                        valorRemetenteCentavos = (data["amountCentsInSenderCurrency"] as? Number)?.toLong() ?: 0L,
+                        valorDestinatarioCentavos = (data["recipientAmountCents"] as? Number)?.toLong() ?: 0L,
+                        debitoRemetenteCentavos = (data["senderDebitCentsInSenderCurrency"] as? Number)?.toLong() ?: 0L,
+                        taxaBaseCentavos = (data["feeCents"] as? Number)?.toLong() ?: 0L,
+                        taxaRemetenteCentavos = (data["feeCentsInSenderCurrency"] as? Number)?.toLong() ?: 0L,
+                        moedaRemetente = data["senderCurrencyCode"] as? String ?: "BRL",
+                        moedaDestinatario = data["recipientCurrencyCode"] as? String ?: "BRL",
+                        paisRemetente = data["senderCountryCode"] as? String ?: "BR",
+                        paisDestinatario = data["recipientCountryCode"] as? String ?: "BR",
+                        cotacaoTransferencia = (data["exchangeRate"] as? Number)?.toDouble() ?: 1.0,
+                        dataCotacao = data["rateDate"] as? String ?: "",
                     )
                 }, snapshot.metadata.isFromCache)
             }
@@ -1538,10 +1668,16 @@ object FirebaseRepository {
                     id = it["transferId"] as? String ?: requestId,
                     nomeDestino = it["recipientName"] as? String ?: "Jogador",
                     saldoCentavos = (it["balanceCents"] as? Number)?.toLong() ?: 0L,
-                    valorTransferidoCentavos = (it["amountCents"] as? Number)?.toLong() ?: valorCentavos,
+                    valorTransferidoCentavos = (it["amountCentsInSenderCurrency"] as? Number)?.toLong() ?: valorCentavos,
+                    valorDestinatarioCentavos = (it["recipientAmountCents"] as? Number)?.toLong() ?: valorCentavos,
+                    debitoRemetenteCentavos = (it["senderDebitCentsInSenderCurrency"] as? Number)?.toLong()
+                        ?: (it["amountCentsInSenderCurrency"] as? Number)?.toLong() ?: valorCentavos,
                     taxaCentavos = (it["feeCents"] as? Number)?.toLong() ?: 0L,
+                    taxaRemetenteCentavos = (it["feeCentsInSenderCurrency"] as? Number)?.toLong() ?: 0L,
                     moedaRemetente = it["senderCurrencyCode"] as? String ?: "BRL",
                     moedaDestinatario = it["recipientCurrencyCode"] as? String ?: "BRL",
+                    paisRemetente = it["senderCountryCode"] as? String ?: "BR",
+                    paisDestinatario = it["recipientCountryCode"] as? String ?: "BR",
                     cotacao = (it["exchangeRate"] as? Number)?.toDouble() ?: 1.0,
                     dataCotacao = it["rateDate"] as? String ?: "",
                 )
@@ -2175,6 +2311,110 @@ object FirebaseRepository {
         }
         chamarFunction("buyCosmetic", mapOf("itemId" to itemId)) { _, error ->
             callback(error?.localizedMessage)
+        }
+    }
+
+    fun carregarCarreiraTrabalho(callback: (EstadoCarreiraTrabalho?, Exception?) -> Unit) {
+        chamarFunction("getWorkCareer", emptyMap()) { data, error ->
+            if (data == null || error != null) {
+                callback(null, error ?: IllegalStateException("Resposta de empregos vazia."))
+                return@chamarFunction
+            }
+            fun map(value: Any?): Map<*, *>? = value as? Map<*, *>
+            fun int(value: Any?): Int = (value as? Number)?.toInt() ?: 0
+            fun long(value: Any?): Long = (value as? Number)?.toLong() ?: 0L
+            val vagas = (data["jobs"] as? List<*>).orEmpty().mapNotNull { value ->
+                val job = map(value) ?: return@mapNotNull null
+                val slug = job["slug"] as? String ?: return@mapNotNull null
+                VagaTrabalho(
+                    slug = slug,
+                    nome = job["name"] as? String ?: slug,
+                    tier = int(job["tier"]),
+                    nomeTier = job["tierName"] as? String ?: "",
+                    nivelMinimo = int(job["minLevel"]),
+                    salarioMinimoCentavos = long(job["salaryMinCents"]),
+                    salarioMaximoCentavos = long(job["salaryMaxCents"]),
+                    turnosParaPromocao = int(job["shiftsToPromote"]),
+                )
+            }
+            val rawCareer = map(data["career"]).orEmpty()
+            val career = CarreiraTrabalho(
+                cargoSlug = rawCareer["jobSlug"] as? String ?: "",
+                categoriaDesbloqueada = int(rawCareer["unlockedTier"]).coerceAtLeast(1),
+                turnosNaCategoria = int(rawCareer["shiftsInTier"]),
+                ultimoTurnoMs = long(rawCareer["lastShiftAtMs"]),
+                recontratacaoAposMs = long(rawCareer["resignUntilMs"]),
+            )
+            val active = map(data["activeSession"])?.let { session ->
+                EstadoDesafioTrabalho(
+                    id = session["sessionId"] as? String ?: "",
+                    cargo = session["jobName"] as? String ?: "",
+                    pergunta = session["question"] as? String ?: "",
+                    opcoes = (session["options"] as? List<*>).orEmpty().mapNotNull { (it as? Number)?.toInt() },
+                    expiraEmMs = long(session["expiresAtMs"]),
+                )
+            }
+            val currentJobData = map(data["currentJob"])
+            val currentSlug = currentJobData?.get("slug") as? String
+            callback(
+                EstadoCarreiraTrabalho(
+                    vagas = vagas,
+                    carreira = career,
+                    cargoAtual = vagas.firstOrNull { it.slug == currentSlug },
+                    nivel = int(data["level"]).coerceAtLeast(1),
+                    saldoCentavos = long(data["balanceCents"]),
+                    esperaProximoTurnoMs = long(data["cooldownRemainingMs"]),
+                    desafioAtivo = active,
+                ),
+                null,
+            )
+        }
+    }
+
+    fun candidatarTrabalho(jobSlug: String, callback: (Exception?) -> Unit) {
+        chamarFunction("applyWorkJob", mapOf("jobSlug" to jobSlug)) { _, error -> callback(error) }
+    }
+
+    fun pedirDemissaoTrabalho(callback: (Exception?) -> Unit) {
+        chamarFunction("resignWorkJob", emptyMap()) { _, error -> callback(error) }
+    }
+
+    fun solicitarPromocaoTrabalho(callback: (Exception?) -> Unit) {
+        chamarFunction("promoteWorkCareer", emptyMap()) { _, error -> callback(error) }
+    }
+
+    fun iniciarTurnoTrabalho(requestId: String, callback: (EstadoDesafioTrabalho?, Exception?) -> Unit) {
+        chamarFunction("startWorkShift", mapOf("requestId" to requestId)) { data, error ->
+            val options = (data?.get("options") as? List<*>).orEmpty().mapNotNull { (it as? Number)?.toInt() }
+            val challenge = if (data == null) null else EstadoDesafioTrabalho(
+                id = data["sessionId"] as? String ?: "",
+                cargo = data["jobName"] as? String ?: "",
+                pergunta = data["question"] as? String ?: "",
+                opcoes = options,
+                expiraEmMs = (data["expiresAtMs"] as? Number)?.toLong() ?: 0L,
+            )
+            callback(challenge, error)
+        }
+    }
+
+    fun concluirTurnoTrabalho(
+        sessionId: String,
+        answerIndex: Int,
+        callback: (ResultadoTurnoTrabalho?, Exception?) -> Unit,
+    ) {
+        chamarFunction(
+            "completeWorkShift",
+            mapOf("sessionId" to sessionId, "answerIndex" to answerIndex),
+        ) { data, error ->
+            val result = if (data == null) null else ResultadoTurnoTrabalho(
+                cargo = data["jobName"] as? String ?: "",
+                salarioCentavos = (data["salaryCents"] as? Number)?.toLong() ?: 0L,
+                respostaCorreta = data["correct"] as? Boolean ?: false,
+                saldoCentavos = (data["balanceCents"] as? Number)?.toLong() ?: 0L,
+                turnosNaCategoria = (data["shiftsInTier"] as? Number)?.toInt() ?: 0,
+                turnosParaPromocao = (data["shiftsToPromote"] as? Number)?.toInt() ?: 0,
+            )
+            callback(result, error)
         }
     }
 
@@ -2905,6 +3145,11 @@ object FirebaseRepository {
             saldoCentavos = (data["balanceCents"] as? Number)?.toLong() ?: 0L,
             nivel = (data["level"] as? Number)?.toInt() ?: 1,
             avatarUrl = data["avatarUrl"] as? String ?: "",
+            countryCode = data["countryCode"] as? String ?: "",
+            currencyCode = data["currencyCode"] as? String ?: "",
+            currencyRate = (data["currencyRate"] as? Number)?.toDouble()
+                ?.takeIf { it.isFinite() && it > 0.0 } ?: 1.0,
+            currencyRateDate = data["currencyRateDate"] as? String ?: "",
             username = data["username"] as? String ?: "",
             avatarItensEquipados = (data["equippedAvatarItems"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
             avatarComoFotoPerfil = data["avatarAsProfilePhoto"] as? Boolean ?: false,

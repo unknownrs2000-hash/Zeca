@@ -144,7 +144,7 @@ fun PaisObrigatorio(onSalvar: (String, String) -> Unit) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Selecione seu país", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Black)
                 Text(
-                    "Precisamos do seu país para ajustar a moeda e o câmbio antes de você entrar.",
+                    "Precisamos do seu país para ajustar a moeda e o câmbio. O país e a moeda ficam bloqueados após o cadastro; fale com o suporte se precisar corrigir um erro.",
                     color = Color.White.copy(alpha = 0.7f),
                     fontSize = 13.sp,
                 )
@@ -379,6 +379,17 @@ private data class ComprovantePix(
     val recebimento: Boolean,
     val saldoAposCentavos: Long? = null,
     val taxaCentavos: Long = 0L,
+    val moedaValor: String = "BRL",
+    val paisValor: String = "BR",
+    val outraQuantiaCentavos: Long? = null,
+    val outraMoeda: String = "",
+    val outroPais: String = "BR",
+    val debitoTotalCentavos: Long? = null,
+    val moedaTaxa: String = "BRL",
+    val paisTaxa: String = "BR",
+    val taxaPagaPeloRemetente: Boolean = false,
+    val cotacao: Double = 1.0,
+    val dataCotacao: String = "",
 )
 
 private fun criarQrCode(conteudo: String): Bitmap? = runCatching {
@@ -393,11 +404,11 @@ private fun criarQrCode(conteudo: String): Bitmap? = runCatching {
 }.getOrNull()
 
 private fun compartilharComprovanteImagem(context: android.content.Context, recibo: ComprovantePix) {
-    val bitmap = Bitmap.createBitmap(1080, 1350, Bitmap.Config.ARGB_8888)
+    val bitmap = Bitmap.createBitmap(1080, 1600, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
     canvas.drawColor(android.graphics.Color.rgb(10, 16, 18))
     val painel = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.rgb(27, 36, 39) }
-    canvas.drawRoundRect(44f, 44f, 1036f, 1306f, 42f, 42f, painel)
+    canvas.drawRoundRect(44f, 44f, 1036f, 1556f, 42f, 42f, painel)
 
     fun drawText(value: String, y: Float, size: Float, color: Int, bold: Boolean = false) {
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -417,11 +428,46 @@ private fun compartilharComprovanteImagem(context: android.content.Context, reci
     val muted = android.graphics.Color.rgb(170, 184, 186)
     drawText("ZECA · COMPROVANTE", 150f, 36f, green, true)
     drawText(if (recibo.recebimento) "Recebimento concluído" else "Pagamento concluído", 265f, 52f, white, true)
-    drawText(formatarReais(recibo.valorCentavos), 430f, 82f, white, true)
+    drawText(formatarValorNaMoeda(recibo.moedaValor, recibo.paisValor, recibo.valorCentavos), 430f, 82f, white, true)
     canvas.drawRect(112f, 500f, 968f, 503f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.rgb(66, 82, 85) })
     var detalheY = 550f
     if (recibo.taxaCentavos > 0) {
-        drawText("Taxa cambial: ${formatarReais(recibo.taxaCentavos)}", detalheY, 28f, muted)
+        drawText(
+            "Taxa cambial${if (recibo.taxaPagaPeloRemetente) " (remetente)" else ""}: ${
+                formatarValorNaMoeda(recibo.moedaTaxa, recibo.paisTaxa, recibo.taxaCentavos)
+            }",
+            detalheY,
+            28f,
+            muted,
+        )
+        detalheY += 55f
+    }
+    recibo.outraQuantiaCentavos?.let {
+        drawText(
+            "Valor na outra moeda: ${formatarValorNaMoeda(recibo.outraMoeda, recibo.outroPais, it)}",
+            detalheY,
+            28f,
+            muted,
+        )
+        detalheY += 55f
+    }
+    if (recibo.dataCotacao.isNotBlank()) {
+        drawText(
+            "Cotacao: 1 ${recibo.moedaValor} = ${formatarCotacao(recibo.cotacao)} ${recibo.outraMoeda} · ${recibo.dataCotacao}",
+            detalheY,
+            24f,
+            muted,
+        )
+        detalheY += 55f
+    }
+    recibo.debitoTotalCentavos?.let {
+        drawText(
+            "Total debitado: ${formatarValorNaMoeda(recibo.moedaValor, recibo.paisValor, it)}",
+            detalheY,
+            28f,
+            white,
+            true,
+        )
         detalheY += 55f
     }
     drawText(if (recibo.recebimento) "RECEBIDO DE" else "ENVIADO PARA", detalheY, 25f, muted, true)
@@ -433,7 +479,7 @@ private fun compartilharComprovanteImagem(context: android.content.Context, reci
     drawText("IDENTIFICADOR", detalheY + 465f, 25f, muted, true)
     drawText(recibo.id, detalheY + 515f, 29f, white)
     recibo.saldoAposCentavos?.let { drawText("Saldo após: ${formatarReais(it)}", detalheY + 590f, 28f, green, true) }
-    drawText("Saldo interno do Zeca · não é liquidação bancária Pix", 1250f, 23f, muted)
+    drawText("Saldo interno do Zeca · não é liquidação bancária Pix", 1500f, 23f, muted)
 
     val directory = File(context.cacheDir, "receipts").apply { mkdirs() }
     val file = File(directory, "receipt-${UUID.randomUUID()}.png")
@@ -442,7 +488,10 @@ private fun compartilharComprovanteImagem(context: android.content.Context, reci
     val shareIntent = Intent(Intent.ACTION_SEND).apply {
         type = "image/png"
         putExtra(Intent.EXTRA_STREAM, uri)
-        putExtra(Intent.EXTRA_TEXT, "Comprovante Zeca · ${formatarReais(recibo.valorCentavos)}")
+        putExtra(
+            Intent.EXTRA_TEXT,
+            "Comprovante Zeca · ${formatarValorNaMoeda(recibo.moedaValor, recibo.paisValor, recibo.valorCentavos)}",
+        )
         clipData = android.content.ClipData.newUri(context.contentResolver, "Comprovante Zeca", uri)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
@@ -744,14 +793,32 @@ fun TelaCarteira(
                                             .format(java.util.Date()),
                                         recebimento = false,
                                         saldoAposCentavos = resultado.saldoCentavos,
-                                        taxaCentavos = resultado.taxaCentavos,
+                                        taxaCentavos = resultado.taxaRemetenteCentavos,
+                                        moedaValor = resultado.moedaRemetente,
+                                        paisValor = resultado.paisRemetente,
+                                        outraMoeda = resultado.moedaDestinatario.takeIf {
+                                            it != resultado.moedaRemetente
+                                        }.orEmpty(),
+                                        outraQuantiaCentavos = resultado.valorDestinatarioCentavos.takeIf {
+                                            resultado.moedaDestinatario != resultado.moedaRemetente
+                                        },
+                                        outroPais = resultado.paisDestinatario,
+                                        debitoTotalCentavos = resultado.debitoRemetenteCentavos,
+                                        moedaTaxa = resultado.moedaRemetente,
+                                        paisTaxa = resultado.paisRemetente,
+                                        cotacao = resultado.cotacao,
+                                        dataCotacao = resultado.dataCotacao.takeIf {
+                                            resultado.moedaDestinatario != resultado.moedaRemetente
+                                        }.orEmpty(),
                                     )
                                     destinatario = null
                                     mensagemTransferencia = "Transferência concluída para ${resultado.nomeDestino}. " +
-                                        (if (resultado.taxaCentavos > 0) {
-                                            "Taxa: ${formatarReais(resultado.taxaCentavos)}. "
+                                        (if (resultado.taxaRemetenteCentavos > 0) {
+                                            "Taxa: ${formatarValorNaMoeda(resultado.moedaRemetente, resultado.paisRemetente, resultado.taxaRemetenteCentavos)}. "
                                         } else "") +
-                                        "Cotação: 1 ${resultado.moedaRemetente} = ${formatarCotacao(resultado.cotacao)} ${resultado.moedaDestinatario}."
+                                        (if (resultado.moedaRemetente != resultado.moedaDestinatario) {
+                                            "Cotação: 1 ${resultado.moedaRemetente} = ${formatarCotacao(resultado.cotacao)} ${resultado.moedaDestinatario}."
+                                        } else "")
                                     chaveDestinatario = ""
                                 } else {
                                     mensagemTransferencia = erro ?: "Não foi possível concluir a transferência."
@@ -789,10 +856,57 @@ fun TelaCarteira(
                                 .then(if (movimento.ehTransferenciaPix) Modifier.clickable {
                                     comprovante = ComprovantePix(
                                         id = movimento.id,
-                                        contraparte = movimento.titulo,
-                                        valorCentavos = kotlin.math.abs(movimento.variacaoCentavos),
+                                        contraparte = movimento.contrapartida.ifBlank { movimento.titulo },
+                                        valorCentavos = if (movimento.variacaoCentavos < 0L) {
+                                            movimento.valorRemetenteCentavos.takeIf { it > 0L }
+                                                ?: kotlin.math.abs(movimento.variacaoCentavos)
+                                        } else {
+                                            movimento.valorDestinatarioCentavos.takeIf { it > 0L }
+                                                ?: kotlin.math.abs(movimento.variacaoCentavos)
+                                        },
                                         horario = movimento.horario,
                                         recebimento = movimento.variacaoCentavos > 0,
+                                        taxaCentavos = movimento.taxaRemetenteCentavos,
+                                        moedaValor = if (movimento.variacaoCentavos < 0L) {
+                                            movimento.moedaRemetente
+                                        } else {
+                                            movimento.moedaDestinatario
+                                        },
+                                        paisValor = if (movimento.variacaoCentavos < 0L) {
+                                            movimento.paisRemetente
+                                        } else {
+                                            movimento.paisDestinatario
+                                        },
+                                        outraQuantiaCentavos = if (movimento.valorRemetenteCentavos > 0L
+                                            && movimento.valorDestinatarioCentavos > 0L
+                                            && movimento.moedaRemetente != movimento.moedaDestinatario) {
+                                            if (movimento.variacaoCentavos < 0L) movimento.valorDestinatarioCentavos
+                                            else movimento.valorRemetenteCentavos
+                                        } else null,
+                                        outraMoeda = if (movimento.variacaoCentavos < 0L) {
+                                            movimento.moedaDestinatario.takeIf { it != movimento.moedaRemetente }.orEmpty()
+                                        } else {
+                                            movimento.moedaRemetente.takeIf { it != movimento.moedaDestinatario }.orEmpty()
+                                        },
+                                        outroPais = if (movimento.variacaoCentavos < 0L) {
+                                            movimento.paisDestinatario
+                                        } else {
+                                            movimento.paisRemetente
+                                        },
+                                        moedaTaxa = movimento.moedaRemetente,
+                                        paisTaxa = movimento.paisRemetente,
+                                        taxaPagaPeloRemetente = movimento.variacaoCentavos > 0L,
+                                        debitoTotalCentavos = movimento.debitoRemetenteCentavos.takeIf {
+                                            movimento.variacaoCentavos < 0L && it > 0L
+                                        },
+                                        cotacao = if (movimento.variacaoCentavos < 0L) {
+                                            movimento.cotacaoTransferencia
+                                        } else {
+                                            if (movimento.cotacaoTransferencia > 0.0) 1.0 / movimento.cotacaoTransferencia else 1.0
+                                        },
+                                        dataCotacao = movimento.dataCotacao.takeIf {
+                                            movimento.moedaRemetente != movimento.moedaDestinatario
+                                        }.orEmpty(),
                                     )
                                 } else Modifier),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -800,6 +914,31 @@ fun TelaCarteira(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(movimento.titulo, color = Color.White, fontSize = 14.sp)
                                 Text(movimento.horario, color = Color.White.copy(alpha = 0.52f), fontSize = 11.sp)
+                                if (movimento.ehTransferenciaPix && movimento.valorRemetenteCentavos > 0L) {
+                                    val saida = movimento.variacaoCentavos < 0L
+                                    val valorLocal = if (saida) movimento.valorRemetenteCentavos else movimento.valorDestinatarioCentavos
+                                    val moedaLocal = if (saida) movimento.moedaRemetente else movimento.moedaDestinatario
+                                    val paisLocal = if (saida) movimento.paisRemetente else movimento.paisDestinatario
+                                    Text(
+                                        buildString {
+                                            append(if (saida) "Enviado " else "Recebido ")
+                                            append(formatarValorNaMoeda(moedaLocal, paisLocal, valorLocal))
+                                            if (saida && movimento.taxaRemetenteCentavos > 0L) {
+                                                append(" · taxa ")
+                                                append(formatarValorNaMoeda(movimento.moedaRemetente, movimento.paisRemetente, movimento.taxaRemetenteCentavos))
+                                            }
+                                        },
+                                        color = Color.White.copy(alpha = 0.62f),
+                                        fontSize = 11.sp,
+                                    )
+                                    if (movimento.moedaRemetente != movimento.moedaDestinatario) {
+                                        Text(
+                                            "Cotação ${formatarCotacao(movimento.cotacaoTransferencia)} ${movimento.moedaDestinatario}/${movimento.moedaRemetente} · ${movimento.dataCotacao}",
+                                            color = Color.White.copy(alpha = 0.52f),
+                                            fontSize = 10.sp,
+                                        )
+                                    }
+                                }
                             }
                             Text(
                                 (if (movimento.variacaoCentavos >= 0) "+" else "-") + formatarReais(kotlin.math.abs(movimento.variacaoCentavos)),
@@ -968,7 +1107,7 @@ fun TelaCarteira(
                     ) {
                         Text("VALOR DA TRANSFERÊNCIA", color = Color.White.copy(alpha = 0.56f), fontSize = 10.sp, fontWeight = FontWeight.Bold)
                         Text(
-                            formatarReais(recibo.valorCentavos),
+                            formatarValorNaMoeda(recibo.moedaValor, recibo.paisValor, recibo.valorCentavos),
                             color = Color.White,
                             fontSize = 34.sp,
                             fontWeight = FontWeight.Black,
@@ -987,6 +1126,31 @@ fun TelaCarteira(
                             iconeCarteira = true,
                         )
                         LinhaComprovante(rotulo = "Tipo", valor = "Transferência entre usuários")
+                        if (recibo.taxaCentavos > 0L) {
+                            LinhaComprovante(
+                                rotulo = if (recibo.taxaPagaPeloRemetente) "Taxa cambial paga pelo remetente" else "Taxa cambial",
+                                valor = formatarValorNaMoeda(recibo.moedaTaxa, recibo.paisTaxa, recibo.taxaCentavos),
+                            )
+                        }
+                        recibo.outraQuantiaCentavos?.let {
+                            LinhaComprovante(
+                                rotulo = "Valor na moeda de ${if (recibo.recebimento) "origem" else "destino"}",
+                                valor = formatarValorNaMoeda(recibo.outraMoeda, recibo.outroPais, it),
+                            )
+                        }
+                        if (recibo.dataCotacao.isNotBlank()) {
+                            LinhaComprovante(
+                                rotulo = "Cotação (${recibo.dataCotacao})",
+                                valor = "1 ${recibo.moedaValor} = ${formatarCotacao(recibo.cotacao)} ${recibo.outraMoeda}",
+                            )
+                        }
+                        recibo.debitoTotalCentavos?.let {
+                            LinhaComprovante(
+                                rotulo = "Total debitado",
+                                valor = formatarValorNaMoeda(recibo.moedaValor, recibo.paisValor, it),
+                                valorVerde = true,
+                            )
+                        }
                         LinhaComprovante(rotulo = "Status", valor = "Concluída", valorVerde = true)
                         recibo.saldoAposCentavos?.let {
                             LinhaComprovante(rotulo = "Saldo após o envio", valor = formatarReais(it))
@@ -1363,17 +1527,24 @@ fun TelaLoja(
             }
             Text("${itensComprados.size} itens", color = Cores.Verde, fontSize = 13.sp, fontWeight = FontWeight.Bold)
         }
-        Opcoes(listOf("Todos", "Avatar", "Molduras", "Títulos"), categoria) { categoria = it }
+        Text(
+            "Preços na moeda da sua conta · cotação diária · inflação de 2% a cada 30 dias.",
+            color = Color.White.copy(alpha = 0.58f),
+            fontSize = 11.sp,
+        )
+        Opcoes(listOf("Todos", "Avatar", "Molduras", "Títulos", "Luxo", "Casa", "Lazer"), categoria) { categoria = it }
         val produtosVisiveis = produtos.filter { produto ->
             when (categoria) {
                 "Avatar" -> produto.avatarSlot.isNotBlank()
                 "Molduras" -> produto.id.startsWith("frame_")
                 "Títulos" -> produto.id.startsWith("title_")
+                "Luxo", "Casa", "Lazer" -> produto.categoria == categoria
                 else -> true
             }
         }
         Text("${produtosVisiveis.size} itens", color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp)
         produtosVisiveis.forEach { produto ->
+            val precoAtualCentavos = precoLojaComInflacao(produto.precoCentavos)
             val comprado = produto.id in itensComprados
             Column(
                 modifier = Modifier
@@ -1408,7 +1579,7 @@ fun TelaLoja(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        formatarReais(produto.precoCentavos),
+                        formatarReais(precoAtualCentavos),
                         modifier = Modifier.weight(1f),
                         color = produto.cor,
                         fontSize = 17.sp,
@@ -1499,9 +1670,9 @@ fun TelaLoja(
                     Button(
                         onClick = {
                             itemComMensagem = produto.id
-                            if (saldoCentavos < produto.precoCentavos) {
+                            if (saldoCentavos < precoAtualCentavos) {
                                 mensagemErro = true
-                                mensagem = "Faltam ${formatarReais(produto.precoCentavos - saldoCentavos)} para comprar ${produto.nome}."
+                                mensagem = "Faltam ${formatarReais(precoAtualCentavos - saldoCentavos)} para comprar ${produto.nome}."
                             } else {
                                 itemEmCompra = produto.id
                                 mensagem = ""
@@ -1514,20 +1685,20 @@ fun TelaLoja(
                         },
                         enabled = !comprado && itemEmCompra.isBlank(),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = if (comprado || saldoCentavos < produto.precoCentavos) Color.White.copy(alpha = 0.14f) else Color.White,
+                            containerColor = if (comprado || saldoCentavos < precoAtualCentavos) Color.White.copy(alpha = 0.14f) else Color.White,
                             disabledContainerColor = Color.White.copy(alpha = 0.14f),
                         ),
                     ) {
                         val buttonLabel = when {
                             comprado -> "Na coleção"
                             itemEmCompra == produto.id -> "Comprando..."
-                            saldoCentavos < produto.precoCentavos -> "Saldo insuficiente"
+                            saldoCentavos < precoAtualCentavos -> "Saldo insuficiente"
                             else -> "Desbloquear"
                         }
                         Crossfade(targetState = buttonLabel, label = "store-purchase-${produto.id}") { label ->
                             Text(
                                 label,
-                                color = if (comprado || saldoCentavos < produto.precoCentavos || label == "Comprando...") Color.White else Color(0xFF111418),
+                                color = if (comprado || saldoCentavos < precoAtualCentavos || label == "Comprando...") Color.White else Color(0xFF111418),
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
                             )
@@ -1677,6 +1848,7 @@ internal data class Produto(
     val cor: Color,
     val simbolo: String,
     val avatarSlot: String = "",
+    val categoria: String = "Avatar",
 )
 
 internal val catalogoLoja = listOf(
@@ -1709,7 +1881,33 @@ internal val catalogoLoja = listOf(
     Produto("avatar_glasses_square", "Óculos Quadrados", "Armação geométrica em turquesa.", 899L, Color(0xFF6FE7E1), "▣", "accessory"),
     Produto("avatar_earrings_star", "Brincos Estrela", "Pequenas estrelas douradas nas orelhas.", 799L, Color(0xFFFFD166), "✦", "earrings"),
     Produto("avatar_cap_mint", "Boné Menta", "Um boné verde-menta para completar o conjunto.", 1_099L, Color(0xFF56D6B0), "◒", "headwear"),
+    Produto("luxury_city_penthouse", "Cobertura Panorâmica", "Uma cobertura com vista para toda a cidade.", 8_500_000L, Color(0xFF80DEEA), "⌂", categoria = "Casa"),
+    Produto("luxury_beach_villa", "Vila à Beira-mar", "Uma casa de férias com vista para o oceano.", 12_000_000L, Color(0xFF4FC3F7), "⌂", categoria = "Casa"),
+    Produto("luxury_mountain_cabin", "Refúgio nas Montanhas", "Cabana particular para descansar longe da cidade.", 4_800_000L, Color(0xFF81C784), "⌂", categoria = "Casa"),
+    Produto("luxury_modern_loft", "Loft Industrial", "Um loft amplo com arquitetura contemporânea.", 3_200_000L, Color(0xFFB0BEC5), "⌂", categoria = "Casa"),
+    Produto("luxury_infinity_pool", "Piscina de Borda Infinita", "Uma piscina panorâmica para sua propriedade.", 2_400_000L, Color(0xFF26C6DA), "≈", categoria = "Casa"),
+    Produto("luxury_home_cinema", "Cinema Particular", "Sala de cinema com poltronas premium.", 1_600_000L, Color(0xFF9575CD), "▶", categoria = "Casa"),
+    Produto("luxury_art_gallery", "Galeria de Arte", "Uma coleção decorativa para sua casa.", 2_100_000L, Color(0xFFFFB74D), "▧", categoria = "Casa"),
+    Produto("luxury_garage", "Garagem Climatizada", "Espaço seguro para guardar seus veículos.", 1_250_000L, Color(0xFF78909C), "▤", categoria = "Casa"),
+    Produto("luxury_sports_car", "Carro Esportivo", "Um esportivo colecionável de alta performance.", 5_900_000L, Color(0xFFEF5350), "▰", categoria = "Luxo"),
+    Produto("luxury_electric_supercar", "Supercarro Elétrico", "Um supercarro elétrico de edição especial.", 9_800_000L, Color(0xFF4DD0E1), "⚡", categoria = "Luxo"),
+    Produto("luxury_yacht", "Iate Particular", "Um iate de luxo para navegar pelo litoral.", 15_000_000L, Color(0xFF64B5F6), "⛵", categoria = "Luxo"),
+    Produto("luxury_private_jet", "Jato Executivo", "Uma aeronave executiva para sua coleção.", 25_000_000L, Color(0xFFE0E0E0), "✈", categoria = "Luxo"),
+    Produto("luxury_diamond_watch", "Relógio de Diamantes", "Um relógio raro com acabamento brilhante.", 1_850_000L, Color(0xFFFFD54F), "⌚", categoria = "Luxo"),
+    Produto("luxury_arcade_room", "Sala de Fliperama", "Uma coleção de jogos clássicos para sua casa.", 1_100_000L, Color(0xFFFF80AB), "▦", categoria = "Lazer"),
+    Produto("luxury_charity_foundation", "Fundação de Impacto Social", "Um projeto colecionável dedicado a boas causas.", 3_500_000L, Color(0xFF81C784), "♥", categoria = "Lazer"),
 )
+
+private const val INFLACAO_INICIO_MS = 1_790_899_200_000L
+private const val INFLACAO_PERIODO_MS = 30L * 24 * 60 * 60 * 1_000
+
+internal fun precoLojaComInflacao(precoBaseCentavos: Long, agoraMs: Long = System.currentTimeMillis()): Long {
+    val meses = ((agoraMs - INFLACAO_INICIO_MS).coerceAtLeast(0) / INFLACAO_PERIODO_MS).toInt()
+    return BigDecimal.valueOf(precoBaseCentavos)
+        .multiply(BigDecimal("1.02").pow(meses))
+        .setScale(0, RoundingMode.HALF_UP)
+        .longValueExact()
+}
 
 internal fun coresMoldura(id: String): List<Color>? = when (id) {
     "frame_aurora" -> listOf(Cores.Turquesa, Color(0xFF7C4DFF), Color(0xFF3DDC97), Cores.Turquesa)

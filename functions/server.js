@@ -63,6 +63,68 @@ app.post("/whatsapp/wallet", async (req, res) => {
   }
 });
 
+app.post("/whatsapp/work", async (req, res) => {
+  const secret = process.env.WHATSAPP_LINK_SECRET;
+  if (!secret || secret.length < 32) {
+    console.error("WHATSAPP_LINK_SECRET está ausente ou curto demais.");
+    return res.status(503).json({ error: { code: "unavailable", message: "Empregos compartilhados indisponíveis." } });
+  }
+
+  const {
+    action,
+    jid,
+    requestId = "",
+    jobSlug = "",
+    sessionId = "",
+    answerIndex = "",
+  } = req.body || {};
+  const timestamp = req.get("x-work-timestamp") || "";
+  const signature = req.get("x-work-signature") || "";
+  if (!["status", "apply", "resign", "promote", "start", "complete"].includes(action)
+      || typeof jid !== "string"
+      || !/^\d+@s\.whatsapp\.net$/.test(jid)
+      || typeof requestId !== "string"
+      || typeof jobSlug !== "string"
+      || typeof sessionId !== "string"
+      || !/^\d{13}$/.test(timestamp)
+      || !/^[a-f\d]{64}$/i.test(signature)) {
+    return res.status(400).json({ error: { code: "invalid-argument", message: "Solicitação inválida." } });
+  }
+  if (Math.abs(Date.now() - Number(timestamp)) > 60_000) {
+    return res.status(401).json({ error: { code: "unauthenticated", message: "Solicitação expirada." } });
+  }
+
+  const canonical = [
+    timestamp,
+    "POST",
+    "/whatsapp/work",
+    jid,
+    action,
+    requestId,
+    jobSlug,
+    sessionId,
+    answerIndex,
+  ].join("\n");
+  const expected = crypto.createHmac("sha256", secret).update(canonical).digest();
+  const received = Buffer.from(signature, "hex");
+  if (received.length !== expected.length || !crypto.timingSafeEqual(expected, received)) {
+    return res.status(401).json({ error: { code: "unauthenticated", message: "Assinatura inválida." } });
+  }
+
+  try {
+    const result = await handlers._operateWhatsAppCareer({
+      data: { action, jid, requestId, jobSlug, sessionId, answerIndex: answerIndex === "" ? undefined : answerIndex },
+    });
+    return res.json({ result });
+  } catch (error) {
+    const known = error instanceof HttpsError;
+    if (!known) console.error("Falha na carreira compartilhada do WhatsApp:", error);
+    const code = known ? error.code : "internal";
+    const message = known ? error.message : "Não foi possível atualizar o emprego.";
+    return res.status(STATUS[code] || 500).json({ error: { code, message } });
+  }
+});
+
 app.post("/whatsapp/link/complete", async (req, res) => {
   const secret = process.env.WHATSAPP_LINK_SECRET;
   if (!secret || secret.length < 32) {

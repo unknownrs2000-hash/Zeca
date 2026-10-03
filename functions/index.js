@@ -68,6 +68,17 @@ const {
   validateReport,
   weeklyEventForDate,
 } = require("./social-logic");
+const { priceAfterInflation } = require("./economy-logic");
+const {
+  WORK_COOLDOWN_MS,
+  WORK_JOBS,
+  WORK_RESIGN_COOLDOWN_MS,
+  WORK_SESSION_TTL_MS,
+  WORK_TIERS,
+  canPromote,
+  emptyCareer,
+  getWorkJob,
+} = require("./career-logic");
 
 const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
 initializeApp(serviceAccount ? { credential: cert(JSON.parse(serviceAccount)) } : {});
@@ -115,6 +126,21 @@ const COSMETICS = {
   avatar_glasses_square: { name: "Óculos Quadrados", priceCents: 899, slot: "accessory" },
   avatar_earrings_star: { name: "Brincos Estrela", priceCents: 799, slot: "earrings" },
   avatar_cap_mint: { name: "Boné Menta", priceCents: 1_099, slot: "headwear" },
+  luxury_city_penthouse: { name: "Cobertura Panorâmica", priceCents: 8_500_000, category: "Casa" },
+  luxury_beach_villa: { name: "Vila à Beira-mar", priceCents: 12_000_000, category: "Casa" },
+  luxury_mountain_cabin: { name: "Refúgio nas Montanhas", priceCents: 4_800_000, category: "Casa" },
+  luxury_modern_loft: { name: "Loft Industrial", priceCents: 3_200_000, category: "Casa" },
+  luxury_infinity_pool: { name: "Piscina de Borda Infinita", priceCents: 2_400_000, category: "Casa" },
+  luxury_home_cinema: { name: "Cinema Particular", priceCents: 1_600_000, category: "Casa" },
+  luxury_art_gallery: { name: "Galeria de Arte", priceCents: 2_100_000, category: "Casa" },
+  luxury_garage: { name: "Garagem Climatizada", priceCents: 1_250_000, category: "Casa" },
+  luxury_sports_car: { name: "Carro Esportivo", priceCents: 5_900_000, category: "Luxo" },
+  luxury_electric_supercar: { name: "Supercarro Elétrico", priceCents: 9_800_000, category: "Luxo" },
+  luxury_yacht: { name: "Iate Particular", priceCents: 15_000_000, category: "Luxo" },
+  luxury_private_jet: { name: "Jato Executivo", priceCents: 25_000_000, category: "Luxo" },
+  luxury_diamond_watch: { name: "Relógio de Diamantes", priceCents: 1_850_000, category: "Luxo" },
+  luxury_arcade_room: { name: "Sala de Fliperama", priceCents: 1_100_000, category: "Lazer" },
+  luxury_charity_foundation: { name: "Fundação de Impacto Social", priceCents: 3_500_000, category: "Lazer" },
 };
 
 async function getDailyCurrencyRate(currencyCode) {
@@ -179,11 +205,15 @@ function calculateCurrencyTransfer(amountCents, senderCurrencyCode, recipientCur
   const feeCents = senderCurrencyCode !== recipientCurrencyCode
     ? Math.round(amountInBrlCents * CROSS_CURRENCY_TRANSFER_FEE_BPS / 10_000)
     : 0;
+  const feeCentsInSenderCurrency = Math.round(feeCents * senderRate);
   const senderDebitCents = amountInBrlCents + feeCents;
   const recipientAmountCents = Math.round(amountInBrlCents * recipientRate);
   const exchangeRate = Number((recipientRate / senderRate).toFixed(8));
+  const senderDebitCentsInSenderCurrency = amountCents + feeCentsInSenderCurrency;
   if (!Number.isSafeInteger(amountInBrlCents) || amountInBrlCents < 1
       || !Number.isSafeInteger(senderDebitCents)
+      || !Number.isSafeInteger(feeCentsInSenderCurrency)
+      || !Number.isSafeInteger(senderDebitCentsInSenderCurrency)
       || !Number.isSafeInteger(recipientAmountCents) || recipientAmountCents < 1
       || !Number.isFinite(exchangeRate) || exchangeRate <= 0) {
     throw new HttpsError("invalid-argument", "O valor convertido é inválido.");
@@ -191,13 +221,24 @@ function calculateCurrencyTransfer(amountCents, senderCurrencyCode, recipientCur
   return {
     amountInBrlCents,
     feeCents,
+    feeCentsInSenderCurrency,
     senderDebitCents,
+    senderDebitCentsInSenderCurrency,
     recipientAmountCents,
     exchangeRate,
   };
 }
 
 exports._calculateCurrencyTransfer = calculateCurrencyTransfer;
+
+function matchesPriorCurrencyTransfer(prior, senderUid, amountCents, keyHash) {
+  const priorAmountCents = Number.isSafeInteger(prior.amountCentsInSenderCurrency)
+    ? prior.amountCentsInSenderCurrency
+    : prior.amountCents;
+  return prior.senderUid === senderUid
+    && priorAmountCents === amountCents
+    && (!prior.pixKeyHash || prior.pixKeyHash === keyHash);
+}
 
 function authenticatedUid(request) {
   if (!request.auth) {
@@ -516,6 +557,12 @@ exports.ensurePlayerProfile = onCall(async (request) => {
       gamesPlayed,
       wins: Number.isSafeInteger(existing.wins) ? existing.wins : 0,
       inventory: Array.isArray(existing.inventory) ? existing.inventory : [],
+      countryCode: existing.countryCode || "",
+      currencyCode: existing.currencyCode || "",
+      currencyRate: Number.isFinite(existing.currencyRate) && existing.currencyRate > 0
+        ? existing.currencyRate
+        : 1,
+      currencyRateDate: existing.currencyRateDate || "",
       createdAt: existing.createdAt || FieldValue.serverTimestamp(),
     };
     const publicProfile = {
@@ -527,6 +574,10 @@ exports.ensurePlayerProfile = onCall(async (request) => {
       equippedAvatarItems: profile.equippedAvatarItems,
       equippedFrame: profile.equippedFrame,
       username: profile.username,
+      countryCode: profile.countryCode,
+      currencyCode: profile.currencyCode,
+      currencyRate: profile.currencyRate,
+      currencyRateDate: profile.currencyRateDate,
     };
 
     if (userSnapshot.exists) transaction.set(userRef, profile);
@@ -714,10 +765,11 @@ exports.transferByPixKey = onCall(async (request) => {
   const transferRef = database.collection("transfers").doc(requestId);
   const keyRef = database.collection("pixKeys").doc(pixKeyHash(normalized));
   const senderRef = database.collection("users").doc(senderUid);
+  const normalizedKeyHash = pixKeyHash(normalized);
   const priorTransfer = await transferRef.get();
   if (priorTransfer.exists) {
     const prior = priorTransfer.data();
-    if (prior.senderUid !== senderUid) {
+    if (!matchesPriorCurrencyTransfer(prior, senderUid, amountCents, normalizedKeyHash)) {
       throw new HttpsError("already-exists", "Identificador já utilizado.");
     }
     return {
@@ -728,9 +780,14 @@ exports.transferByPixKey = onCall(async (request) => {
       amountCentsInSenderCurrency: prior.amountCentsInSenderCurrency || prior.amountCents,
       recipientAmountCents: prior.recipientAmountCents || prior.amountCents,
       feeCents: prior.feeCents || 0,
+      feeCentsInSenderCurrency: prior.feeCentsInSenderCurrency || 0,
       senderDebitCents: prior.senderDebitCents || prior.amountCents,
+      senderDebitCentsInSenderCurrency: prior.senderDebitCentsInSenderCurrency
+        || prior.amountCentsInSenderCurrency || prior.amountCents,
       senderCurrencyCode: prior.senderCurrencyCode || "BRL",
       recipientCurrencyCode: prior.recipientCurrencyCode || "BRL",
+      senderCountryCode: prior.senderCountryCode || "BR",
+      recipientCountryCode: prior.recipientCountryCode || "BR",
       exchangeRate: prior.exchangeRate || 1,
       rateDate: prior.rateDate || "",
     };
@@ -754,6 +811,8 @@ exports.transferByPixKey = onCall(async (request) => {
   }
   const senderCurrencyCode = senderCurrencySnapshot.get("currencyCode");
   const recipientCurrencyCode = recipientCurrencySnapshot.get("currencyCode");
+  const senderCountryCode = senderCurrencySnapshot.get("countryCode") || "BR";
+  const recipientCountryCode = recipientCurrencySnapshot.get("countryCode") || "BR";
   if (!supportedCurrencyCodes.has(senderCurrencyCode || "")
       || !supportedCurrencyCodes.has(recipientCurrencyCode || "")) {
     throw new HttpsError("failed-precondition", "Configure a moeda das duas contas antes de transferir.");
@@ -772,7 +831,9 @@ exports.transferByPixKey = onCall(async (request) => {
   const {
     amountInBrlCents: transferAmountCents,
     feeCents,
+    feeCentsInSenderCurrency,
     senderDebitCents,
+    senderDebitCentsInSenderCurrency,
     recipientAmountCents,
     exchangeRate,
   } = settlement;
@@ -783,8 +844,8 @@ exports.transferByPixKey = onCall(async (request) => {
     const previousTransfer = await transaction.get(transferRef);
     if (previousTransfer.exists) {
       const prior = previousTransfer.data();
-      if (prior.senderUid !== senderUid) {
-        throw new HttpsError("already-exists", "Identificador já utilizado.");
+      if (!matchesPriorCurrencyTransfer(prior, senderUid, amountCents, normalizedKeyHash)) {
+        throw new HttpsError("already-exists", "Identificador já utilizado para outra transferência.");
       }
       response = {
         transferId: requestId,
@@ -794,9 +855,14 @@ exports.transferByPixKey = onCall(async (request) => {
         amountCentsInSenderCurrency: prior.amountCentsInSenderCurrency || prior.amountCents,
         recipientAmountCents: prior.recipientAmountCents || prior.amountCents,
         feeCents: prior.feeCents || 0,
+        feeCentsInSenderCurrency: prior.feeCentsInSenderCurrency || 0,
         senderDebitCents: prior.senderDebitCents || prior.amountCents,
+        senderDebitCentsInSenderCurrency: prior.senderDebitCentsInSenderCurrency
+          || prior.amountCentsInSenderCurrency || prior.amountCents,
         senderCurrencyCode: prior.senderCurrencyCode || "BRL",
         recipientCurrencyCode: prior.recipientCurrencyCode || "BRL",
+        senderCountryCode: prior.senderCountryCode || "BR",
+        recipientCountryCode: prior.recipientCountryCode || "BR",
         exchangeRate: prior.exchangeRate || 1,
         rateDate: prior.rateDate || "",
       };
@@ -832,7 +898,9 @@ exports.transferByPixKey = onCall(async (request) => {
 
     const sender = senderSnapshot.data();
     const recipient = recipientSnapshot.data();
-    if (sender.currencyCode !== senderCurrencyCode || recipient.currencyCode !== recipientCurrencyCode) {
+    if (sender.currencyCode !== senderCurrencyCode || recipient.currencyCode !== recipientCurrencyCode
+        || (sender.countryCode || "BR") !== senderCountryCode
+        || (recipient.countryCode || "BR") !== recipientCountryCode) {
       throw new HttpsError("failed-precondition", "A moeda da conta mudou. Busque o destinatário novamente.");
     }
     const senderBalance = sender.balanceCents || 0;
@@ -853,29 +921,44 @@ exports.transferByPixKey = onCall(async (request) => {
     transaction.create(transferRef, {
       senderUid,
       recipientUid,
+      pixKeyHash: normalizedKeyHash,
       senderName,
       recipientName,
       amountCents: transferAmountCents,
       amountCentsInSenderCurrency: amountCents,
       recipientAmountCents,
       feeCents,
+      feeCentsInSenderCurrency,
       senderDebitCents,
+      senderDebitCentsInSenderCurrency,
       senderCurrencyCode,
       recipientCurrencyCode,
+      senderCountryCode,
+      recipientCountryCode,
       exchangeRate,
       rateDate,
       senderBalanceAfter: senderAfter,
       createdAt: now,
     });
     transaction.create(senderHistoryRef, {
-      description: feeCents > 0
-        ? `Para ${recipientName} (inclui taxa de ${feeCents} centavos)`
-        : `Para ${recipientName}`,
+      description: `Para ${recipientName}`,
       deltaCents: -senderDebitCents,
       type: "pix_transfer",
       transferId: requestId,
       counterpartyUid: recipientUid,
+      counterpartyName: recipientName,
+      amountCents: transferAmountCents,
+      amountCentsInSenderCurrency: amountCents,
+      senderDebitCentsInSenderCurrency,
+      recipientAmountCents,
       feeCents,
+      feeCentsInSenderCurrency,
+      senderCurrencyCode,
+      recipientCurrencyCode,
+      senderCountryCode,
+      recipientCountryCode,
+      exchangeRate,
+      rateDate,
       createdAt: now,
     });
     if (feeCents > 0) {
@@ -895,6 +978,19 @@ exports.transferByPixKey = onCall(async (request) => {
       type: "pix_transfer",
       transferId: requestId,
       counterpartyUid: senderUid,
+      counterpartyName: senderName,
+      amountCents: transferAmountCents,
+      amountCentsInSenderCurrency: amountCents,
+      senderDebitCentsInSenderCurrency,
+      recipientAmountCents,
+      feeCents,
+      feeCentsInSenderCurrency,
+      senderCurrencyCode,
+      recipientCurrencyCode,
+      senderCountryCode,
+      recipientCountryCode,
+      exchangeRate,
+      rateDate,
       createdAt: now,
     });
     response = {
@@ -905,9 +1001,13 @@ exports.transferByPixKey = onCall(async (request) => {
       amountCentsInSenderCurrency: amountCents,
       recipientAmountCents,
       feeCents,
+      feeCentsInSenderCurrency,
       senderDebitCents,
+      senderDebitCentsInSenderCurrency,
       senderCurrencyCode,
       recipientCurrencyCode,
+      senderCountryCode,
+      recipientCountryCode,
       exchangeRate,
       rateDate,
     };
@@ -3504,10 +3604,11 @@ exports.buyCosmetic = onCall(async (request) => {
       throw new HttpsError("already-exists", "Você já tem este item.");
     }
     const balance = profile.balanceCents || 0;
-    if (balance < product.priceCents) {
+    const priceCents = priceAfterInflation(product.priceCents);
+    if (balance < priceCents) {
       throw new HttpsError("failed-precondition", "Saldo insuficiente.");
     }
-    const balanceAfter = balance - product.priceCents;
+    const balanceAfter = balance - priceCents;
     transaction.update(userRef, {
       balanceCents: balanceAfter,
       inventory: [...inventory, itemId],
@@ -3515,10 +3616,343 @@ exports.buyCosmetic = onCall(async (request) => {
     transaction.update(rankRef, { balanceCents: balanceAfter });
     transaction.create(transactionRef, {
       description: `Loja · ${product.name}`,
-      deltaCents: -product.priceCents,
+      deltaCents: -priceCents,
+      basePriceCents: product.priceCents,
+      inflationRateBpsPerMonth: 200,
       createdAt: FieldValue.serverTimestamp(),
     });
-    response = { itemId, balanceCents: balanceAfter };
+    response = { itemId, balanceCents: balanceAfter, priceCents, basePriceCents: product.priceCents };
+  });
+  return response;
+});
+
+function workCareerForProfile(profile) {
+  const raw = profile.career && typeof profile.career === "object" ? profile.career : {};
+  return { ...emptyCareer(), ...raw };
+}
+
+function publicWorkSession(sessionSnapshot) {
+  const session = sessionSnapshot.data();
+  return {
+    sessionId: sessionSnapshot.id,
+    jobSlug: session.jobSlug,
+    jobName: session.jobName,
+    question: session.question,
+    options: session.options,
+    expiresAtMs: session.expiresAtMs,
+  };
+}
+
+function createWorkChallenge(job, nowMs) {
+  const boxes = randomInt(2, 10);
+  const productsPerBox = randomInt(3, 12);
+  const answer = boxes * productsPerBox;
+  const choices = new Set([answer]);
+  while (choices.size < 4) {
+    const offset = randomInt(-9, 9) || 1;
+    choices.add(Math.max(1, answer + offset));
+  }
+  const options = [...choices].sort((left, right) => left - right);
+  return {
+    jobSlug: job.slug,
+    jobName: job.name,
+    question: `Seu turno tem ${boxes} caixas com ${productsPerBox} itens cada. Quantos itens você deve conferir?`,
+    options,
+    answerIndex: options.indexOf(answer),
+    salaryBaseCents: randomInt(job.salaryMinCents, job.salaryMaxCents),
+    createdAtMs: nowMs,
+    expiresAtMs: nowMs + WORK_SESSION_TTL_MS,
+    status: "pending",
+  };
+}
+
+exports.getWorkCareer = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const userRef = database.collection("users").doc(uid);
+  let profile = await userRef.get();
+  if (!profile.exists) throw new HttpsError("failed-precondition", "Configure sua conta antes de consultar os empregos.");
+  const linkedJid = profile.get("whatsappLink.jid");
+  if (profile.get("career.legacyImported") !== true
+      && typeof linkedJid === "string" && /^\d+@s\.whatsapp\.net$/.test(linkedJid)) {
+    const dashboard = await consultarApiBotVinculado(linkedJid, "/api/integration/dashboard?sections=work");
+    const legacy = dashboard.work?.legacyCareer;
+    await database.runTransaction(async (transaction) => {
+      const current = await transaction.get(userRef);
+      if (!current.exists) throw new HttpsError("failed-precondition", "Perfil não encontrado.");
+      const career = workCareerForProfile(current.data());
+      if (career.legacyImported !== true) {
+        if (!career.jobSlug && legacy && getWorkJob(legacy.jobSlug)) {
+          career.jobSlug = legacy.jobSlug;
+          career.unlockedTier = Math.max(career.unlockedTier, getWorkJob(legacy.jobSlug).tier);
+          career.shiftsInTier = Number.isSafeInteger(legacy.shiftsInTier)
+            ? Math.max(0, legacy.shiftsInTier)
+            : 0;
+          career.lastShiftAtMs = Number.isSafeInteger(legacy.lastShiftAtMs)
+            ? Math.max(0, legacy.lastShiftAtMs)
+            : 0;
+          career.resignUntilMs = Number.isSafeInteger(legacy.resignUntilMs)
+            ? Math.max(0, legacy.resignUntilMs)
+            : 0;
+          career.hiredAtMs = Date.now();
+        }
+        career.legacyImported = true;
+        transaction.update(userRef, { career });
+      }
+    });
+    profile = await userRef.get();
+  }
+  const data = profile.data();
+  const career = workCareerForProfile(data);
+  const nowMs = Date.now();
+  const currentJobBase = getWorkJob(career.jobSlug);
+  const currentJob = currentJobBase
+    ? {
+      ...currentJobBase,
+      salaryMinCents: priceAfterInflation(currentJobBase.salaryMinCents, nowMs),
+      salaryMaxCents: priceAfterInflation(currentJobBase.salaryMaxCents, nowMs),
+    }
+    : null;
+  const activeSessionId = career.activeSessionId;
+  const activeSession = activeSessionId
+    ? await database.collection("users").doc(uid).collection("workSessions").doc(activeSessionId).get()
+    : null;
+  return {
+    jobs: WORK_JOBS.map((job) => ({
+      ...job,
+      salaryMinCents: priceAfterInflation(job.salaryMinCents, nowMs),
+      salaryMaxCents: priceAfterInflation(job.salaryMaxCents, nowMs),
+    })),
+    tiers: WORK_TIERS,
+    career,
+    currentJob,
+    level: Number.isSafeInteger(data.level) && data.level > 0 ? data.level : 1,
+    balanceCents: Number.isSafeInteger(data.balanceCents) && data.balanceCents >= 0 ? data.balanceCents : 0,
+    cooldownRemainingMs: career.lastShiftAtMs
+      ? Math.max(0, WORK_COOLDOWN_MS - (nowMs - career.lastShiftAtMs))
+      : 0,
+    activeSession: activeSession?.exists && activeSession.get("status") === "pending"
+      && activeSession.get("expiresAtMs") > nowMs
+      ? publicWorkSession(activeSession)
+      : null,
+    inflationRateBpsPerMonth: 200,
+  };
+});
+
+exports.applyWorkJob = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const job = getWorkJob(request.data?.jobSlug);
+  if (!job) throw new HttpsError("invalid-argument", "Vaga de emprego inválida.");
+  const userRef = database.collection("users").doc(uid);
+  const nowMs = Date.now();
+  let career;
+  await database.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(userRef);
+    if (!snapshot.exists) throw new HttpsError("failed-precondition", "Configure sua conta antes de se candidatar.");
+    const profile = snapshot.data();
+    const current = workCareerForProfile(profile);
+    const level = Number.isSafeInteger(profile.level) && profile.level > 0 ? profile.level : 1;
+    if (current.resignUntilMs > nowMs) {
+      throw new HttpsError("failed-precondition", "Aguarde o período de descanso antes de se candidatar novamente.");
+    }
+    if (current.jobSlug && current.jobSlug !== job.slug) {
+      throw new HttpsError("failed-precondition", "Peça demissão do cargo atual antes de escolher outra vaga.");
+    }
+    if (level < job.minLevel || current.unlockedTier < job.tier) {
+      throw new HttpsError("failed-precondition", `Esta vaga exige nível ${job.minLevel} e a categoria ${job.tier} desbloqueada.`);
+    }
+    career = current.jobSlug === job.slug
+      ? current
+      : {
+        ...current,
+        jobSlug: job.slug,
+        shiftsInTier: 0,
+        hiredAtMs: nowMs,
+        activeSessionId: "",
+      };
+    transaction.update(userRef, { career });
+  });
+  return { career, job };
+});
+
+exports.resignWorkJob = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const userRef = database.collection("users").doc(uid);
+  const nowMs = Date.now();
+  let career;
+  await database.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(userRef);
+    if (!snapshot.exists) throw new HttpsError("failed-precondition", "Perfil não encontrado.");
+    const current = workCareerForProfile(snapshot.data());
+    if (!current.jobSlug) throw new HttpsError("failed-precondition", "Você não possui um emprego ativo.");
+    career = {
+      ...current,
+      jobSlug: "",
+      shiftsInTier: 0,
+      resignUntilMs: nowMs + WORK_RESIGN_COOLDOWN_MS,
+      activeSessionId: "",
+    };
+    transaction.update(userRef, { career });
+  });
+  return { career };
+});
+
+exports.promoteWorkCareer = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const userRef = database.collection("users").doc(uid);
+  let career;
+  await database.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(userRef);
+    if (!snapshot.exists) throw new HttpsError("failed-precondition", "Perfil não encontrado.");
+    const profile = snapshot.data();
+    const current = workCareerForProfile(profile);
+    const job = getWorkJob(current.jobSlug);
+    const level = Number.isSafeInteger(profile.level) && profile.level > 0 ? profile.level : 1;
+    if (!job) throw new HttpsError("failed-precondition", "Escolha um emprego antes de solicitar promoção.");
+    if (!canPromote(current, job, level)) {
+      throw new HttpsError("failed-precondition", "A promoção exige o nível e a quantidade de turnos da próxima categoria.");
+    }
+    career = { ...current, unlockedTier: job.tier + 1, shiftsInTier: 0 };
+    transaction.update(userRef, { career });
+  });
+  return { career };
+});
+
+exports.startWorkShift = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const requestId = request.data?.requestId;
+  if (typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)) {
+    throw new HttpsError("invalid-argument", "Identificador do turno inválido.");
+  }
+  const userRef = database.collection("users").doc(uid);
+  const sessionRef = userRef.collection("workSessions").doc(requestId);
+  const nowMs = Date.now();
+  let response;
+  await database.runTransaction(async (transaction) => {
+    const userSnapshot = await transaction.get(userRef);
+    const existingSession = await transaction.get(sessionRef);
+    if (!userSnapshot.exists) throw new HttpsError("failed-precondition", "Perfil não encontrado.");
+    if (existingSession.exists) {
+      if (existingSession.get("status") !== "pending") {
+        throw new HttpsError("already-exists", "Este identificador de turno já foi concluído.");
+      }
+      response = publicWorkSession(existingSession);
+      return;
+    }
+    const profile = userSnapshot.data();
+    const career = workCareerForProfile(profile);
+    const job = getWorkJob(career.jobSlug);
+    if (!job) throw new HttpsError("failed-precondition", "Escolha um emprego antes de iniciar o turno.");
+    if (career.resignUntilMs > nowMs) {
+      throw new HttpsError("failed-precondition", "Aguarde o período de descanso antes de trabalhar.");
+    }
+    if (career.lastShiftAtMs && nowMs - career.lastShiftAtMs < WORK_COOLDOWN_MS) {
+      throw new HttpsError("resource-exhausted", "Seu próximo turno ainda está no período de espera de 40 minutos.");
+    }
+    if (career.activeSessionId) {
+      const activeRef = userRef.collection("workSessions").doc(career.activeSessionId);
+      const activeSnapshot = await transaction.get(activeRef);
+      if (activeSnapshot.exists && activeSnapshot.get("status") === "pending"
+          && activeSnapshot.get("expiresAtMs") > nowMs) {
+        throw new HttpsError("resource-exhausted", "Conclua o minijogo de trabalho que já está aberto.");
+      }
+    }
+    const challenge = createWorkChallenge(job, nowMs);
+    transaction.create(sessionRef, challenge);
+    transaction.update(userRef, { "career.activeSessionId": requestId });
+    response = publicWorkSession({ id: requestId, data: () => challenge });
+  });
+  return response;
+});
+
+exports.completeWorkShift = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const sessionId = request.data?.sessionId;
+  const answerIndex = request.data?.answerIndex;
+  if (typeof sessionId !== "string" || !/^[a-f0-9-]{36}$/i.test(sessionId)
+      || !Number.isInteger(answerIndex) || answerIndex < 0 || answerIndex > 3) {
+    throw new HttpsError("invalid-argument", "Resposta do turno inválida.");
+  }
+  const userRef = database.collection("users").doc(uid);
+  const sessionRef = userRef.collection("workSessions").doc(sessionId);
+  const rankRef = database.collection("leaderboard").doc(uid);
+  const transactionRef = userRef.collection("transactions").doc(`work_${sessionId}`);
+  const nowMs = Date.now();
+  let response;
+  await database.runTransaction(async (transaction) => {
+    const [userSnapshot, sessionSnapshot, rankSnapshot, historySnapshot] = await Promise.all([
+      transaction.get(userRef),
+      transaction.get(sessionRef),
+      transaction.get(rankRef),
+      transaction.get(transactionRef),
+    ]);
+    if (!sessionSnapshot.exists) throw new HttpsError("not-found", "Turno de trabalho não encontrado.");
+    if (sessionSnapshot.get("status") === "completed") {
+      response = sessionSnapshot.get("response");
+      return;
+    }
+    if (!userSnapshot.exists || !rankSnapshot.exists) {
+      throw new HttpsError("failed-precondition", "Perfil ainda não está pronto para receber o salário.");
+    }
+    if (historySnapshot.exists) {
+      throw new HttpsError("already-exists", "Este turno já foi creditado.");
+    }
+    const profile = userSnapshot.data();
+    const career = workCareerForProfile(profile);
+    const job = getWorkJob(sessionSnapshot.get("jobSlug"));
+    if (!job || career.jobSlug !== job.slug || career.activeSessionId !== sessionId) {
+      throw new HttpsError("failed-precondition", "O emprego mudou antes da conclusão do turno.");
+    }
+    if (sessionSnapshot.get("status") !== "pending" || sessionSnapshot.get("expiresAtMs") < nowMs) {
+      throw new HttpsError("failed-precondition", "O desafio expirou. Inicie um novo turno.");
+    }
+    const correct = answerIndex === sessionSnapshot.get("answerIndex");
+    const wageBaseCents = sessionSnapshot.get("salaryBaseCents");
+    const fullWageCents = priceAfterInflation(wageBaseCents, nowMs);
+    const minimumWageCents = priceAfterInflation(job.salaryMinCents, nowMs);
+    const salaryCents = correct
+      ? fullWageCents
+      : Math.max(minimumWageCents, Math.round(fullWageCents * 0.65));
+    const balanceCents = profile.balanceCents || 0;
+    if (!Number.isSafeInteger(balanceCents) || balanceCents < 0
+        || !Number.isSafeInteger(balanceCents + salaryCents)) {
+      throw new HttpsError("failed-precondition", "O saldo da conta está inválido.");
+    }
+    const nextCareer = {
+      ...career,
+      shiftsInTier: career.shiftsInTier + 1,
+      lastShiftAtMs: nowMs,
+      activeSessionId: "",
+    };
+    const balanceAfter = balanceCents + salaryCents;
+    response = {
+      sessionId,
+      jobSlug: job.slug,
+      jobName: job.name,
+      salaryCents,
+      correct,
+      balanceCents: balanceAfter,
+      shiftsInTier: nextCareer.shiftsInTier,
+      shiftsToPromote: job.shiftsToPromote,
+      cooldownMs: WORK_COOLDOWN_MS,
+      inflationRateBpsPerMonth: 200,
+    };
+    transaction.update(userRef, { balanceCents: balanceAfter, career: nextCareer });
+    transaction.update(rankRef, { balanceCents: balanceAfter });
+    transaction.create(transactionRef, {
+      type: "work_salary",
+      description: `Trabalho · ${job.name}`,
+      deltaCents: salaryCents,
+      workSessionId: sessionId,
+      createdAt: FieldValue.serverTimestamp(),
+      createdAtMs: nowMs,
+    });
+    transaction.update(sessionRef, {
+      status: "completed",
+      answerIndex,
+      correct,
+      response,
+      completedAtMs: nowMs,
+    });
   });
   return response;
 });
@@ -4902,12 +5336,35 @@ exports.setAccountCountry = onCall(async (request) => {
     throw new HttpsError("invalid-argument", "Selecione um país e uma moeda válidos.");
   }
   const userRef = database.collection("users").doc(uid);
-  const userSnapshot = await userRef.get();
-  if (!userSnapshot.exists) {
-    throw new HttpsError("failed-precondition", "Configure sua conta antes de escolher o país.");
-  }
+  const rankRef = database.collection("leaderboard").doc(uid);
   const { rate, rateDate } = await getDailyCurrencyRate(currencyCode);
-  await userRef.update({ countryCode, currencyCode });
+  await database.runTransaction(async (transaction) => {
+    const userSnapshot = await transaction.get(userRef);
+    if (!userSnapshot.exists) {
+      throw new HttpsError("failed-precondition", "Configure sua conta antes de escolher o país.");
+    }
+    const existingCountry = userSnapshot.get("countryCode") || "";
+    const existingCurrency = userSnapshot.get("currencyCode") || "";
+    if (existingCountry && existingCurrency
+        && (existingCountry !== countryCode || existingCurrency !== currencyCode)) {
+      throw new HttpsError(
+        "failed-precondition",
+        "O país e a moeda ficam bloqueados após a configuração. Fale com o suporte se houve um erro no cadastro.",
+      );
+    }
+    transaction.update(userRef, {
+      countryCode,
+      currencyCode,
+      currencyRate: rate,
+      currencyRateDate: rateDate,
+    });
+    transaction.set(rankRef, {
+      countryCode,
+      currencyCode,
+      currencyRate: rate,
+      currencyRateDate: rateDate,
+    }, { merge: true });
+  });
   return { countryCode, currencyCode, rate, rateDate };
 });
 
@@ -4921,7 +5378,54 @@ exports.getAccountCurrency = onCall(async (request) => {
     throw new HttpsError("failed-precondition", "Escolha o país da sua conta para consultar a moeda.");
   }
   const { rate, rateDate } = await getDailyCurrencyRate(currencyCode);
+  await database.runTransaction(async (transaction) => {
+    const userRef = database.collection("users").doc(uid);
+    const rankRef = database.collection("leaderboard").doc(uid);
+    const current = await transaction.get(userRef);
+    if (!current.exists || current.get("countryCode") !== countryCode
+        || current.get("currencyCode") !== currencyCode) {
+      throw new HttpsError("failed-precondition", "A moeda da conta mudou. Atualize e tente novamente.");
+    }
+    transaction.update(userRef, { currencyRate: rate, currencyRateDate: rateDate });
+    transaction.set(rankRef, {
+      countryCode,
+      currencyCode,
+      currencyRate: rate,
+      currencyRateDate: rateDate,
+    }, { merge: true });
+  });
   return { countryCode, currencyCode, rate, rateDate };
+});
+
+exports.getLeaderboardCurrencyInfo = onCall(async (request) => {
+  authenticatedUid(request);
+  const uids = request.data?.uids;
+  if (!Array.isArray(uids) || uids.length < 1 || uids.length > 50
+      || uids.some((uid) => typeof uid !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(uid))) {
+    throw new HttpsError("invalid-argument", "Lista de jogadores inválida.");
+  }
+  const uniqueUids = [...new Set(uids)];
+  const ranks = await Promise.all(uniqueUids.map((uid) => database.collection("leaderboard").doc(uid).get()));
+  const entries = await Promise.all(ranks.map(async (rank) => {
+    if (!rank.exists) return null;
+    const profile = await database.collection("users").doc(rank.id).get();
+    const countryCode = profile.get("countryCode") || "BR";
+    const currencyCode = profile.get("currencyCode") || "BRL";
+    if (!/^[A-Z]{2}$/.test(countryCode) || !supportedCurrencyCodes.has(currencyCode)) {
+      throw new HttpsError("failed-precondition", "Uma conta do ranking possui país ou moeda inválidos.");
+    }
+    const { rate, rateDate } = await getDailyCurrencyRate(currencyCode);
+    const currencyInfo = { uid: rank.id, countryCode, currencyCode, currencyRate: rate, currencyRateDate: rateDate };
+    const rankMatches = rank.get("countryCode") === countryCode
+      && rank.get("currencyCode") === currencyCode
+      && rank.get("currencyRate") === rate
+      && rank.get("currencyRateDate") === rateDate;
+    if (!rankMatches) {
+      await database.collection("leaderboard").doc(rank.id).set(currencyInfo, { merge: true });
+    }
+    return currencyInfo;
+  }));
+  return { players: entries.filter(Boolean) };
 });
 
 exports.unlinkWhatsAppAccount = onCall(async (request) => {
@@ -5295,6 +5799,62 @@ exports._operateWhatsAppWallet = async (request) => {
     throw new HttpsError("failed-precondition", "O saldo da conta está inválido.");
   }
   return { linked: true, balanceCents, countryCode, currencyCode, rate, rateDate };
+};
+
+exports._operateWhatsAppCareer = async (request) => {
+  const {
+    action,
+    jid,
+    requestId = "",
+    jobSlug = "",
+    sessionId = "",
+    answerIndex,
+  } = request.data || {};
+  if (typeof jid !== "string" || !/^\d+@s\.whatsapp\.net$/.test(jid)
+      || !["status", "apply", "resign", "promote", "start", "complete"].includes(action)
+      || typeof requestId !== "string" || requestId.length > 64
+      || typeof jobSlug !== "string" || jobSlug.length > 64
+      || typeof sessionId !== "string" || sessionId.length > 64
+      || (answerIndex !== undefined && (!Number.isInteger(answerIndex) || answerIndex < 0 || answerIndex > 3))) {
+    throw new HttpsError("invalid-argument", "Solicitação de emprego inválida.");
+  }
+
+  const linkRef = database.collection("whatsappAccountLinks")
+    .doc(createHash("sha256").update(jid).digest("hex"));
+  const linkSnapshot = await linkRef.get();
+  if (!linkSnapshot.exists) return { linked: false };
+  const uid = linkSnapshot.get("uid");
+  if (typeof uid !== "string" || !uid) {
+    throw new HttpsError("failed-precondition", "O vínculo do WhatsApp está inválido.");
+  }
+  const userSnapshot = await database.collection("users").doc(uid).get();
+  if (!userSnapshot.exists || userSnapshot.get("whatsappLink.jid") !== jid) {
+    return { linked: false };
+  }
+  if (userSnapshot.get("isBlocked") === true) {
+    throw new HttpsError("permission-denied", "Esta conta do app está desativada.");
+  }
+
+  const call = (name, data = {}) => exports[name]({
+    auth: { uid, token: {} },
+    data,
+  });
+  switch (action) {
+    case "status":
+      return { linked: true, ...(await call("getWorkCareer")) };
+    case "apply":
+      return { linked: true, ...(await call("applyWorkJob", { jobSlug })) };
+    case "resign":
+      return { linked: true, ...(await call("resignWorkJob")) };
+    case "promote":
+      return { linked: true, ...(await call("promoteWorkCareer")) };
+    case "start":
+      return { linked: true, ...(await call("startWorkShift", { requestId })) };
+    case "complete":
+      return { linked: true, ...(await call("completeWorkShift", { sessionId, answerIndex })) };
+    default:
+      throw new HttpsError("invalid-argument", "Ação de emprego inválida.");
+  }
 };
 
 exports.getLinkedWhatsAppEconomy = onCall(async (request) => {

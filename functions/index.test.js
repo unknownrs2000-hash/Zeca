@@ -61,10 +61,16 @@ test("cross-currency transfers convert by daily rates and add a 1% sender fee", 
     {
       amountInBrlCents: 50_000,
       feeCents: 500,
+      feeCentsInSenderCurrency: 100,
       senderDebitCents: 50_500,
+      senderDebitCentsInSenderCurrency: 10_100,
       recipientAmountCents: 9_000,
       exchangeRate: 0.9,
     },
+  );
+  assert.throws(
+    () => _calculateCurrencyTransfer(10_000, "USD", "EUR", 0, 0.18),
+    (error) => error.code === "invalid-argument",
   );
 });
 
@@ -74,7 +80,9 @@ test("same-currency transfers convert to the shared BRL balance without a fee", 
     {
       amountInBrlCents: 50_000,
       feeCents: 0,
+      feeCentsInSenderCurrency: 0,
       senderDebitCents: 50_000,
+      senderDebitCentsInSenderCurrency: 10_000,
       recipientAmountCents: 10_000,
       exchangeRate: 1,
     },
@@ -375,6 +383,12 @@ test("WhatsApp account linking requires an authenticated app account and validat
   );
   await assert.rejects(
     _operateWhatsAppWallet({ data: { action: "adjust", jid: "invalid" } }),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    _operateWhatsAppWallet({
+      data: { action: "unknown", jid: "5511999999999@s.whatsapp.net" },
+    }),
     (error) => error.code === "invalid-argument",
   );
   await assert.rejects(
