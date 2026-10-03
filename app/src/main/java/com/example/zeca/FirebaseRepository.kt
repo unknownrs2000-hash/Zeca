@@ -706,21 +706,36 @@ object FirebaseRepository {
         }
         chamarFunction("getAccountCurrency", emptyMap()) { data, erro ->
             if (erro != null) {
+                if (erro.localizedMessage.orEmpty().contains(
+                        "Escolha o país da sua conta para consultar a moeda.",
+                        ignoreCase = true,
+                    )
+                ) {
+                    callback(
+                        com.example.zeca.ui.AccountCurrencyInfo(
+                            countryCode = "",
+                            currencyCode = "",
+                            rate = 0.0,
+                        ),
+                        null,
+                    )
+                    return@chamarFunction
+                }
                 callback(null, erro)
                 return@chamarFunction
             }
             val account = data?.let { raw ->
                 val countryCode = raw["countryCode"] as? String ?: ""
                 val currencyCode = raw["currencyCode"] as? String ?: runCatching {
-                    if (countryCode.isBlank()) "BRL" else Currency.getInstance(Locale("", countryCode)).currencyCode
-                }.getOrDefault("BRL")
+                    if (countryCode.isBlank()) "" else Currency.getInstance(Locale("", countryCode)).currencyCode
+                }.getOrDefault("")
                 com.example.zeca.ui.AccountCurrencyInfo(
                     countryCode = countryCode,
                     currencyCode = currencyCode,
-                    rate = (raw["rate"] as? Number)?.toDouble() ?: 1.0,
+                    rate = (raw["rate"] as? Number)?.toDouble() ?: 0.0,
                     rateDate = raw["rateDate"] as? String ?: "",
                 )
-            } ?: com.example.zeca.ui.AccountCurrencyInfo()
+            } ?: com.example.zeca.ui.AccountCurrencyInfo(currencyCode = "", rate = 0.0)
             callback(account, null)
         }
     }
