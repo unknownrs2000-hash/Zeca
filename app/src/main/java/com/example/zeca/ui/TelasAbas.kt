@@ -505,6 +505,8 @@ fun TelaCarteira(
     saldoCentavos: Long,
     chavePix: String,
     tipoChavePix: String,
+    telefonePix: String,
+    telefonePixVerificado: Boolean,
     historico: List<Movimento>,
     emailConta: String,
     emailVerificadoInicial: Boolean,
@@ -704,9 +706,9 @@ fun TelaCarteira(
                     value = chaveDestinatario,
                     onValueChange = { chaveDestinatario = it; destinatario = null; mensagemTransferencia = "" },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("E-mail ou chave aleatória") },
+                    label = { Text("E-mail, chave aleatória ou telefone") },
                     singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
                 )
                 Button(
                     onClick = { buscarDestinatario(chaveDestinatario.trim()) },
@@ -714,7 +716,42 @@ fun TelaCarteira(
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(if (transferenciaOcupada) "Buscando..." else "Buscar usuário") }
                 destinatario?.let { jogador ->
-                    Text("${jogador.apelido} · Nível ${jogador.nivel}", color = Cores.Turquesa, fontWeight = FontWeight.Bold)
+                    Column(
+                        Modifier.fillMaxWidth()
+                            .background(Cores.Cartao, RoundedCornerShape(16.dp))
+                            .border(1.dp, Cores.Borda, RoundedCornerShape(16.dp))
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            AvatarComMoldura(
+                                inicial = jogador.apelido.take(1).uppercase(),
+                                moldura = jogador.molduraEquipada,
+                                tamanho = 58.dp,
+                                photoUrl = jogador.avatarUrl,
+                                avatarItems = jogador.avatarItensEquipados,
+                                avatarAsProfilePhoto = jogador.avatarComoFotoPerfil,
+                            )
+                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(jogador.apelido, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                                if (jogador.username.isNotBlank()) {
+                                    Text("@${jogador.username}", color = Cores.Turquesa, fontSize = 13.sp)
+                                }
+                                Text("Nível ${jogador.nivel}", color = Cores.Cinza, fontSize = 12.sp)
+                            }
+                        }
+                        if (jogador.tituloEquipado.isNotBlank()) {
+                            Text("Título: ${jogador.tituloEquipado}", color = Cores.Turquesa, fontSize = 12.sp)
+                        }
+                        Text(
+                            "Conta em ${jogador.countryCode.ifBlank { "país não informado" }} · moeda ${jogador.currencyCode}",
+                            color = Cores.Cinza,
+                            fontSize = 12.sp,
+                        )
+                    }
                     OutlinedTextField(
                         value = valorTransferencia,
                         onValueChange = { valorTransferencia = it; mensagemTransferencia = "" },
@@ -953,6 +990,34 @@ fun TelaCarteira(
 
             else -> GlassCard {
                 Text("Minha chave Pix", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                if (telefonePixVerificado && telefonePix.isNotBlank()) {
+                    Column(
+                        Modifier.fillMaxWidth()
+                            .background(Cores.Cartao, RoundedCornerShape(14.dp))
+                            .border(1.dp, Cores.Borda, RoundedCornerShape(14.dp))
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text("Telefone verificado do WhatsApp", color = Cores.Verde, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text(telefonePix, color = Color.White, fontSize = 15.sp)
+                        Text(
+                            "Este número funciona como chave Pix virtual do Zeca. O vínculo não movimenta valores bancários.",
+                            color = Cores.Cinza,
+                            fontSize = 11.sp,
+                        )
+                        TextButton(onClick = {
+                            val clipboard = context.getSystemService(ClipboardManager::class.java)
+                            clipboard?.setPrimaryClip(ClipData.newPlainText("Chave Pix por telefone do Zeca", telefonePix))
+                            Toast.makeText(context, "Telefone copiado", Toast.LENGTH_SHORT).show()
+                        }) { Text("Copiar telefone") }
+                    }
+                } else {
+                    Text(
+                        "Vincule o WhatsApp à sua conta para usar o telefone verificado como chave Pix.",
+                        color = Cores.Cinza,
+                        fontSize = 12.sp,
+                    )
+                }
                 if (chavePix.isNotBlank()) {
                     Text("${tipoChavePix}: $chavePix", color = Color.White.copy(alpha = 0.76f), fontSize = 13.sp)
                     TextButton(onClick = {

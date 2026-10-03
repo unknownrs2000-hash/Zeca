@@ -54,6 +54,8 @@ data class PerfilJogador(
     val tituloEquipado: String = "",
     val bio: String = "",
     val clanId: String = "",
+    val numeroTelefone: String = "",
+    val telefoneVerificado: Boolean = false,
 )
 
 data class JogadorRanking(
@@ -197,6 +199,9 @@ data class JogadorDestino(
     val rateDate: String = "",
     val avatarItensEquipados: List<String> = emptyList(),
     val avatarComoFotoPerfil: Boolean = false,
+    val username: String = "",
+    val molduraEquipada: String = "",
+    val tituloEquipado: String = "",
 )
 
 data class PerfilPublico(
@@ -1626,6 +1631,9 @@ object FirebaseRepository {
                     rateDate = it["rateDate"] as? String ?: "",
                     avatarItensEquipados = (it["equippedAvatarItems"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
                     avatarComoFotoPerfil = it["avatarAsProfilePhoto"] as? Boolean ?: false,
+                    username = it["username"] as? String ?: "",
+                    molduraEquipada = it["equippedFrame"] as? String ?: "",
+                    tituloEquipado = it["equippedTitle"] as? String ?: "",
                 )
             }
             callback(destino, erro)
@@ -3135,6 +3143,8 @@ object FirebaseRepository {
         tituloEquipado = snapshot.getString("equippedTitle") ?: "",
         bio = snapshot.getString("bio") ?: "",
         clanId = snapshot.getString("clanId") ?: "",
+        numeroTelefone = snapshot.getString("phoneNumber") ?: "",
+        telefoneVerificado = (snapshot.getLong("phoneVerifiedAtMs") ?: 0L) > 0L,
     )
 
     private fun toJogadorRanking(snapshot: DocumentSnapshot): JogadorRanking? {

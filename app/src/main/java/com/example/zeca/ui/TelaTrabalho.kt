@@ -78,13 +78,13 @@ fun TelaTrabalho(
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Column(Modifier.weight(1f)) {
                 Text("Trabalho", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Black)
-                Text("Escolha uma carreira e conclua o minijogo do turno.", color = Color.White.copy(alpha = 0.68f), fontSize = 13.sp)
+                Text("Escolha uma carreira e conclua o minijogo do turno.", color = Cores.Cinza, fontSize = 13.sp)
             }
             TextButton(onClick = onVoltar) { Text("Voltar", color = Cores.Turquesa) }
         }
         erro.takeIf(String::isNotBlank)?.let { Text(it, color = Cores.Laranja, fontSize = 12.sp) }
         if (carregando && carreira == null) {
-            Text("Carregando vagas...", color = Color.White.copy(alpha = 0.7f))
+            Text("Carregando vagas...", color = Cores.Cinza)
         }
         carreira?.let { estado ->
             val cargo = estado.cargoAtual
@@ -95,7 +95,7 @@ fun TelaTrabalho(
                     Text(cargo.nomeTier, color = Cores.Turquesa, fontSize = 12.sp)
                     Text(
                         "Salário por turno: ${formatarReais(cargo.salarioMinimoCentavos)}–${formatarReais(cargo.salarioMaximoCentavos)}",
-                        color = Color.White.copy(alpha = 0.8f),
+                        color = Cores.Cinza,
                         fontSize = 13.sp,
                     )
                     val progresso = (estado.carreira.turnosNaCategoria.toFloat() / cargo.turnosParaPromocao.coerceAtLeast(1))
@@ -104,11 +104,11 @@ fun TelaTrabalho(
                         progress = { progresso },
                         modifier = Modifier.fillMaxWidth(),
                         color = Cores.Verde,
-                        trackColor = Color.White.copy(alpha = 0.12f),
+                        trackColor = Cores.Borda,
                     )
                     Text(
                         "${estado.carreira.turnosNaCategoria}/${cargo.turnosParaPromocao} turnos para promoção",
-                        color = Color.White.copy(alpha = 0.65f),
+                        color = Cores.Cinza,
                         fontSize = 11.sp,
                     )
                     if (estado.esperaProximoTurnoMs > 0) {
@@ -171,12 +171,12 @@ fun TelaTrabalho(
             } else {
                 BlocoTrabalho {
                     Text("VAGAS DISPONÍVEIS", color = Cores.Verde, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    Text("Nível ${estado.nivel} · categoria ${estado.carreira.categoriaDesbloqueada} liberada", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                    Text("Nível ${estado.nivel} · categoria ${estado.carreira.categoriaDesbloqueada} liberada", color = Cores.Cinza, fontSize = 12.sp)
                     val vagas = estado.vagas.filter {
                         it.tier <= estado.carreira.categoriaDesbloqueada && it.nivelMinimo <= estado.nivel
                     }
                     if (vagas.isEmpty()) {
-                        Text("Nenhuma vaga disponível para o seu nível.", color = Color.White.copy(alpha = 0.65f))
+                        Text("Nenhuma vaga disponível para o seu nível.", color = Cores.Cinza)
                     }
                     vagas.forEach { vaga ->
                         VagaCard(
@@ -208,7 +208,7 @@ fun TelaTrabalho(
                 BlocoTrabalho {
                     Text("MINIJOGO DO TURNO · ${current.cargo}", color = Cores.Turquesa, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     Text(current.pergunta, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                    Text("Conclua em até 5 minutos. A resposta correta paga o salário integral.", color = Color.White.copy(alpha = 0.65f), fontSize = 11.sp)
+                    Text("Conclua em até 5 minutos. A resposta correta paga o salário integral.", color = Cores.Cinza, fontSize = 11.sp)
                     current.opcoes.forEachIndexed { index, option ->
                         OutlinedButton(
                             onClick = {
@@ -239,8 +239,8 @@ fun TelaTrabalho(
 private fun BlocoTrabalho(conteudo: @Composable () -> Unit) {
     Column(
         Modifier.fillMaxWidth()
-            .background(Color.White.copy(alpha = 0.06f), RoundedCornerShape(18.dp))
-            .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(18.dp))
+            .background(Cores.Cartao, RoundedCornerShape(18.dp))
+            .border(1.dp, Cores.Borda, RoundedCornerShape(18.dp))
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
         content = { conteudo() },
@@ -250,11 +250,12 @@ private fun BlocoTrabalho(conteudo: @Composable () -> Unit) {
 @Composable
 private fun VagaCard(vaga: VagaTrabalho, enabled: Boolean, onClick: () -> Unit) {
     Column(
-        Modifier.fillMaxWidth().background(Color.Black.copy(alpha = 0.16f), RoundedCornerShape(12.dp)).padding(12.dp),
+        Modifier.fillMaxWidth().background(Cores.Fundo, RoundedCornerShape(12.dp))
+            .border(1.dp, Cores.Borda, RoundedCornerShape(12.dp)).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Text(vaga.nome, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-        Text("${vaga.nomeTier} · Nível ${vaga.nivelMinimo}+", color = Color.White.copy(alpha = 0.62f), fontSize = 11.sp)
+        Text("${vaga.nomeTier} · Nível ${vaga.nivelMinimo}+", color = Cores.Cinza, fontSize = 11.sp)
         Text(
             "${formatarReais(vaga.salarioMinimoCentavos)}–${formatarReais(vaga.salarioMaximoCentavos)} por turno",
             color = Cores.Turquesa,

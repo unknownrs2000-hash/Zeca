@@ -52,8 +52,28 @@ const {
   submitPlayerReport,
   submitJokenpoChoice,
   _calculateCurrencyTransfer,
+  _normalizePixKey,
   transferByPixKey,
 } = require("./index");
+
+test("Pix key normalization accepts international phone formats", () => {
+  assert.deepEqual(
+    _normalizePixKey("+55 (11) 99999-9999"),
+    { normalized: "+5511999999999", type: "phone" },
+  );
+  assert.deepEqual(
+    _normalizePixKey("5511999999999"),
+    { normalized: "+5511999999999", type: "phone" },
+  );
+  assert.deepEqual(
+    _normalizePixKey("user@example.com"),
+    { normalized: "user@example.com", type: "email" },
+  );
+  assert.throws(
+    () => _normalizePixKey("123"),
+    (error) => error.code === "invalid-argument",
+  );
+});
 
 test("cross-currency transfers convert by daily rates and add a 1% sender fee", () => {
   assert.deepEqual(

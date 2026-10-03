@@ -104,7 +104,7 @@ private fun formatarValorNotificacao(centavos: Long): String =
         .format(BigDecimal.valueOf(centavos, 2))
 
 enum class Aba(val titulo: String, val icone: ImageVector) {
-    Inicio("InÃ­cio", Icons.Filled.Home),
+    Inicio("Início", Icons.Filled.Home),
     Jogos("Jogos", Icons.Filled.Casino),
     Carteira("Carteira", Icons.Filled.AccountBalanceWallet),
     Chat("Chat", Icons.AutoMirrored.Filled.Chat),
@@ -261,20 +261,50 @@ fun CassinoApp(
     var mudancaBloqueioPendente by remember(usuario.uid) { mutableStateOf<Boolean?>(null) }
     var exigePais by remember(usuario.uid) { mutableStateOf(false) }
     var carregandoPais by remember(usuario.uid) { mutableStateOf(false) }
+    var moedaInicializada by remember(usuario.uid) { mutableStateOf(false) }
+    var erroCarregamentoMoeda by remember(usuario.uid) { mutableStateOf("") }
+    var tentativasMoeda by remember(usuario.uid) { mutableStateOf(0) }
 
-    LaunchedEffect(usuario.uid) {
+    LaunchedEffect(usuario.uid, tentativasMoeda) {
+        val currencyCachePrefix = "account_currency_${usuario.uid}_"
+        if (tentativasMoeda == 0) {
+            val cachedCountry = deviceLockPreferences.getString("${currencyCachePrefix}country", "").orEmpty()
+            val cachedCurrency = deviceLockPreferences.getString("${currencyCachePrefix}currency", "").orEmpty()
+            val cachedRate = deviceLockPreferences.getString("${currencyCachePrefix}rate", null)?.toDoubleOrNull() ?: 0.0
+            if (cachedCountry.matches(Regex("^[A-Z]{2}$"))
+                && cachedCurrency.matches(Regex("^[A-Z]{3}$"))
+                && cachedRate > 0.0
+            ) {
+                AppCurrencyFormatter.update(
+                    AccountCurrencyInfo(
+                        countryCode = cachedCountry,
+                        currencyCode = cachedCurrency,
+                        rate = cachedRate,
+                        rateDate = deviceLockPreferences.getString("${currencyCachePrefix}date", "").orEmpty(),
+                    ),
+                )
+                moedaInicializada = true
+            }
+        }
         carregandoPais = true
         FirebaseRepository.getAccountCurrency { info, error ->
             carregandoPais = false
-            val account = info ?: AccountCurrencyInfo()
+            if (error != null || info == null) {
+                erroCarregamentoMoeda = error?.localizedMessage ?: "Não foi possível carregar a moeda da conta."
+                return@getAccountCurrency
+            }
+            val account = info
             AppCurrencyFormatter.update(account)
             exigePais = account.countryCode.isBlank()
-            if (error != null && account.countryCode.isBlank()) {
-                android.widget.Toast.makeText(
-                    contexto,
-                    error.localizedMessage ?: "Selecione o seu país para continuar.",
-                    android.widget.Toast.LENGTH_SHORT,
-                ).show()
+            moedaInicializada = true
+            erroCarregamentoMoeda = ""
+            if (!exigePais && account.currencyCode.matches(Regex("^[A-Z]{3}$")) && account.rate > 0.0) {
+                deviceLockPreferences.edit()
+                    .putString("${currencyCachePrefix}country", account.countryCode)
+                    .putString("${currencyCachePrefix}currency", account.currencyCode)
+                    .putString("${currencyCachePrefix}rate", account.rate.toString())
+                    .putString("${currencyCachePrefix}date", account.rateDate)
+                    .apply()
             }
         }
     }
@@ -290,9 +320,49 @@ fun CassinoApp(
                     ).show()
                     return@setAccountCountry
                 }
-                FirebaseRepository.getAccountCurrency { account, _ ->
-                    AppCurrencyFormatter.update(account ?: AccountCurrencyInfo(countryCode = pais, currencyCode = moeda, rate = 1.0))
+                FirebaseRepository.getAccountCurrency { account, loadError ->
+                    if (loadError != null || account == null || account.countryCode.isBlank()) {
+                        erroCarregamentoMoeda = loadError?.localizedMessage
+                            ?: "Não foi possível confirmar a moeda selecionada."
+                        exigePais = false
+                        moedaInicializada = false
+                        return@getAccountCurrency
+                    }
+                    AppCurrencyFormatter.update(account)
+                    deviceLockPreferences.edit()
+                        .putString("account_currency_${usuario.uid}_country", account.countryCode)
+                        .putString("account_currency_${usuario.uid}_currency", account.currencyCode)
+                        .putString("account_currency_${usuario.uid}_rate", account.rate.toString())
+                        .putString("account_currency_${usuario.uid}_date", account.rateDate)
+                        .apply()
                     exigePais = false
+                    moedaInicializada = true
+                    erroCarregamentoMoeda = ""
+                }
+            }
+        }
+        return
+    }
+
+    if (!moedaInicializada) {
+        Column(
+            Modifier.fillMaxSize().background(Cores.Fundo).statusBarsPadding().padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text("Carregando a moeda da sua conta...", color = Color.White, fontWeight = FontWeight.Bold)
+            if (erroCarregamentoMoeda.isNotBlank()) {
+                Text(
+                    erroCarregamentoMoeda,
+                    modifier = Modifier.padding(top = 10.dp),
+                    color = Cores.Laranja,
+                )
+                androidx.compose.material3.Button(
+                    onClick = { tentativasMoeda++ },
+                    enabled = !carregandoPais,
+                    modifier = Modifier.padding(top = 12.dp),
+                ) {
+                    Text(if (carregandoPais) "Tentando novamente..." else "Tentar novamente")
                 }
             }
         }
@@ -313,7 +383,7 @@ fun CassinoApp(
             promptDispensado = false
         } else {
             promptDispensado = true
-            android.widget.Toast.makeText(contexto, "AutenticaÃ§Ã£o cancelada.", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(contexto, "Autenticação cancelada.", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
     LaunchedEffect(appForeground, bloqueioDispositivoAtivo, tentativaAutenticacao) {
@@ -329,7 +399,7 @@ fun CassinoApp(
             val keyguard = contexto.getSystemService(KeyguardManager::class.java)
             val intent = keyguard?.createConfirmDeviceCredentialIntent(
                 "Desbloquear Zeca",
-                "Confirme seu PIN, padrÃ£o ou senha do dispositivo.",
+                "Confirme seu PIN, padrão ou senha do dispositivo.",
             )
             if (intent == null) {
                 promptDispensado = true
@@ -386,12 +456,12 @@ fun CassinoApp(
                                 notificacoes.add(
                                     NotificacaoApp(
                                         id = notificationId,
-                                        titulo = "AtualizaÃ§Ã£o de denÃºncia",
+                                        titulo = "Atualização de denúncia",
                                         detalhe = when (report.status) {
-                                            "reviewing" -> "Sua denÃºncia entrou em anÃ¡lise."
-                                            "resolved" -> "Sua denÃºncia foi resolvida."
-                                            "dismissed" -> "Sua denÃºncia foi encerrada sem aÃ§Ã£o."
-                                            else -> "O status da sua denÃºncia foi atualizado."
+                                            "reviewing" -> "Sua denúncia entrou em análise."
+                                            "resolved" -> "Sua denúncia foi resolvida."
+                                            "dismissed" -> "Sua denúncia foi encerrada sem ação."
+                                            else -> "O status da sua denúncia foi atualizado."
                                         },
                                         aba = Aba.Comunidade,
                                     ),
@@ -406,7 +476,7 @@ fun CassinoApp(
                 recursosSociais = result
                 erroRecursosSociais = null
             } else {
-                erroRecursosSociais = error?.localizedMessage ?: "NÃ£o foi possÃ­vel carregar os dados da comunidade."
+                erroRecursosSociais = error?.localizedMessage ?: "Não foi possível carregar os dados da comunidade."
             }
         }
     }
@@ -421,7 +491,7 @@ fun CassinoApp(
         FirebaseRepository.carregarPainelConta { result, error ->
             carregandoPainelConta = false
             if (result == null) {
-                erroPainelConta = error?.localizedMessage ?: "NÃ£o foi possÃ­vel carregar as configuraÃ§Ãµes da conta."
+                erroPainelConta = error?.localizedMessage ?: "Não foi possível carregar as configurações da conta."
                 return@carregarPainelConta
             }
             erroPainelConta = ""
@@ -466,7 +536,7 @@ fun CassinoApp(
                 notificar(
                     NotificacaoApp(
                         id = "announcement:${announcement.id}",
-                        titulo = if (announcement.type == "maintenance") "Aviso de manutenÃ§Ã£o" else "Novidade no app",
+                        titulo = if (announcement.type == "maintenance") "Aviso de manutenção" else "Novidade no app",
                         detalhe = announcement.title,
                         aba = Aba.Conta,
                     ),
@@ -512,7 +582,7 @@ fun CassinoApp(
                                     NotificacaoApp(
                                         id = "room-full:${room.id}",
                                         titulo = "Sala cheia",
-                                        detalhe = "A sala de ${room.criadorNome} estÃ¡ pronta para comeÃ§ar.",
+                                        detalhe = "A sala de ${room.criadorNome} está pronta para começar.",
                                         aba = Aba.Jogos,
                                     ),
                                 )
@@ -521,7 +591,7 @@ fun CassinoApp(
                                     NotificacaoApp(
                                         id = "room-started:${room.id}",
                                         titulo = "Partida iniciada",
-                                        detalhe = "A partida de ${room.criadorNome} comeÃ§ou.",
+                                        detalhe = "A partida de ${room.criadorNome} começou.",
                                         aba = Aba.Jogos,
                                     ),
                                 )
@@ -579,7 +649,7 @@ fun CassinoApp(
                                 NotificacaoApp(
                                     id = "tug-invite:${room.id}:${room.versaoConvite}",
                                     titulo = "Convite para Cabo de Guerra",
-                                    detalhe = "${room.criadorNome} convidou vocÃª Â· aposta ${formatarValorNotificacao(room.apostaCentavos)}",
+                                    detalhe = "${room.criadorNome} convidou você · aposta ${formatarValorNotificacao(room.apostaCentavos)}",
                                     aba = Aba.Jogos,
                                 ),
                             )
@@ -612,11 +682,11 @@ fun CassinoApp(
                             NotificacaoApp(
                                 id = "movimento:${movimento.id}",
                                 titulo = when {
-                                    premioNivel -> "Novo nÃ­vel alcanÃ§ado!"
+                                    premioNivel -> "Novo nível alcançado!"
                                     pixRecebido -> "Pix recebido"
                                     else -> "Saldo recebido"
                                 },
-                                detalhe = "${movimento.titulo} Â· ${formatarValorNotificacao(movimento.variacaoCentavos)}",
+                                detalhe = "${movimento.titulo} · ${formatarValorNotificacao(movimento.variacaoCentavos)}",
                                 aba = Aba.Carteira,
                             ),
                         )
@@ -715,7 +785,7 @@ fun CassinoApp(
                     mudancaBloqueioPendente = false
                     promptDispensado = false
                     tentativaAutenticacao += 1
-                }) { androidx.compose.material3.Text("Desativar proteÃ§Ã£o", color = Cores.Turquesa) }
+                }) { androidx.compose.material3.Text("Desativar proteção", color = Cores.Turquesa) }
             }
         }
     } else if (jogador == null) {
@@ -892,7 +962,7 @@ fun CassinoApp(
                                 conquistasCarregando = recursosSociaisCarregando,
                                 historicoCarregando = recursosSociaisCarregando,
                                 erros = erroRecursosSociais?.let {
-                                    mapOf("clãs" to it, "evento" to it, "conquistas" to it, "histÃ³rico" to it)
+                                    mapOf("clãs" to it, "evento" to it, "conquistas" to it, "histórico" to it)
                                 }.orEmpty(),
                             ),
                             onCriarCla = { rascunho, concluir ->
@@ -964,7 +1034,7 @@ fun CassinoApp(
                                 } catch (error: android.content.ActivityNotFoundException) {
                                     android.widget.Toast.makeText(
                                         contexto,
-                                        error.localizedMessage ?: "NÃ£o foi possÃ­vel abrir o WhatsApp.",
+                                        error.localizedMessage ?: "Não foi possível abrir o WhatsApp.",
                                         android.widget.Toast.LENGTH_LONG,
                                     ).show()
                                 }
@@ -1015,16 +1085,16 @@ fun CassinoApp(
                                 if (keyguard?.isDeviceSecure != true) {
                                     android.widget.Toast.makeText(
                                         contexto,
-                                        "Configure PIN, padrÃ£o ou senha de bloqueio no Android primeiro.",
+                                        "Configure PIN, padrão ou senha de bloqueio no Android primeiro.",
                                         android.widget.Toast.LENGTH_LONG,
                                     ).show()
                                 } else {
                                     val intent = keyguard.createConfirmDeviceCredentialIntent(
-                                        "Confirmar proteÃ§Ã£o do Zeca",
-                                        "Confirme sua identidade para alterar esta configuraÃ§Ã£o.",
+                                        "Confirmar proteção do Zeca",
+                                        "Confirme sua identidade para alterar esta configuração.",
                                     )
                                     if (intent == null) {
-                                        android.widget.Toast.makeText(contexto, "NÃ£o foi possÃ­vel abrir a autenticaÃ§Ã£o do dispositivo.", android.widget.Toast.LENGTH_LONG).show()
+                                        android.widget.Toast.makeText(contexto, "Não foi possível abrir a autenticação do dispositivo.", android.widget.Toast.LENGTH_LONG).show()
                                     } else {
                                         mudancaBloqueioPendente = enabled
                                         solicitacaoAutenticacaoPendente = true
@@ -1046,6 +1116,8 @@ fun CassinoApp(
                             saldoCentavos = jogador.saldoCentavos,
                             chavePix = jogador.chavePix,
                             tipoChavePix = jogador.tipoChavePix,
+                            telefonePix = jogador.numeroTelefone,
+                            telefonePixVerificado = jogador.telefoneVerificado,
                             historico = movimentos,
                             emailConta = usuario.email.orEmpty(),
                             emailVerificadoInicial = usuario.isEmailVerified,
@@ -1316,7 +1388,7 @@ fun CassinoApp(
                             Text(notificacao.detalhe, color = Color.White.copy(alpha = 0.72f), fontSize = 12.sp, maxLines = 2)
                         }
                         IconButton(onClick = { notificacoes.removeAll { it.id == notificacao.id } }) {
-                            Icon(Icons.Filled.Close, contentDescription = "Fechar notificaÃ§Ã£o", tint = Color.White.copy(alpha = 0.7f))
+                            Icon(Icons.Filled.Close, contentDescription = "Fechar notificação", tint = Color.White.copy(alpha = 0.7f))
                         }
                     }
                 }

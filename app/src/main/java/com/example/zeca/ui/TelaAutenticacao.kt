@@ -143,7 +143,7 @@ fun TelaAutenticacao(onAutenticado: (FirebaseUser) -> Unit) {
             )
             if (modoCadastro) {
                 Text(
-                    "Cada e-mail pode ser usado em uma Ãºnica conta.",
+                    "Cada e-mail pode ser usado em uma única conta.",
                     color = Color.White.copy(alpha = 0.58f),
                     fontSize = 11.sp,
                 )
@@ -164,7 +164,7 @@ fun TelaAutenticacao(onAutenticado: (FirebaseUser) -> Unit) {
                     if (modoCadastro && nome.trim().length !in 2..24) {
                         erro = "O apelido deve ter entre 2 e 24 caracteres."
                     } else if (!emailValido || senha.length < 6) {
-                        erro = "Informe um e-mail vÃ¡lido e uma senha com pelo menos 6 caracteres."
+                        erro = "Informe um e-mail válido e uma senha com pelo menos 6 caracteres."
                     } else {
                         ocupado = true
                         erro = ""
@@ -196,7 +196,7 @@ fun TelaAutenticacao(onAutenticado: (FirebaseUser) -> Unit) {
                                             .addOnFailureListener { verificationError ->
                                                 Toast.makeText(
                                                     context,
-                                                    "Conta criada, mas o envio falhou: ${mensagemAuth(verificationError)}. VocÃª pode reenviar pela Carteira.",
+                                                    "Conta criada, mas o envio falhou: ${mensagemAuth(verificationError)}. Você pode reenviar pela Carteira.",
                                                     Toast.LENGTH_LONG,
                                                 ).show()
                                                 finalizarLogin(user)
@@ -257,7 +257,7 @@ fun TelaAutenticacao(onAutenticado: (FirebaseUser) -> Unit) {
                                 val credential = CredentialManager.create(context).getCredential(context, request).credential
                                 if (credential !is CustomCredential || credential.type != GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                                     ocupado = false
-                                    erro = "NÃ£o foi possÃ­vel obter a conta Google."
+                                    erro = "Não foi possível obter a conta Google."
                                 } else {
                                     val token = GoogleIdTokenCredential.createFrom(credential.data).idToken
                                     auth.signInWithCredential(GoogleAuthProvider.getCredential(token, null))
@@ -271,10 +271,10 @@ fun TelaAutenticacao(onAutenticado: (FirebaseUser) -> Unit) {
                                 }
                             } catch (exception: GetCredentialException) {
                                 ocupado = false
-                                erro = exception.localizedMessage ?: "NÃ£o foi possÃ­vel entrar com Google."
+                                erro = exception.localizedMessage ?: "Não foi possível entrar com Google."
                             } catch (exception: Exception) {
                                 ocupado = false
-                                erro = exception.localizedMessage ?: "NÃ£o foi possÃ­vel entrar com Google."
+                                erro = exception.localizedMessage ?: "Não foi possível entrar com Google."
                             }
                         }
                     }
@@ -291,7 +291,7 @@ fun TelaAutenticacao(onAutenticado: (FirebaseUser) -> Unit) {
                 enabled = !ocupado,
                 modifier = Modifier.align(Alignment.CenterHorizontally),
             ) {
-                Text(if (modoCadastro) "JÃ¡ tenho uma conta" else "Criar uma conta")
+                Text(if (modoCadastro) "Já tenho uma conta" else "Criar uma conta")
             }
         }
     }
@@ -303,8 +303,8 @@ private fun RowDivider() {
 }
 
 private fun mensagemAuth(exception: Exception?): String = when {
-    exception == null -> "NÃ£o foi possÃ­vel concluir a operaÃ§Ã£o."
+    exception == null -> "Não foi possível concluir a operação."
     exception is FirebaseAuthUserCollisionException ->
-        "JÃ¡ existe uma conta vinculada a este e-mail. Entre usando o mÃ©todo do cadastro original."
-    else -> exception.localizedMessage ?: "NÃ£o foi possÃ­vel concluir a operaÃ§Ã£o."
+        "Já existe uma conta vinculada a este e-mail. Entre usando o método do cadastro original."
+    else -> exception.localizedMessage ?: "Não foi possível concluir a operação."
 }

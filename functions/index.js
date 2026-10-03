@@ -230,6 +230,7 @@ function calculateCurrencyTransfer(amountCents, senderCurrencyCode, recipientCur
 }
 
 exports._calculateCurrencyTransfer = calculateCurrencyTransfer;
+exports._normalizePixKey = normalizePixKey;
 
 function matchesPriorCurrencyTransfer(prior, senderUid, amountCents, keyHash) {
   const priorAmountCents = Number.isSafeInteger(prior.amountCentsInSenderCurrency)
@@ -419,18 +420,61 @@ function normalizePixKey(key) {
   if (typeof key !== "string") {
     throw new HttpsError("invalid-argument", "Informe uma chave Pix.");
   }
-  const normalized = key.trim().toLowerCase();
+  const trimmed = key.trim();
+  const phoneCandidate = trimmed.replace(/[\s().-]/g, "");
+  const isPhone = /^\+?[1-9]\d{6,14}$/.test(phoneCandidate);
+  const normalized = isPhone
+    ? `+${phoneCandidate.replace(/^\+/, "")}`
+    : trimmed.toLowerCase();
   const isEmail = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i.test(normalized);
   const isRandom = /^[a-f0-9]{32}$/.test(normalized)
     || /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(normalized);
-  if (!isEmail && !isRandom) {
-    throw new HttpsError("invalid-argument", "Use um e-mail ou uma chave aleatória válida.");
+  if (!isEmail && !isRandom && !isPhone) {
+    throw new HttpsError("invalid-argument", "Use um e-mail, uma chave aleatória ou um telefone internacional válido.");
   }
-  return { normalized, type: isEmail ? "email" : "random" };
+  return { normalized, type: isPhone ? "phone" : isEmail ? "email" : "random" };
 }
 
 function pixKeyHash(key) {
   return createHash("sha256").update(key).digest("hex");
+}
+
+async function ensureLinkedPhonePixKey(phoneNumber) {
+  const jid = `${phoneNumber.slice(1)}@s.whatsapp.net`;
+  const ownerRef = database.collection("whatsappPhoneOwners")
+    .doc(createHash("sha256").update(jid).digest("hex"));
+  const keyRef = database.collection("pixKeys").doc(pixKeyHash(phoneNumber));
+
+  await database.runTransaction(async (transaction) => {
+    const ownerSnapshot = await transaction.get(ownerRef);
+    if (!ownerSnapshot.exists) {
+      throw new HttpsError("not-found", "Este telefone não está vinculado a uma conta do Zeca.");
+    }
+    const uid = ownerSnapshot.get("uid");
+    const userRef = database.collection("users").doc(uid);
+    const [userSnapshot, keySnapshot] = await Promise.all([
+      transaction.get(userRef),
+      transaction.get(keyRef),
+    ]);
+    if (!userSnapshot.exists
+        || userSnapshot.get("whatsappLink.jid") !== jid
+        || userSnapshot.get("phoneNumber") !== phoneNumber
+        || !userSnapshot.get("phoneVerifiedAtMs")) {
+      throw new HttpsError("failed-precondition", "O telefone não está mais verificado nesta conta.");
+    }
+    if (keySnapshot.exists) {
+      if (keySnapshot.get("uid") !== uid) {
+        throw new HttpsError("already-exists", "Este telefone já está vinculado a outra conta.");
+      }
+      return;
+    }
+    transaction.create(keyRef, {
+      uid,
+      type: "phone",
+      source: "whatsapp",
+      createdAt: FieldValue.serverTimestamp(),
+    });
+  });
 }
 
 function safeName(value, fallback) {
@@ -669,6 +713,9 @@ exports.updatePlayerProfile = onCall(async (request) => {
 exports.registerPixKey = onCall(async (request) => {
   const uid = authenticatedUid(request);
   const { normalized, type } = normalizePixKey(request.data?.key);
+  if (type === "phone") {
+    throw new HttpsError("failed-precondition", "Vincule o WhatsApp para verificar seu telefone como chave Pix.");
+  }
   const requestedType = String(request.data?.type || "").toLowerCase();
   if ((type === "email" && !["email", "e-mail"].includes(requestedType))
       || (type === "random" && !["random", "aleatória", "aleatoria"].includes(requestedType))) {
@@ -718,7 +765,8 @@ exports.registerPixKey = onCall(async (request) => {
 
 exports.lookupPixKey = onCall(async (request) => {
   authenticatedUid(request);
-  const { normalized } = normalizePixKey(request.data?.key);
+  const { normalized, type } = normalizePixKey(request.data?.key);
+  if (type === "phone") await ensureLinkedPhonePixKey(normalized);
   const keySnapshot = await database.collection("pixKeys").doc(pixKeyHash(normalized)).get();
   if (!keySnapshot.exists) {
     throw new HttpsError("not-found", "Nenhuma conta encontrada para essa chave.");
@@ -743,6 +791,10 @@ exports.lookupPixKey = onCall(async (request) => {
     username: profile.username || "",
     level: profile.level || 1,
     avatarUrl: profile.avatarUrl || "",
+    avatarAsProfilePhoto: profile.avatarAsProfilePhoto === true,
+    equippedAvatarItems: Array.isArray(profile.equippedAvatarItems) ? profile.equippedAvatarItems : [],
+    equippedFrame: typeof profile.equippedFrame === "string" ? profile.equippedFrame : "",
+    equippedTitle: typeof userSnapshot.get("equippedTitle") === "string" ? userSnapshot.get("equippedTitle") : "",
     countryCode: userSnapshot.get("countryCode") || "",
     currencyCode,
     rate,
@@ -752,7 +804,7 @@ exports.lookupPixKey = onCall(async (request) => {
 
 exports.transferByPixKey = onCall(async (request) => {
   const senderUid = authenticatedUid(request);
-  const { normalized } = normalizePixKey(request.data?.key);
+  const { normalized, type } = normalizePixKey(request.data?.key);
   const amountCents = request.data?.amountCents;
   const requestId = request.data?.requestId;
   if (!Number.isSafeInteger(amountCents) || amountCents < 1 || amountCents > MAX_TRANSFER_CENTS) {
@@ -761,6 +813,7 @@ exports.transferByPixKey = onCall(async (request) => {
   if (typeof requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(requestId)) {
     throw new HttpsError("invalid-argument", "Identificador da transferência inválido.");
   }
+  if (type === "phone") await ensureLinkedPhonePixKey(normalized);
 
   const transferRef = database.collection("transfers").doc(requestId);
   const keyRef = database.collection("pixKeys").doc(pixKeyHash(normalized));
@@ -5443,13 +5496,23 @@ exports.unlinkWhatsAppAccount = onCall(async (request) => {
       ? database.collection("whatsappPhoneOwners")
         .doc(createHash("sha256").update(jid).digest("hex"))
       : null;
+    const phoneNumber = jid.endsWith("@s.whatsapp.net") ? `+${jid.split("@")[0]}` : "";
+    const phonePixKeyRef = phoneNumber
+      ? database.collection("pixKeys").doc(pixKeyHash(phoneNumber))
+      : null;
     const linkSnapshot = await transaction.get(linkRef);
     const phoneOwnerSnapshot = phoneOwnerRef ? await transaction.get(phoneOwnerRef) : null;
+    const phonePixKeySnapshot = phonePixKeyRef ? await transaction.get(phonePixKeyRef) : null;
     if (linkSnapshot.exists && linkSnapshot.get("uid") === uid) transaction.delete(linkRef);
+    if (phonePixKeySnapshot?.exists
+        && phonePixKeySnapshot.get("uid") === uid
+        && phonePixKeySnapshot.get("type") === "phone") {
+      transaction.delete(phonePixKeyRef);
+    }
     if (phoneOwnerRef && !phoneOwnerSnapshot?.exists) {
       transaction.create(phoneOwnerRef, {
         uid,
-        phoneNumber: `+${jid.split("@")[0]}`,
+        phoneNumber,
         claimedAtMs: userSnapshot.get("whatsappLink.linkedAtMs") || Date.now(),
       });
     } else if (phoneOwnerSnapshot?.exists && phoneOwnerSnapshot.get("uid") !== uid) {
@@ -5459,6 +5522,7 @@ exports.unlinkWhatsAppAccount = onCall(async (request) => {
       whatsappLink: FieldValue.delete(),
       phoneNumber: FieldValue.delete(),
       phoneVerifiedAtMs: FieldValue.delete(),
+      whatsappPhonePixKeyHash: FieldValue.delete(),
     });
   });
 
@@ -6024,9 +6088,10 @@ exports._completeWhatsAppLink = async (request) => {
   if (typeof rawJid !== "string") throw new HttpsError("invalid-argument", "Conta do WhatsApp inválida.");
 
   const jid = rawJid.trim().toLowerCase().split(":")[0];
-  if (!/^\d+@s\.whatsapp\.net$/.test(jid)) {
+  if (!/^[1-9]\d{6,14}@s\.whatsapp\.net$/.test(jid)) {
     throw new HttpsError("invalid-argument", "Use o comando em uma conversa privada com o bot.");
   }
+  const phoneNumber = `+${jid.split("@")[0]}`;
   const code = rawCode.toUpperCase();
   const codeHash = createHash("sha256").update(code).digest("hex");
   const matchingCodes = await database.collection("whatsappLinkCodes")
@@ -6042,14 +6107,16 @@ exports._completeWhatsAppLink = async (request) => {
     .doc(createHash("sha256").update(jid).digest("hex"));
   const phoneOwnerRef = database.collection("whatsappPhoneOwners")
     .doc(createHash("sha256").update(jid).digest("hex"));
+  const phonePixKeyRef = database.collection("pixKeys").doc(pixKeyHash(phoneNumber));
   const nowMs = Date.now();
 
   await database.runTransaction(async (transaction) => {
-    const [codeSnapshot, userSnapshot, linkSnapshot, phoneOwnerSnapshot] = await Promise.all([
+    const [codeSnapshot, userSnapshot, linkSnapshot, phoneOwnerSnapshot, phonePixKeySnapshot] = await Promise.all([
       transaction.get(codeRef),
       transaction.get(userRef),
       transaction.get(linkRef),
       transaction.get(phoneOwnerRef),
+      transaction.get(phonePixKeyRef),
     ]);
     if (!codeSnapshot.exists || codeSnapshot.get("codeHash") !== codeHash
         || codeSnapshot.get("expiresAtMs") <= nowMs) {
@@ -6072,6 +6139,9 @@ exports._completeWhatsAppLink = async (request) => {
     if (phoneOwnerSnapshot.exists && phoneOwnerSnapshot.get("uid") !== uid) {
       throw new HttpsError("already-exists", "Este número de telefone já pertence a outra conta do app.");
     }
+    if (phonePixKeySnapshot.exists && phonePixKeySnapshot.get("uid") !== uid) {
+      throw new HttpsError("already-exists", "Este telefone já está registrado como chave de outra conta.");
+    }
 
     transaction.set(linkRef, { uid, linkedAtMs: nowMs });
     if (!phoneOwnerSnapshot.exists) {
@@ -6081,9 +6151,16 @@ exports._completeWhatsAppLink = async (request) => {
         claimedAtMs: nowMs,
       });
     }
+    transaction.set(phonePixKeyRef, {
+      uid,
+      type: "phone",
+      source: "whatsapp",
+      createdAt: FieldValue.serverTimestamp(),
+    });
     transaction.update(userRef, {
       whatsappLink: { jid, linkedAtMs: nowMs },
-      phoneNumber: `+${jid.split("@")[0]}`,
+      phoneNumber,
+      whatsappPhonePixKeyHash: pixKeyHash(phoneNumber),
       phoneVerifiedAtMs: nowMs,
     });
     transaction.delete(codeRef);

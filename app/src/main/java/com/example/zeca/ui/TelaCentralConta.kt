@@ -121,7 +121,7 @@ fun TelaCentralConta(
     fun save(updated: PreferenciasConta) {
         statusMensagem = "Salvando..."
         onSalvarPreferencias(updated) { error ->
-            statusMensagem = error?.localizedMessage ?: "ConfiguraÃ§Ãµes salvas e sincronizadas."
+            statusMensagem = error?.localizedMessage ?: "Configurações salvas e sincronizadas."
             if (error == null) {
                 com.example.zeca.ui.theme.Cores.aplicarTema(updated.theme)
                 com.example.zeca.ui.theme.Cores.aplicarAcessibilidade(
@@ -145,17 +145,17 @@ fun TelaCentralConta(
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Central da conta", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Black)
-                Text("Privacidade, amigos, acessibilidade e seguranÃ§a", color = Color.White.copy(alpha = 0.68f), fontSize = 13.sp)
+                Text("Privacidade, amigos, acessibilidade e segurança", color = Color.White.copy(alpha = 0.68f), fontSize = 13.sp)
             }
             TextButton(onClick = onVoltar) { Text("Voltar", color = Cores.Turquesa) }
         }
-        if (carregando) Text("Carregando suas configuraÃ§Ãµes...", color = Color.White.copy(alpha = 0.7f))
+        if (carregando) Text("Carregando suas configurações...", color = Color.White.copy(alpha = 0.7f))
         if (erro.isNotBlank()) Text(erro, color = Color(0xFFFF8B91))
         if (statusMensagem.isNotBlank()) Text(statusMensagem, color = Cores.Turquesa, fontSize = 12.sp)
 
-        SecaoConta("Privacidade e sincronizaÃ§Ã£o com o bot") {
+        SecaoConta("Privacidade e sincronização com o bot") {
             Text(
-                "Os dados ficam privados nesta conta e sÃ³ sÃ£o consultados quando vocÃª ativa cada opÃ§Ã£o. Desative uma opÃ§Ã£o para interromper novas consultas.",
+                "Os dados ficam privados nesta conta e só são consultados quando você ativa cada opção. Desative uma opção para interromper novas consultas.",
                 color = Color.White.copy(alpha = 0.68f),
                 fontSize = 12.sp,
             )
@@ -163,11 +163,11 @@ fun TelaCentralConta(
                 save(preferences.copy(shareBotProfile = it))
                 if (!it) painelWhatsApp = painelWhatsApp?.copy(profile = null)
             }
-            PreferenceSwitchConta("Pet e inventÃ¡rio", preferences.shareBotPetInventory) {
+            PreferenceSwitchConta("Pet e inventário", preferences.shareBotPetInventory) {
                 save(preferences.copy(shareBotPetInventory = it))
                 if (!it) painelWhatsApp = painelWhatsApp?.copy(pet = null, inventory = emptyMap())
             }
-            PreferenceSwitchConta("MissÃµes do bot e eventos cruzados", preferences.shareBotMissions) {
+            PreferenceSwitchConta("Missões do bot e eventos cruzados", preferences.shareBotMissions) {
                 save(preferences.copy(shareBotMissions = it))
                 if (!it) painelWhatsApp = painelWhatsApp?.copy(missions = emptyList())
             }
@@ -180,7 +180,7 @@ fun TelaCentralConta(
         SecaoConta("Privacidade e perfil") {
             Text("Visibilidade", color = Color.White, fontWeight = FontWeight.Bold)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("public" to "PÃºblico", "private" to "Somente amigos").forEach { (value, label) ->
+                listOf("public" to "Público", "private" to "Somente amigos").forEach { (value, label) ->
                     if (preferences.profileVisibility == value) {
                         Button(onClick = { }) { Text(label) }
                     } else {
@@ -188,7 +188,7 @@ fun TelaCentralConta(
                     }
                 }
             }
-            Text("Perfis privados sÃ³ podem ser abertos por amigos aceitos. Saldo, inventÃ¡rio e chave Pix nÃ£o sÃ£o publicados.", color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp)
+            Text("Perfis privados só podem ser abertos por amigos aceitos. Saldo, inventário e chave Pix não são publicados.", color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp)
             var statusEditavel by remember(preferences.customStatus) { mutableStateOf(preferences.customStatus) }
             OutlinedTextField(
                 value = statusEditavel,
@@ -207,7 +207,7 @@ fun TelaCentralConta(
             OutlinedTextField(
                 value = usernameAmigo,
                 onValueChange = { usernameAmigo = it.filter { char -> char.isLetterOrDigit() || char == '_' }.take(20) },
-                label = { Text("Nome de usuÃ¡rio") },
+                label = { Text("Nome de usuário") },
                 prefix = { Text("@") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
@@ -245,9 +245,9 @@ fun TelaCentralConta(
                         Text("${friend.nome} (@${friend.username})", color = Color.White)
                         Text(
                             when {
-                                friend.online -> "â— Online${friend.status.takeIf { it.isNotBlank() }?.let { " Â· $it" }.orEmpty()}"
+                                friend.online -> "● Online${friend.status.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()}"
                                 friend.status.isNotBlank() -> friend.status
-                                else -> "â—‹ Offline"
+                                else -> "○ Offline"
                             },
                             color = Color.White.copy(alpha = 0.62f),
                             fontSize = 11.sp,
@@ -262,7 +262,7 @@ fun TelaCentralConta(
                 }
             }
             if (painel?.friends.isNullOrEmpty() && painel?.friendRequests.isNullOrEmpty()) {
-                Text("Seus amigos e convites recebidos aparecerÃ£o aqui.", color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp)
+                Text("Seus amigos e convites recebidos aparecerão aqui.", color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp)
             }
         }
 
@@ -273,10 +273,10 @@ fun TelaCentralConta(
                 fontSize = 12.sp,
             )
                     if (painel?.whatsappLink?.linked == true) {
-            Text("âœ… Conta do WhatsApp vinculada", color = Cores.Turquesa, fontWeight = FontWeight.Bold)
+            Text("✅ Conta do WhatsApp vinculada", color = Cores.Turquesa, fontWeight = FontWeight.Bold)
             val numeroWhatsApp = painel?.whatsappLink?.phoneNumber?.takeIf { it.isNotBlank() }
             if (numeroWhatsApp != null) {
-                Text("NÃºmero vinculado: $numeroWhatsApp", color = Color.White.copy(alpha = 0.76f), fontSize = 12.sp)
+                Text("Número vinculado: $numeroWhatsApp", color = Color.White.copy(alpha = 0.76f), fontSize = 12.sp)
             }
             OutlinedButton(onClick = { onAbrirWhatsApp("") }) { Text("Escolher conversa do bot") }
             OutlinedButton(
@@ -303,20 +303,20 @@ fun TelaCentralConta(
                 painelWhatsApp?.let { botPanel ->
                     val formatGold = remember { NumberFormat.getIntegerInstance(Locale.forLanguageTag("pt-BR")) }
                     Text(
-                        "Pontos de integraÃ§Ã£o: ${formatGold.format(botPanel.integrationPoints)}",
+                        "Pontos de integração: ${formatGold.format(botPanel.integrationPoints)}",
                         color = Cores.Turquesa,
                         fontWeight = FontWeight.Bold,
                     )
                     botPanel.profile?.let { profile ->
-                        Text("Perfil do bot Â· ${profile.displayName}", color = Color.White, fontWeight = FontWeight.Bold)
+                        Text("Perfil do bot · ${profile.displayName}", color = Color.White, fontWeight = FontWeight.Bold)
                         Text(
-                            "NÃ­vel ${profile.level} Â· ${formatGold.format(profile.xp)} XP Â· ${formatGold.format(profile.quizPoints)} pontos de quiz Â· ${formatGold.format(profile.messages)} mensagens",
+                            "Nível ${profile.level} · ${formatGold.format(profile.xp)} XP · ${formatGold.format(profile.quizPoints)} pontos de quiz · ${formatGold.format(profile.messages)} mensagens",
                             color = Color.White.copy(alpha = 0.72f),
                             fontSize = 12.sp,
                         )
                         profile.groups.forEach { group ->
                             Text(
-                                "${group.name} Â· nÃ­vel ${group.level} Â· ${formatGold.format(group.xp)} XP",
+                                "${group.name} · nível ${group.level} · ${formatGold.format(group.xp)} XP",
                                 color = Color.White.copy(alpha = 0.62f),
                                 fontSize = 11.sp,
                             )
@@ -334,22 +334,22 @@ fun TelaCentralConta(
                             )
                         } ?: Text("Nenhum pet encontrado na conta do bot.", color = Color.White.copy(alpha = 0.62f), fontSize = 12.sp)
                         if (botPanel.inventory.isNotEmpty()) {
-                            Text("InventÃ¡rio do bot", color = Color.White, fontWeight = FontWeight.Bold)
+                            Text("Inventário do bot", color = Color.White, fontWeight = FontWeight.Bold)
                             botPanel.inventory.entries.take(30).forEach { (item, quantity) ->
-                                Text("$item Ã— $quantity", color = Color.White.copy(alpha = 0.72f), fontSize = 11.sp)
+                                Text("$item × $quantity", color = Color.White.copy(alpha = 0.72f), fontSize = 11.sp)
                             }
                         } else {
-                            Text("O inventÃ¡rio do bot estÃ¡ vazio.", color = Color.White.copy(alpha = 0.62f), fontSize = 12.sp)
+                            Text("O inventário do bot está vazio.", color = Color.White.copy(alpha = 0.62f), fontSize = 12.sp)
                         }
                     }
                     if (preferences.shareBotMissions) {
-                        Text("MissÃµes cruzadas do bot", color = Color.White, fontWeight = FontWeight.Bold)
+                        Text("Missões cruzadas do bot", color = Color.White, fontWeight = FontWeight.Bold)
                         botPanel.missions.forEach { mission ->
                             MissaoWhatsAppLinha(
                                 mission = mission,
                                 onResgatar = {
                                     onResgatarMissaoWhatsApp(mission.id) { points, error ->
-                                        statusMensagem = error?.localizedMessage ?: "MissÃ£o resgatada: +${points ?: 10L} pontos de integraÃ§Ã£o."
+                                        statusMensagem = error?.localizedMessage ?: "Missão resgatada: +${points ?: 10L} pontos de integração."
                                         if (error == null) {
                                             carregandoPainelWhatsApp = true
                                             onCarregarPainelWhatsApp { updated, loadError ->
@@ -362,7 +362,7 @@ fun TelaCentralConta(
                             )
                         }
                         if (botPanel.missions.isEmpty()) {
-                            Text("Nenhuma missÃ£o aberta no bot agora.", color = Color.White.copy(alpha = 0.62f), fontSize = 11.sp)
+                            Text("Nenhuma missão aberta no bot agora.", color = Color.White.copy(alpha = 0.62f), fontSize = 11.sp)
                         }
                     }
                     if (preferences.shareBotEconomy) {
@@ -384,17 +384,17 @@ fun TelaCentralConta(
                     onCriarCodigoVinculoWhatsApp { code, expiresAtMs, error ->
                         criandoCodigoVinculo = false
                         if (error != null) {
-                            statusMensagem = error.localizedMessage ?: "NÃ£o foi possÃ­vel gerar o cÃ³digo."
+                            statusMensagem = error.localizedMessage ?: "Não foi possível gerar o código."
                         } else {
                             codigoVinculoWhatsApp = code.orEmpty()
                             codigoVinculoExpiraEm = expiresAtMs
-                            statusMensagem = "CÃ³digo gerado. Envie-o ao bot em atÃ© 10 minutos."
+                            statusMensagem = "Código gerado. Envie-o ao bot em até 10 minutos."
                         }
                     }
                 },
                 enabled = !criandoCodigoVinculo && !carregando,
             ) {
-                Text(if (criandoCodigoVinculo) "Gerando cÃ³digo..." else "Gerar cÃ³digo de vÃ­nculo")
+                Text(if (criandoCodigoVinculo) "Gerando código..." else "Gerar código de vínculo")
             }
             if (codigoVinculoWhatsApp.isNotBlank()) {
                 Text(
@@ -407,10 +407,10 @@ fun TelaCentralConta(
                 val expiryTime = remember(codigoVinculoExpiraEm) {
                     SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(codigoVinculoExpiraEm))
                 }
-                Text("Expira Ã s $expiryTime. Use apenas em uma conversa privada com o bot.", color = Color.White.copy(alpha = 0.62f), fontSize = 11.sp)
+                Text("Expira às $expiryTime. Use apenas em uma conversa privada com o bot.", color = Color.White.copy(alpha = 0.62f), fontSize = 11.sp)
                 Button(
                     onClick = { onAbrirWhatsApp("!vincular $codigoVinculoWhatsApp") },
-                ) { Text("Escolher bot e enviar cÃ³digo") }
+                ) { Text("Escolher bot e enviar código") }
             }
             OutlinedButton(onClick = { seletorFigurinha.launch("image/*") }) {
                 Text("Compartilhar imagem como figurinha no WhatsApp")
@@ -422,7 +422,7 @@ fun TelaCentralConta(
             AlertDialog(
                 onDismissRequest = { confirmarDesvinculoWhatsApp = false },
                 title = { Text("Desvincular WhatsApp?") },
-                text = { Text("O bot deixarÃ¡ de estar associado a esta conta do app e o nÃºmero vinculado serÃ¡ removido do perfil desta conta. Seus saldos e progressos nÃ£o serÃ£o alterados.") },
+                text = { Text("O bot deixará de estar associado a esta conta do app e o número vinculado será removido do perfil desta conta. Seus saldos e progressos não serão alterados.") },
                 confirmButton = {
                     TextButton(
                         onClick = {
@@ -444,14 +444,14 @@ fun TelaCentralConta(
                 },
             )
         }
-        SecaoConta("PreferÃªncias sincronizadas") {
-            PreferenceSwitchConta("Confirmar aÃ§Ãµes importantes", preferences.confirmImportant) {
+        SecaoConta("Preferências sincronizadas") {
+            PreferenceSwitchConta("Confirmar ações importantes", preferences.confirmImportant) {
                 save(preferences.copy(confirmImportant = it))
             }
-            PreferenceSwitchConta("RecomendaÃ§Ãµes personalizadas", preferences.personalizedRecommendations) {
+            PreferenceSwitchConta("Recomendações personalizadas", preferences.personalizedRecommendations) {
                 save(preferences.copy(personalizedRecommendations = it))
             }
-            PreferenceSwitchConta("Sincronizar configuraÃ§Ãµes entre dispositivos", preferences.syncSettings) {
+            PreferenceSwitchConta("Sincronizar configurações entre dispositivos", preferences.syncSettings) {
                 save(preferences.copy(syncSettings = it))
             }
             Text("Tema visual", color = Color.White, fontWeight = FontWeight.Bold)
@@ -461,14 +461,14 @@ fun TelaCentralConta(
                     else OutlinedButton(onClick = { save(preferences.copy(theme = value)) }) { Text(label) }
                 }
             }
-            Text("Idioma e localizaÃ§Ã£o Â· formato de data", color = Color.White, fontWeight = FontWeight.Bold)
+            Text("Idioma e localização · formato de data", color = Color.White, fontWeight = FontWeight.Bold)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf("pt-BR" to "PortuguÃªs (Brasil)", "en-US" to "English", "es" to "EspaÃ±ol").forEach { (value, label) ->
+                listOf("pt-BR" to "Português (Brasil)", "en-US" to "English", "es" to "Español").forEach { (value, label) ->
                     if (preferences.locale == value) Button(onClick = {}) { Text(label) }
                     else OutlinedButton(onClick = { save(preferences.copy(locale = value)) }) { Text(label) }
                 }
             }
-            Text("A preferÃªncia Ã© sincronizada e aplicada Ã  formataÃ§Ã£o de datas; a traduÃ§Ã£o das telas serÃ¡ ampliada gradualmente.", color = Color.White.copy(alpha = 0.58f), fontSize = 11.sp)
+            Text("A preferência é sincronizada e aplicada à formatação de datas; a tradução das telas será ampliada gradualmente.", color = Color.White.copy(alpha = 0.58f), fontSize = 11.sp)
         }
 
         SecaoConta("Acessibilidade") {
@@ -487,19 +487,19 @@ fun TelaCentralConta(
                 enabled = fontScaleEditavel.toDouble() != preferences.accessibilityFontScale,
             ) { Text("Aplicar tamanho do texto") }
             PreferenceSwitchConta("Alto contraste", preferences.highContrast) { save(preferences.copy(highContrast = it)) }
-            PreferenceSwitchConta("Reduzir animaÃ§Ãµes", preferences.reduceMotion) { save(preferences.copy(reduceMotion = it)) }
-            Text("Ajude a melhorar a acessibilidade: envie comentÃ¡rios sobre contraste, navegaÃ§Ã£o, leitor de tela ou tamanho do texto.", color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp)
+            PreferenceSwitchConta("Reduzir animações", preferences.reduceMotion) { save(preferences.copy(reduceMotion = it)) }
+            Text("Ajude a melhorar a acessibilidade: envie comentários sobre contraste, navegação, leitor de tela ou tamanho do texto.", color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp)
             OutlinedTextField(
                 value = suporteDetalhes,
                 onValueChange = { suporteDetalhes = it.take(2_000) },
-                label = { Text("ComentÃ¡rio de acessibilidade") },
+                label = { Text("Comentário de acessibilidade") },
                 modifier = Modifier.fillMaxWidth(),
                 minLines = 3,
             )
             OutlinedButton(
                 onClick = {
                     onEnviarSuporte("Feedback de acessibilidade", suporteDetalhes.trim(), "accessibility") { error ->
-                        suporteMensagem = error?.localizedMessage ?: "ComentÃ¡rio enviado para a equipe."
+                        suporteMensagem = error?.localizedMessage ?: "Comentário enviado para a equipe."
                         if (error == null) suporteDetalhes = ""
                     }
                 },
@@ -508,19 +508,19 @@ fun TelaCentralConta(
             if (suporteMensagem.isNotBlank()) Text(suporteMensagem, color = Cores.Turquesa, fontSize = 12.sp)
         }
 
-        SecaoConta("ProteÃ§Ã£o do dispositivo") {
-            Text("Use o PIN, padrÃ£o ou senha de bloqueio configurado no Android. O app nunca recebe nem armazena sua credencial.", color = Color.White.copy(alpha = 0.72f), fontSize = 12.sp)
-            PreferenceSwitchConta("Solicitar autenticaÃ§Ã£o do dispositivo", bloqueioDispositivoAtivo, onDefinirBloqueio)
+        SecaoConta("Proteção do dispositivo") {
+            Text("Use o PIN, padrão ou senha de bloqueio configurado no Android. O app nunca recebe nem armazena sua credencial.", color = Color.White.copy(alpha = 0.72f), fontSize = 12.sp)
+            PreferenceSwitchConta("Solicitar autenticação do dispositivo", bloqueioDispositivoAtivo, onDefinirBloqueio)
         }
 
-        SecaoConta("RecomendaÃ§Ãµes para vocÃª") {
+        SecaoConta("Recomendações para você") {
             val recommendations = if (preferences.personalizedRecommendations) painel?.recommendations.orEmpty() else emptyList()
             if (recommendations.isEmpty()) {
-                Text("Jogue alguns minigames para receber recomendaÃ§Ãµes baseadas no seu histÃ³rico.", color = Color.White.copy(alpha = 0.66f), fontSize = 12.sp)
+                Text("Jogue alguns minigames para receber recomendações baseadas no seu histórico.", color = Color.White.copy(alpha = 0.66f), fontSize = 12.sp)
             } else {
                 recommendations.forEach { recommendation ->
                     Text(
-                        "${nomeJogoConta(recommendation)} Â· ${recommendation.played} partidas Â· ${recommendation.wins} vitÃ³rias",
+                        "${nomeJogoConta(recommendation)} · ${recommendation.played} partidas · ${recommendation.wins} vitórias",
                         color = Color.White,
                         fontSize = 13.sp,
                     )
@@ -528,10 +528,10 @@ fun TelaCentralConta(
             }
         }
 
-        SecaoConta("Avisos de manutenÃ§Ã£o e novidades") {
+        SecaoConta("Avisos de manutenção e novidades") {
             painel?.announcements.orEmpty().forEach { announcement -> AvisoConta(announcement) }
             if (painel?.announcements.isNullOrEmpty()) {
-                Text("Nenhum aviso de manutenÃ§Ã£o ou novidade ativo.", color = Color.White.copy(alpha = 0.66f), fontSize = 12.sp)
+                Text("Nenhum aviso de manutenção ou novidade ativo.", color = Color.White.copy(alpha = 0.66f), fontSize = 12.sp)
             }
             if (isAdmin) {
                 var announcementType by rememberSaveable { mutableStateOf("news") }
@@ -539,7 +539,7 @@ fun TelaCentralConta(
                 OutlinedTextField(
                     value = avisoTitulo,
                     onValueChange = { avisoTitulo = it.take(80) },
-                    label = { Text("TÃ­tulo") },
+                    label = { Text("Título") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                 )
@@ -551,7 +551,7 @@ fun TelaCentralConta(
                     minLines = 2,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("news" to "Novidade", "maintenance" to "ManutenÃ§Ã£o").forEach { (value, label) ->
+                    listOf("news" to "Novidade", "maintenance" to "Manutenção").forEach { (value, label) ->
                         if (announcementType == value) Button(onClick = {}) { Text(label) }
                         else OutlinedButton(onClick = { announcementType = value }) { Text(label) }
                     }
@@ -573,18 +573,18 @@ fun TelaCentralConta(
             }
         }
 
-        SecaoConta("Registro de alteraÃ§Ãµes da conta") {
+        SecaoConta("Registro de alterações da conta") {
             painel?.activity.orEmpty().forEach { activity -> AlteracaoContaLinha(activity, preferences.locale) }
             if (painel?.activity.isNullOrEmpty()) {
-                Text("AlteraÃ§Ãµes recentes de perfil e configuraÃ§Ãµes aparecerÃ£o aqui.", color = Color.White.copy(alpha = 0.66f), fontSize = 12.sp)
+                Text("Alterações recentes de perfil e configurações aparecerão aqui.", color = Color.White.copy(alpha = 0.66f), fontSize = 12.sp)
             }
         }
 
         SecaoConta("Ajuda e suporte") {
             Text("Perguntas frequentes", color = Cores.Turquesa, fontWeight = FontWeight.Bold)
-            Text("â€¢ Convites de sala: compartilhe o link pela tela da sala; a outra pessoa precisa ter o Zeca instalado.", color = Color.White.copy(alpha = 0.76f), fontSize = 12.sp)
-            Text("â€¢ Privacidade: escolha PÃºblico ou Somente amigos na Central da conta.", color = Color.White.copy(alpha = 0.76f), fontSize = 12.sp)
-            Text("â€¢ SeguranÃ§a: o bloqueio usa a credencial jÃ¡ configurada no Android; o app nÃ£o recebe seu PIN.", color = Color.White.copy(alpha = 0.76f), fontSize = 12.sp)
+            Text("• Convites de sala: compartilhe o link pela tela da sala; a outra pessoa precisa ter o Zeca instalado.", color = Color.White.copy(alpha = 0.76f), fontSize = 12.sp)
+            Text("• Privacidade: escolha Público ou Somente amigos na Central da conta.", color = Color.White.copy(alpha = 0.76f), fontSize = 12.sp)
+            Text("• Segurança: o bloqueio usa a credencial já configurada no Android; o app não recebe seu PIN.", color = Color.White.copy(alpha = 0.76f), fontSize = 12.sp)
             OutlinedTextField(
                 value = suporteTitulo,
                 onValueChange = { suporteTitulo = it.take(80) },
@@ -602,7 +602,7 @@ fun TelaCentralConta(
             Button(
                 onClick = {
                     onEnviarSuporte(suporteTitulo.trim(), suporteDetalhes.trim(), "help") { error ->
-                        suporteMensagem = error?.localizedMessage ?: "SolicitaÃ§Ã£o enviada. Obrigado."
+                        suporteMensagem = error?.localizedMessage ?: "Solicitação enviada. Obrigado."
                         if (error == null) {
                             suporteTitulo = ""
                             suporteDetalhes = ""
@@ -610,12 +610,12 @@ fun TelaCentralConta(
                     }
                 },
                 enabled = suporteTitulo.trim().length >= 3 && suporteDetalhes.trim().length >= 10 && !carregando,
-            ) { Text("Enviar solicitaÃ§Ã£o") }
+            ) { Text("Enviar solicitação") }
             if (suporteMensagem.isNotBlank()) Text(suporteMensagem, color = Cores.Turquesa, fontSize = 12.sp)
         }
 
         if (painel != null) {
-            OutlinedButton(onClick = onRecarregar, modifier = Modifier.fillMaxWidth()) { Text("Atualizar informaÃ§Ãµes") }
+            OutlinedButton(onClick = onRecarregar, modifier = Modifier.fillMaxWidth()) { Text("Atualizar informações") }
         }
     }
 }
@@ -631,11 +631,11 @@ private fun MissaoWhatsAppLinha(mission: MissaoWhatsApp, onResgatar: () -> Unit)
     ) {
         Text(mission.title, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
         Text(
-            "${mission.progress.coerceAtMost(mission.target)}/${mission.target} Â· " +
+            "${mission.progress.coerceAtMost(mission.target)}/${mission.target} · " +
                 when {
                     mission.claimedInApp -> "recompensa resgatada no app"
                     mission.claimedInBot -> "resgatada no bot"
-                    mission.completed -> "concluÃ­da"
+                    mission.completed -> "concluída"
                     else -> "em andamento"
                 },
             color = if (mission.completed) Cores.Turquesa else Color.White.copy(alpha = 0.64f),
@@ -651,7 +651,7 @@ private fun MissaoWhatsAppLinha(mission: MissaoWhatsApp, onResgatar: () -> Unit)
 private fun AvisoConta(announcement: AvisoApp) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
-            if (announcement.type == "maintenance") "ManutenÃ§Ã£o Â· ${announcement.title}" else "Novidade Â· ${announcement.title}",
+            if (announcement.type == "maintenance") "Manutenção · ${announcement.title}" else "Novidade · ${announcement.title}",
             color = Color.White,
             fontWeight = FontWeight.Bold,
         )
@@ -671,11 +671,11 @@ private fun AlteracaoContaLinha(activity: AlteracaoConta, localeTag: String) {
 }
 
 private fun nomeCampoConta(field: String): String = when (field) {
-    "displayName" -> "nome de exibiÃ§Ã£o"
-    "username" -> "nome de usuÃ¡rio"
+    "displayName" -> "nome de exibição"
+    "username" -> "nome de usuário"
     "bio" -> "biografia"
     "avatarUrl" -> "foto de perfil"
-    "avatarAsProfilePhoto" -> "preferÃªncia de avatar"
+    "avatarAsProfilePhoto" -> "preferência de avatar"
     "profileVisibility" -> "privacidade do perfil"
     "customStatus" -> "status personalizado"
     "theme" -> "tema visual"
@@ -688,6 +688,6 @@ private fun nomeJogoConta(recommendation: RecomendacaoJogo): String = when (reco
     "tug" -> "Cabo de guerra"
     "teamRace" -> "Corrida em equipe"
     "teamRelay" -> "Revezamento"
-    "teamBlitz" -> "Quiz relÃ¢mpago"
+    "teamBlitz" -> "Quiz relâmpago"
     else -> recommendation.gameId.replaceFirstChar { it.uppercase() }
 }
