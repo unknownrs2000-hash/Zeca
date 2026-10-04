@@ -55,6 +55,7 @@ import com.example.zeca.ui.theme.Cores
 import java.math.BigDecimal
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
+import java.util.Currency
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
@@ -382,7 +383,12 @@ fun TelaAdmin(
                 }
                 Text(user.uid, color = Color.White.copy(alpha = 0.48f), fontSize = 10.sp)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Saldo ${formatarSaldoAdmin(user.saldoCentavos)}", color = Cores.Verde, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Text(
+                        "Saldo ${formatarSaldoAdmin(user.saldoCentavos, user.currencyCode, user.countryCode, user.currencyRate)}",
+                        color = Cores.Verde,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                    )
                     Text("${info.partidas} partidas · ${info.vitorias} vitórias", color = Color.White.copy(alpha = 0.65f), fontSize = 11.sp)
                 }
 
@@ -411,14 +417,25 @@ fun TelaAdmin(
                         val entradas = info.movimentacoes.sumOf { it.deltaCentavos.coerceAtLeast(0L) }
                         val saidas = info.movimentacoes.sumOf { it.deltaCentavos.coerceAtMost(0L) }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            ResumoExtratoAdmin("Entradas", formatarSaldoAdmin(entradas), Cores.Verde, Modifier.weight(1f))
-                            ResumoExtratoAdmin("Saídas", formatarSaldoAdmin(saidas), Color(0xFFFF7C83), Modifier.weight(1f))
+                        ResumoExtratoAdmin(
+                            "Entradas",
+                            formatarSaldoAdmin(entradas, user.currencyCode, user.countryCode, user.currencyRate),
+                            Cores.Verde,
+                            Modifier.weight(1f),
+                        )
+                        ResumoExtratoAdmin(
+                            "Saídas",
+                            formatarSaldoAdmin(saidas, user.currencyCode, user.countryCode, user.currencyRate),
+                            Color(0xFFFF7C83),
+                            Modifier.weight(1f),
+                        )
                         }
                         if (info.movimentacoes.isEmpty()) {
                             Text("Nenhuma movimentação registrada.", color = Color.White.copy(alpha = 0.55f), fontSize = 11.sp)
                         } else {
                             val limiteExtrato = if (extratoExpandido) info.movimentacoes.size else 5
-                            info.movimentacoes.take(limiteExtrato).forEach { movement -> MovimentoAdminLinha(movement) }
+                            info.movimentacoes.take(limiteExtrato)
+                                .forEach { movement -> MovimentoAdminLinha(movement, user.currencyCode, user.countryCode, user.currencyRate) }
                             if (info.movimentacoes.size > 5) {
                                 TextButton(
                                     onClick = { extratoExpandido = !extratoExpandido },
@@ -605,7 +622,11 @@ fun TelaAdmin(
                             fontSize = 11.sp,
                             maxLines = 1,
                         )
-                        Text(formatarSaldoAdmin(user.saldoCentavos), color = Color.White.copy(alpha = 0.58f), fontSize = 10.sp)
+                        Text(
+                            formatarSaldoAdmin(user.saldoCentavos, user.currencyCode, user.countryCode, user.currencyRate),
+                            color = Color.White.copy(alpha = 0.58f),
+                            fontSize = 10.sp,
+                        )
                     }
                 }
                 Text(user.uid, color = Color.White.copy(alpha = 0.44f), fontSize = 9.sp)
@@ -715,7 +736,12 @@ private fun ResumoExtratoAdmin(rotulo: String, valor: String, cor: Color, modifi
 }
 
 @Composable
-private fun MovimentoAdminLinha(movimento: MovimentoAdmin) {
+private fun MovimentoAdminLinha(
+    movimento: MovimentoAdmin,
+    currencyCode: String = "BRL",
+    countryCode: String = "BR",
+    rate: Double = 1.0,
+) {
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -728,7 +754,7 @@ private fun MovimentoAdminLinha(movimento: MovimentoAdmin) {
             }
         }
         Text(
-            formatarSaldoAdmin(movimento.deltaCentavos),
+            formatarSaldoAdmin(movimento.deltaCentavos, currencyCode, countryCode, rate),
             color = if (movimento.deltaCentavos >= 0) Cores.Verde else Color(0xFFFF7C83),
             fontSize = 10.sp,
             fontWeight = FontWeight.Bold,
@@ -739,9 +765,30 @@ private fun MovimentoAdminLinha(movimento: MovimentoAdmin) {
 private fun formatarDataAdmin(timestampMs: Long): String =
     SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.forLanguageTag("pt-BR")).format(Date(timestampMs))
 
-private fun formatarSaldoAdmin(centavos: Long): String =
-    NumberFormat.getCurrencyInstance(Locale.forLanguageTag("pt-BR"))
-        .format(BigDecimal.valueOf(centavos, 2))
+private fun formatarSaldoAdmin(
+    centavos: Long,
+    currencyCode: String = "BRL",
+    countryCode: String = "BR",
+    rate: Double = 1.0,
+): String {
+    val normalizedCurrency = currencyCode.takeIf { it.isNotBlank() }?.uppercase(Locale.ROOT)
+        ?: runCatching { Currency.getInstance(Locale("", countryCode)).currencyCode }.getOrNull()
+        ?: "BRL"
+    val normalizedCountry = countryCode.trim().uppercase(Locale.ROOT).ifBlank { "BR" }
+    val locale = runCatching {
+        Locale.Builder().setLanguage("pt").setRegion(normalizedCountry).build()
+    }.getOrElse { Locale.forLanguageTag("pt-BR") }
+    val amount = BigDecimal.valueOf(centavos, 2)
+        .multiply(BigDecimal.valueOf(rate.takeIf { it.isFinite() && it > 0.0 } ?: 1.0))
+        .setScale(2, java.math.RoundingMode.HALF_UP)
+    val currency = runCatching { Currency.getInstance(normalizedCurrency) }.getOrElse { Currency.getInstance("BRL") }
+    return NumberFormat.getCurrencyInstance(locale).apply {
+        this.currency = currency
+        val fractionDigits = currency.defaultFractionDigits.coerceAtLeast(2)
+        minimumFractionDigits = fractionDigits
+        maximumFractionDigits = fractionDigits
+    }.format(amount)
+}
 
 private fun nomeItemInventario(itemId: String): String =
     itensInventarioAdmin.firstOrNull { it.id == itemId }?.nome ?: itemId

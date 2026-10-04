@@ -48,6 +48,7 @@ const {
   saveTugRoomPresets,
   signChatAudioUpload,
   startMines,
+  startTugRoom,
   startSoloChallenge,
   submitPlayerReport,
   submitJokenpoChoice,
@@ -540,4 +541,39 @@ test("title equipping requires authentication and rejects non-title catalog item
       (error) => error.code === "invalid-argument",
     );
   }
+});
+
+test("Mongo financial mode disables all mutating tug-room actions with a clear message", async () => {
+  const previousMode = process.env.ZECA_FINANCIAL_MODE;
+  process.env.ZECA_FINANCIAL_MODE = "mongo";
+  const player = { auth: { uid: "player", token: {} }, data: {} };
+  const unavailable = (error) => error.code === "failed-precondition"
+    && error.message === "Indisponível temporariamente.";
+  try {
+    await assert.rejects(createTugRoom(player), unavailable);
+    await assert.rejects(joinTugRoom(player), unavailable);
+    await assert.rejects(manageTugRoom(player), unavailable);
+    await assert.rejects(startTugRoom(player), unavailable);
+    await assert.rejects(pullTugRope(player), unavailable);
+  } finally {
+    if (previousMode === undefined) delete process.env.ZECA_FINANCIAL_MODE;
+    else process.env.ZECA_FINANCIAL_MODE = previousMode;
+  }
+});
+
+test("Mongo minigame settlement projection carries stats, history and weekly progress as increments", () => {
+  const { _minigameSettlementWrites } = require("./index");
+  const writes = _minigameSettlementWrites("users/p", {
+    gameId: "mines",
+    gameName: "Minas",
+    outcome: "won",
+    netCents: 50,
+    summary: "x",
+    recordId: "mines_1",
+    atMs: Date.UTC(2026, 9, 1),
+  });
+  const byPath = Object.fromEntries(writes.map((write) => [write.path, write.data]));
+  assert.equal(byPath["users/p/gameHistory/mines_1"].outcome, "won");
+  assert.deepEqual(byPath["users/p/minigameStats/mines"].played, { $increment: 1 });
+  assert.deepEqual(byPath["users/p/minigameStats/all"].netCents, { $increment: 50 });
 });

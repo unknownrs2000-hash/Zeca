@@ -645,6 +645,14 @@ exports.ensurePlayerProfile = onCall(async (request) => {
   const emailName = authUser.email?.split("@")[0]?.trim() || "";
   const fallbackName = emailName.length >= 2 && emailName.length <= 24 ? emailName : "Jogador";
   const displayName = safeName(authUser.displayName, fallbackName);
+exports.ensurePlayerProfile = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  const authUser = await getAuth().getUser(uid);
+  const userRef = database.collection("users").doc(uid);
+  const rankRef = database.collection("leaderboard").doc(uid);
+  const emailName = authUser.email?.split("@")[0]?.trim() || "";
+  const fallbackName = emailName.length >= 2 && emailName.length <= 24 ? emailName : "Jogador";
+  const displayName = safeName(authUser.displayName, fallbackName);
   const financialStore = await getFinancialStore();
   const existingProfile = await userRef.get();
   if (existingProfile.exists) {
@@ -698,6 +706,72 @@ exports.ensurePlayerProfile = onCall(async (request) => {
     };
     const publicProfile = {
       displayName: profile.displayName,
+      level: profile.level,
+      avatarUrl: profile.avatarUrl,
+      avatarAsProfilePhoto: profile.avatarAsProfilePhoto,
+      equippedAvatarItems: profile.equippedAvatarItems,
+      equippedFrame: profile.equippedFrame,
+      username: profile.username,
+      countryCode: profile.countryCode,
+      currencyCode: profile.currencyCode,
+      currencyRate: profile.currencyRate,
+      currencyRateDate: profile.currencyRateDate,
+    };
+
+    if (userSnapshot.exists) transaction.set(userRef, profile);
+    else transaction.create(userRef, profile);
+    if (rankSnapshot.exists) transaction.set(rankRef, publicProfile);
+    else transaction.create(rankRef, publicProfile);
+  });
+
+  return { ok: true };
+});
+
+  await database.runTransaction(async (transaction) => {
+    const [userSnapshot, rankSnapshot] = await Promise.all([
+      transaction.get(userRef),
+      transaction.get(rankRef),
+    ]);
+    const existing = userSnapshot.data() || {};
+    const balanceCents = wallet.balanceCents;
+    const gamesPlayed = Number.isSafeInteger(existing.gamesPlayed) ? existing.gamesPlayed : 0;
+    const username = normalizeUsername(existing.username) || "";
+
+    const profile = {
+      ...existing,
+      uid,
+      displayName: safeName(existing.displayName, displayName),
+      email: authUser.email || existing.email || "",
+      balanceCents,
+      balanceInitialized: true,
+      level: Math.max(
+        Number.isSafeInteger(existing.level) && existing.level > 0 ? existing.level : 1,
+        levelProgress(gamesPlayed).level,
+      ),
+      avatarUrl: existing.avatarUrl || authUser.photoURL || "",
+      avatarAsProfilePhoto: existing.avatarAsProfilePhoto === true,
+      equippedAvatarItems: Array.isArray(existing.equippedAvatarItems) ? existing.equippedAvatarItems : [],
+      equippedFrame: typeof existing.equippedFrame === "string" ? existing.equippedFrame : "",
+      equippedTitle: typeof existing.equippedTitle === "string" ? existing.equippedTitle : "",
+      username,
+      profileSetupComplete: existing.profileSetupComplete === true && username !== "",
+      pixKey: existing.pixKey || "",
+      pixKeyType: existing.pixKeyType || "",
+      pixKeyHash: existing.pixKeyHash || "",
+      gamesPlayed,
+      wins: Number.isSafeInteger(existing.wins) ? existing.wins : 0,
+      inventory: Array.isArray(existing.inventory) ? existing.inventory : [],
+      countryCode: existing.countryCode || "",
+      currencyCode: existing.currencyCode || "",
+      currencyRate: Number.isFinite(existing.currencyRate) && existing.currencyRate > 0
+        ? existing.currencyRate
+        : 1,
+      currencyRateDate: existing.currencyRateDate || "",
+      createdAt: existing.createdAt || FieldValue.serverTimestamp(),
+    };
+    const publicProfile = {
+      displayName: profile.displayName,
+      balanceCents: profile.balanceCents,
       level: profile.level,
       avatarUrl: profile.avatarUrl,
       avatarAsProfilePhoto: profile.avatarAsProfilePhoto,
@@ -1806,12 +1880,6 @@ exports.startSoloChallenge = onCall(async (request) => {
   }
   const userRef = database.collection("users").doc(uid);
   const challengeRef = userRef.collection("soloChallenges").doc("current");
-  const walletBalance = isMongoFinancialMode()
-    ? await (await getFinancialStore()).getBalance(uid)
-    : null;
-  if (isMongoFinancialMode() && walletBalance === null) {
-    throw new HttpsError("unavailable", "A carteira ainda não foi migrada.");
-  }
   let response;
   await database.runTransaction(async (transaction) => {
     const [profile, current] = await Promise.all([
@@ -1821,7 +1889,7 @@ exports.startSoloChallenge = onCall(async (request) => {
     if (!profile.exists || profile.get("isBlocked") === true) {
       throw new HttpsError("failed-precondition", "Perfil indisponível para jogar.");
     }
-    const balanceCents = isMongoFinancialMode() ? walletBalance : profile.get("balanceCents") || 0;
+    const balanceCents = profile.get("balanceCents") || 0;
     if (balanceCents < amountCents) {
       throw new HttpsError("failed-precondition", "Saldo insuficiente.");
     }
@@ -2807,7 +2875,7 @@ async function startMinesMongo({ uid, amountCents, mineCount, requestId }) {
       createdAt: SERVER_TIMESTAMP,
     };
     const response = { ...minesStateResponse(game), resumed: false };
-    const operation = await store.applyOperation({
+    return (await store.applyOperation({
       operationId,
       operationType: "mines_wager",
       entries: [{ uid, deltaCents: -amountCents }],
@@ -2829,8 +2897,7 @@ async function startMinesMongo({ uid, amountCents, mineCount, requestId }) {
         ],
       },
       result: { response, requestFingerprint: fingerprint },
-    });
-    return { ...operation.result.response, balanceCents: operation.balances[uid] };
+    })).result.response;
   });
 }
 
@@ -3204,10 +3271,9 @@ async function cashOutMinesMongo({ uid, gameId, requestId }) {
     const profile = userSnapshot.data();
     const nowMs = Date.now();
     const safeCells = Array.isArray(game.safeCells) ? game.safeCells : [];
-    if (safeCells.length === 0) {
-      throw new HttpsError("failed-precondition", "Revele pelo menos uma casa antes de sacar.");
-    }
-    const payout = minesCashoutPayout(game.amountCents, game.mineCount, safeCells.length, game.rtpBps);
+    const payout = safeCells.length > 0
+      ? minesCashoutPayout(game.amountCents, game.mineCount, safeCells.length, game.rtpBps)
+      : { payoutCents: 0, multiplierBps: 10_000 };
     const profitCents = payout.payoutCents - game.amountCents;
     const gamesPlayed = (profile.gamesPlayed || 0) + 1;
     const wins = (profile.wins || 0) + (profitCents > 0 ? 1 : 0);
@@ -4359,7 +4425,7 @@ async function startCrashMongo({ uid, amountCents, requestId }) {
       },
       result: { response, requestFingerprint: fingerprint },
     });
-    return { ...operation.result.response, balanceCents: operation.balances[uid] };
+    return operation.result.response;
   });
 }
 
@@ -4446,17 +4512,18 @@ async function cashOutCrashMongo({ uid, gameId, requestId }) {
         },
       },
       { path: `leaderboard/${uid}`, data: { level: progression.level } },
+      {
+        path: `${userRef.path}/gameHistory/crash_${gameId}`,
+        data: {
+          gameId: "crash",
+          gameName: "Crash",
+          outcome: profitCents > 0 ? "won" : profitCents < 0 ? "lost" : "tied",
+          netCents: profitCents,
+          summary: crashed ? "Crash · multiplicador estourou" : `Crash · saque em ${(multiplierBps / 100).toFixed(2)}x`,
+          atMs: nowMs,
+        },
+      },
     ];
-    projectionWrites.push(...minigameSettlementWrites(userRef.path, {
-      gameId: "crash",
-      gameName: "Crash",
-      outcome: profitCents > 0 ? "won" : profitCents < 0 ? "lost" : "tied",
-      netCents: profitCents,
-      summary: crashed ? "Crash · multiplicador estourou" : `Crash · saque em ${(multiplierBps / 100).toFixed(2)}x`,
-      recordId: `crash_${gameId}`,
-      atMs: nowMs,
-      clanId: typeof profile.clanId === "string" ? profile.clanId : "",
-    }));
     const ledger = [];
     if (payoutCents > 0) ledger.push({ uid, id: `${requestId}_crash_payout`, description: crashed ? "Crash · encerrado" : "Crash · retirada", deltaCents: payoutCents, createdAt: SERVER_TIMESTAMP });
     if (progression.rewardCents > 0) ledger.push({ uid, id: `${requestId}_level_reward`, description: `Nível ${progression.level} · prêmio`, deltaCents: progression.rewardCents, type: "level_reward", createdAt: SERVER_TIMESTAMP });
@@ -4805,16 +4872,17 @@ async function startBlackjackMongo({ uid, amountCents, requestId }) {
       { path: requestRef.path, data: { response, createdAt: SERVER_TIMESTAMP } },
     ];
     if (hasNatural) {
-      projectionWrites.push(...minigameSettlementWrites(userRef.path, {
-        gameId: "blackjack",
-        gameName: "Blackjack",
-        outcome: payoutCents > amountCents ? "won" : payoutCents < amountCents ? "lost" : "tied",
-        netCents: profitCents,
-        summary: `Blackjack · ${game.outcome}`,
-        recordId: `blackjack_${game.gameId}`,
-        atMs: startedAtMs,
-        clanId: typeof profile.clanId === "string" ? profile.clanId : "",
-      }));
+      projectionWrites.push({
+        path: `${userRef.path}/gameHistory/blackjack_${game.gameId}`,
+        data: {
+          gameId: "blackjack",
+          gameName: "Blackjack",
+          outcome: payoutCents > amountCents ? "won" : payoutCents < amountCents ? "lost" : "tied",
+          netCents: profitCents,
+          summary: `Blackjack · ${game.outcome}`,
+          atMs: startedAtMs,
+        },
+      });
     }
     const operation = await store.applyOperation({
       operationId,
@@ -4826,7 +4894,7 @@ async function startBlackjackMongo({ uid, amountCents, requestId }) {
       projection: { writes: projectionWrites },
       result: { response, requestFingerprint: fingerprint },
     });
-    return { ...operation.result.response, balanceCents: operation.balances[uid] };
+    return operation.result.response;
   });
 }
 
@@ -5091,17 +5159,18 @@ async function blackjackActionMongo({ uid, gameId, requestId, action }) {
         },
       },
       { path: `leaderboard/${uid}`, data: { level: progression.level } },
+      {
+        path: `${userRef.path}/gameHistory/blackjack_${gameId}`,
+        data: {
+          gameId: "blackjack",
+          gameName: "Blackjack",
+          outcome: settlement.payoutCents > wagerCents ? "won" : settlement.payoutCents < wagerCents ? "lost" : "tied",
+          netCents: profitCents,
+          summary: `Blackjack · ${settlement.outcome}`,
+          atMs: actionAtMs,
+        },
+      },
     ];
-    projectionWrites.push(...minigameSettlementWrites(userRef.path, {
-      gameId: "blackjack",
-      gameName: "Blackjack",
-      outcome: settlement.payoutCents > wagerCents ? "won" : settlement.payoutCents < wagerCents ? "lost" : "tied",
-      netCents: profitCents,
-      summary: `Blackjack · ${settlement.outcome}`,
-      recordId: `blackjack_${gameId}`,
-      atMs: actionAtMs,
-      clanId: typeof profile.clanId === "string" ? profile.clanId : "",
-    }));
     const ledger = [];
     if (extraWagerCents > 0) ledger.push({ uid, id: `${requestId}_blackjack_double`, description: "Blackjack · dobrar aposta", deltaCents: -extraWagerCents, createdAt: SERVER_TIMESTAMP });
     if (settlement.payoutCents > 0) ledger.push({ uid, id: `${requestId}_blackjack_payout`, description: `Blackjack · ${settlement.outcome}`, deltaCents: settlement.payoutCents, createdAt: SERVER_TIMESTAMP });
@@ -5451,14 +5520,9 @@ exports.getWorkCareer = onCall(async (request) => {
   const linkedJid = profile.get("whatsappLink.jid");
   if (profile.get("career.legacyImported") !== true
       && typeof linkedJid === "string" && /^\d+@s\.whatsapp\.net$/.test(linkedJid)) {
-    let dashboard = null;
-    try {
-      dashboard = await consultarApiBotVinculado(linkedJid, "/api/integration/dashboard?sections=work");
-    } catch (error) {
-      console.error("Importação do emprego legado indisponível:", error.message);
-    }
-    const legacy = dashboard?.work?.legacyCareer;
-    if (dashboard) await database.runTransaction(async (transaction) => {
+    const dashboard = await consultarApiBotVinculado(linkedJid, "/api/integration/dashboard?sections=work");
+    const legacy = dashboard.work?.legacyCareer;
+    await database.runTransaction(async (transaction) => {
       const current = await transaction.get(userRef);
       if (!current.exists) throw new HttpsError("failed-precondition", "Perfil não encontrado.");
       const career = workCareerForProfile(current.data());
@@ -5484,10 +5548,6 @@ exports.getWorkCareer = onCall(async (request) => {
     profile = await userRef.get();
   }
   const data = profile.data();
-    const walletBalanceCents = isMongoFinancialMode() ? await (await getFinancialStore()).getBalance(uid) : null;
-  if (isMongoFinancialMode() && walletBalanceCents === null) {
-    throw new HttpsError("unavailable", "A carteira ainda não foi migrada.");
-  }
   const career = workCareerForProfile(data);
   const nowMs = Date.now();
   const currentJobBase = getWorkJob(career.jobSlug);
@@ -5512,9 +5572,7 @@ exports.getWorkCareer = onCall(async (request) => {
     career,
     currentJob,
     level: Number.isSafeInteger(data.level) && data.level > 0 ? data.level : 1,
-    balanceCents: isMongoFinancialMode()
-      ? walletBalanceCents
-      : Number.isSafeInteger(data.balanceCents) && data.balanceCents >= 0 ? data.balanceCents : 0,
+    balanceCents: Number.isSafeInteger(data.balanceCents) && data.balanceCents >= 0 ? data.balanceCents : 0,
     cooldownRemainingMs: career.lastShiftAtMs
       ? Math.max(0, WORK_COOLDOWN_MS - (nowMs - career.lastShiftAtMs))
       : 0,
@@ -6478,7 +6536,6 @@ exports.adminDeleteUser = onCall(async (request) => {
   if (profile.pixKeyHash) await database.collection("pixKeys").doc(profile.pixKeyHash).delete();
   await database.collection("leaderboard").doc(targetUid).delete();
   await database.recursiveDelete(userRef);
-  await (await getFinancialStore()).archiveWallet(targetUid);
   try {
     await getAuth().deleteUser(targetUid);
   } catch (error) {
@@ -7526,7 +7583,6 @@ async function migrarCarteiraWhatsApp(uid, jid, linkedAtMs) {
       operationId: `whatsapp-wallet-migration:${migrationId}`,
       operationType: "whatsapp_wallet_migration",
       entries: [{ uid, deltaCents: amountCents }],
-      minimumBalances: [{ uid, minimumBalanceCents: 0 }],
       ledger: [{
         uid,
         id: `whatsapp_migration_${migrationId}`,
@@ -7991,9 +8047,7 @@ exports.getLinkedWhatsAppEconomy = onCall(async (request) => {
   }
   const economy = await consultarApiBotVinculado(jid, "/api/integration/economy");
   const currentProfile = await userRef.get();
-  const balanceCents = isMongoFinancialMode()
-    ? await (await getFinancialStore()).getBalance(uid)
-    : currentProfile.get("balanceCents");
+  const balanceCents = currentProfile.get("balanceCents");
   if (!Number.isSafeInteger(balanceCents) || balanceCents < 0
       || !Number.isSafeInteger(economy.totalGold) || economy.totalGold < 0
       || !Number.isSafeInteger(economy.totalBankGold) || economy.totalBankGold < 0

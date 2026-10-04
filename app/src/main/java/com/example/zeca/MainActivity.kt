@@ -99,9 +99,7 @@ import com.google.firebase.auth.FirebaseUser
 import java.math.BigDecimal
 import java.text.NumberFormat
 
-private fun formatarValorNotificacao(centavos: Long): String =
-    NumberFormat.getCurrencyInstance(Locale.forLanguageTag("pt-BR"))
-        .format(BigDecimal.valueOf(centavos, 2))
+private fun formatarValorNotificacao(centavos: Long): String = AppCurrencyFormatter.format(centavos)
 
 enum class Aba(val titulo: String, val icone: ImageVector) {
     Inicio("Início", Icons.Filled.Home),
@@ -417,8 +415,17 @@ fun CassinoApp(
     var mostrarTrabalho by rememberSaveable { mutableStateOf(false) }
     var perfil by remember(usuario.uid) { mutableStateOf<PerfilJogador?>(null) }
     var erroPerfil by rememberSaveable { mutableStateOf("") }
+    var saldoFinanceiro by remember(usuario.uid) { mutableStateOf<Long?>(null) }
+    var carregandoSaldo by remember(usuario.uid) { mutableStateOf(true) }
+    var erroSaldo by remember(usuario.uid) { mutableStateOf("") }
     val ranking = remember { mutableStateListOf<JogadorRanking>() }
+    var carregandoRanking by remember(usuario.uid) { mutableStateOf(true) }
+    var erroRanking by remember(usuario.uid) { mutableStateOf("") }
     val movimentos = remember { mutableStateListOf<Movimento>() }
+    var carregandoMovimentos by remember(usuario.uid) { mutableStateOf(true) }
+    var erroMovimentos by remember(usuario.uid) { mutableStateOf("") }
+    val idsMovimentos = remember(usuario.uid) { mutableSetOf<String>() }
+    var movimentosCarregados by remember(usuario.uid) { mutableStateOf(false) }
     val itensComprados = remember { mutableStateListOf<String>() }
     val notificacoes = remember { mutableStateListOf<NotificacaoApp>() }
     var presencasChat by remember { mutableStateOf<List<PresencaChat>>(emptyList()) }
@@ -438,6 +445,74 @@ fun CassinoApp(
         if (notificacoes.none { it.id == notificacao.id }) {
             notificacoes.add(notificacao)
             if (notificacoes.size > 4) notificacoes.removeAt(0)
+        }
+    }
+
+    fun carregarSaldo() {
+        if (saldoFinanceiro == null) carregandoSaldo = true
+        FirebaseRepository.carregarSaldo { balance, error ->
+            if (balance != null) {
+                saldoFinanceiro = balance
+                erroSaldo = ""
+                carregandoSaldo = false
+            }
+            if (error != null) {
+                erroSaldo = error.localizedMessage ?: "Não foi possível atualizar o saldo."
+                carregandoSaldo = false
+            }
+        }
+    }
+
+    fun carregarRanking() {
+        if (ranking.isEmpty()) carregandoRanking = true
+        FirebaseRepository.carregarRanking { players, error ->
+            if (players != null) {
+                ranking.clear()
+                ranking.addAll(players)
+                erroRanking = ""
+                carregandoRanking = false
+            }
+            if (error != null) {
+                erroRanking = error.localizedMessage ?: "Não foi possível atualizar o ranking."
+                carregandoRanking = false
+            }
+        }
+    }
+
+    fun carregarMovimentos() {
+        if (movimentos.isEmpty()) carregandoMovimentos = true
+        FirebaseRepository.carregarMovimentos { recent, error ->
+            if (recent != null) {
+                if (movimentosCarregados) {
+                    recent.forEach { movimento ->
+                        if (idsMovimentos.add(movimento.id) && movimento.variacaoCentavos > 0L) {
+                            notificar(
+                                NotificacaoApp(
+                                    id = "movimento:${movimento.id}",
+                                    titulo = when {
+                                        movimento.ehPremioNivel -> "Novo nível alcançado!"
+                                        movimento.ehTransferenciaPix -> "Pix recebido"
+                                        else -> "Saldo recebido"
+                                    },
+                                    detalhe = "${movimento.titulo} · ${formatarValorNotificacao(movimento.variacaoCentavos)}",
+                                    aba = Aba.Carteira,
+                                ),
+                            )
+                        }
+                    }
+                } else {
+                    idsMovimentos.addAll(recent.map { it.id })
+                    movimentosCarregados = true
+                }
+                movimentos.clear()
+                movimentos.addAll(recent)
+                erroMovimentos = ""
+                carregandoMovimentos = false
+            }
+            if (error != null) {
+                erroMovimentos = error.localizedMessage ?: "Não foi possível carregar o extrato."
+                carregandoMovimentos = false
+            }
         }
     }
 
@@ -662,41 +737,16 @@ fun CassinoApp(
     }
 
     DisposableEffect(usuario.uid) {
-        val idsMovimentos = mutableSetOf<String>()
-        var movimentosCarregados = false
         val profileRegistration = FirebaseRepository.observarPerfil(usuario.uid) { perfil = it }
-        val rankingRegistration = FirebaseRepository.observarRanking { jogadores ->
-            ranking.clear()
-            ranking.addAll(jogadores)
-        }
-        val movementsRegistration = FirebaseRepository.observarMovimentos(usuario.uid) { recentes, fromCache ->
-            movimentos.clear()
-            movimentos.addAll(recentes)
-            if (fromCache) return@observarMovimentos
-            if (movimentosCarregados) {
-                recentes.forEach { movimento ->
-                    if (idsMovimentos.add(movimento.id) && movimento.variacaoCentavos > 0L) {
-                        val pixRecebido = movimento.ehTransferenciaPix
-                        val premioNivel = movimento.ehPremioNivel
-                        notificar(
-                            NotificacaoApp(
-                                id = "movimento:${movimento.id}",
-                                titulo = when {
-                                    premioNivel -> "Novo nível alcançado!"
-                                    pixRecebido -> "Pix recebido"
-                                    else -> "Saldo recebido"
-                                },
-                                detalhe = "${movimento.titulo} · ${formatarValorNotificacao(movimento.variacaoCentavos)}",
-                                aba = Aba.Carteira,
-                            ),
-                        )
-                    } else {
-                        idsMovimentos.add(movimento.id)
-                    }
-                }
-            } else {
-                idsMovimentos.addAll(recentes.map { it.id })
-                movimentosCarregados = true
+        val balanceRegistration = FirebaseRepository.observarSaldo { balance, error ->
+            if (balance != null) {
+                saldoFinanceiro = balance
+                erroSaldo = ""
+                carregandoSaldo = false
+            }
+            if (error != null) {
+                erroSaldo = error.localizedMessage ?: "Não foi possível atualizar o saldo."
+                if (saldoFinanceiro == null) carregandoSaldo = false
             }
         }
         val idsMensagensPrivadas = mutableMapOf<String, String>()
@@ -751,13 +801,25 @@ fun CassinoApp(
         }
         FirebaseRepository.garantirPerfil(usuario) { error ->
             erroPerfil = error?.localizedMessage.orEmpty()
+            if (error == null) carregarSaldo()
         }
         onDispose {
             profileRegistration.remove()
-            rankingRegistration.remove()
-            movementsRegistration.remove()
+            balanceRegistration.remove()
             conversationsRegistration.remove()
             globalMessagesRegistration.remove()
+        }
+    }
+
+    LaunchedEffect(usuario.uid, appForeground, aba) {
+        if (!appForeground) return@LaunchedEffect
+        if (aba == Aba.Inicio) carregarRanking()
+        if (aba == Aba.Carteira) carregarMovimentos()
+        while (true) {
+            delay(30_000)
+            carregarSaldo()
+            if (aba == Aba.Inicio) carregarRanking()
+            if (aba == Aba.Carteira) carregarMovimentos()
         }
     }
 
@@ -768,7 +830,9 @@ fun CassinoApp(
         if (notificacoes.firstOrNull()?.id == atual.id) notificacoes.removeAt(0)
     }
 
-    val jogador = perfil
+    val jogador = perfil?.let { profile ->
+        saldoFinanceiro?.let { balance -> profile.copy(saldoCentavos = balance) }
+    }
     if (bloqueioDispositivoAtivo && !dispositivoDesbloqueado) {
         Box(
             Modifier.fillMaxSize().background(Cores.Fundo),
@@ -793,11 +857,19 @@ fun CassinoApp(
             androidx.compose.foundation.layout.Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 androidx.compose.material3.CircularProgressIndicator(color = Cores.Verde)
                 androidx.compose.material3.Text(
-                    erroPerfil.ifBlank { "Carregando seu perfil..." },
+                    erroPerfil.ifBlank {
+                        erroSaldo.ifBlank {
+                            if (carregandoSaldo) "Carregando sua carteira..." else "Saldo temporariamente indisponível."
+                        }
+                    },
                     modifier = Modifier.padding(20.dp),
                     color = Color.White,
                 )
-                if (erroPerfil.isNotBlank()) {
+                if (perfil != null && erroSaldo.isNotBlank()) {
+                    androidx.compose.material3.TextButton(onClick = { carregarSaldo() }) {
+                        androidx.compose.material3.Text("Tentar novamente", color = Cores.Turquesa)
+                    }
+                } else if (erroPerfil.isNotBlank()) {
                     androidx.compose.material3.TextButton(onClick = { FirebaseRepository.sair() }) {
                         androidx.compose.material3.Text("Sair")
                     }
@@ -834,7 +906,9 @@ fun CassinoApp(
                             saldoCentavos = jogador.saldoCentavos,
                             atividadeRecente = movimentos.take(3).map { it.titulo },
                             ranking = ranking,
-                            erroSincronizacao = erroPerfil,
+                            erroSincronizacao = erroPerfil.ifBlank { erroSaldo },
+                            carregandoRanking = carregandoRanking,
+                            erroRanking = erroRanking,
                             ganhoTotalCentavos = jogador.ganhoTotalCentavos,
                             perdaTotalCentavos = jogador.perdaTotalCentavos,
                             onCarregarMissoes = { concluir -> FirebaseRepository.carregarMissoes(concluir) },
@@ -1119,6 +1193,9 @@ fun CassinoApp(
                             telefonePix = jogador.numeroTelefone,
                             telefonePixVerificado = jogador.telefoneVerificado,
                             historico = movimentos,
+                            erroFinanceiro = erroSaldo,
+                            carregandoHistorico = carregandoMovimentos,
+                            erroHistorico = erroMovimentos,
                             emailConta = usuario.email.orEmpty(),
                             emailVerificadoInicial = usuario.isEmailVerified,
                             onReenviarVerificacao = { concluir ->

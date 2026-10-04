@@ -1,0 +1,20 @@
+﻿C:\Users\Felipe\AndroidStudioProjects\Zeca\app\src\main\java\com\example\zeca\FirebaseRepository.kt:10: import com.google.firebase.functions.FirebaseFunctions
+C:\Users\Felipe\AndroidStudioProjects\Zeca\app\src\main\java\com\example\zeca\FirebaseRepository.kt:11: import com.google.firebase.functions.FirebaseFunctionsException
+C:\Users\Felipe\AndroidStudioProjects\Zeca\app\src\main\java\com\example\zeca\FirebaseRepository.kt:302: saldoCentavos = (this["balanceCents"] as? Number)?.toLong() ?: 0L,
+C:\Users\Felipe\AndroidStudioProjects\Zeca\app\src\main\java\com\example\zeca\FirebaseRepository.kt:809: val balance = (data?.get("balanceCents") as? Number)?.toLong()
+C:\Users\Felipe\AndroidStudioProjects\Zeca\app\src\main\java\com\example\zeca\FirebaseRepository.kt:1595: saldoCentavos = (it["balanceCents"] as? Number)?.toLong() ?: 0L,
+C:\Users\Felipe\AndroidStudioProjects\Zeca\app\src\main\java\com\example\zeca\FirebaseRepository.kt:1621: saldoCentavos = (it["balanceCents"] as? Number)?.toLong() ?: 0L,
+C:\Users\Felipe\AndroidStudioProjects\Zeca\app\src\main\java\com\example\zeca\FirebaseRepository.kt:1669: saldoCentavos = (it["balanceCents"] as? Number)?.toLong() ?: 0L,
+C:\Users\Felipe\AndroidStudioProjects\Zeca\app\src\main\java\com\example\zeca\FirebaseRepository.kt:1715: saldoCentavos = (it["balanceCents"] as? Number)?.toLong() ?: 0L,
+C:\Users\Felipe\AndroidStudioProjects\Zeca\app\src\main\java\com\example\zeca\FirebaseRepository.kt:1792: saldoCentavos = (user["balanceCents"] as? Number)?.toLong() ?: 0L,
+C:\Users\Felipe\AndroidStudioProjects\Zeca\app\src\main\java\com\example\zeca\FirebaseRepository.kt:1827: saldoCentavos = (user["balanceCents"] as? Number)?.toLong() ?: 0L,
+C:\Users\Felipe\AndroidStudioProjects\Zeca\app\src\main\java\com\example\zeca\FirebaseRepository.kt:1859: saldoCentavos = (user["balanceCents"] as? Number)?.toLong() ?: 0L,
+C:\Users\Felipe\AndroidStudioProjects\Zeca\app\src\main\java\com\example\zeca\FirebaseRepository.kt:2223: ) { data, error -> callback((data?.get("balanceCents") as? Number)?.toLong(), error) }
+C:\Users\Felipe\AndroidStudioProjects\Zeca\app\src\main\java\com\example\zeca\FirebaseRepository.kt:2348: saldoCentavos = long(data["balanceCents"]),
+C:\Users\Felipe\AndroidStudioProjects\Zeca\app\src\main\java\com\example\zeca\FirebaseRepository.kt:2396: saldoCentavos = (data["balanceCents"] as? Number)?.toLong() ?: 0L,
+C:\Users\Felipe\AndroidStudioProjects\Zeca\app\src\main\java\com\example\zeca\FirebaseRepository.kt:2989: val balance = (data?.get("balanceCents") as? Number)?.toLong()
+C:\Users\Felipe\AndroidStudioProjects\Zeca\app\src\main\java\com\example\zeca\FirebaseRepository.kt:3048: connection.setRequestProperty("X-Zeca-App-Version", BuildConfig.VERSION_CODE.toString())
+C:\Users\Felipe\AndroidStudioProjects\Zeca\app\src\main\java\com\example\zeca\FirebaseRepository.kt:3080: conexao.setRequestProperty("X-Zeca-App-Version", BuildConfig.VERSION_CODE.toString())
+C:\Users\Felipe\AndroidStudioProjects\Zeca\app\src\main\java\com\example\zeca\FirebaseRepository.kt:3124: if (erro !is FirebaseFunctionsException || erro.code != FirebaseFunctionsException.Code.NOT_FOUND) {
+C:\Users\Felipe\AndroidStudioProjects\Zeca\app\src\main\java\com\example\zeca\FirebaseRepository.kt:3179: saldoCentavos = (data["balanceCents"] as? Number)?.toLong() ?: 0L,
+C:\Users\Felipe\AndroidStudioProjects\Zeca\app\src\main\java\com\example\zeca\FirebaseRepository.kt:3252: saldoCentavos = (this["balanceCents"] as? Number)?.toLong() ?: 0L,

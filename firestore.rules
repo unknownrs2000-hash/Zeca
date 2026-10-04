@@ -185,88 +185,24 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if activeUser() && request.auth.uid == userId;
-      allow create: if validInitialProfile(userId);
+      allow create: if false;
       allow delete: if false;
       allow update: if activeUser()
         && request.auth.uid == userId
-        && (
-          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName'])
-            && validDisplayName(request.resource.data.displayName))
-          || isOneTimeBalanceInitialization()
-          || isAvatarDefaultsMigration()
-          || (
-            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['balanceCents', 'inventory', 'lastPurchaseId'])
-            && request.resource.data.diff(resource.data).affectedKeys().size() == 3
-            && validCosmeticPurchase(userId, request.resource.data.get('lastPurchaseId', ''))
-          )
-        );
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName'])
+        && validDisplayName(request.resource.data.displayName);
 
       match /transactions/{transactionId} {
-        allow read: if activeUser() && request.auth.uid == userId;
-        allow create: if request.resource.data.keys().hasOnly(['description', 'deltaCents', 'itemId', 'createdAt'])
-          && validCosmeticPurchase(userId, transactionId);
-        allow update, delete: if false;
+        allow read, write: if false;
       }
 
       match /purchases/{purchaseId} {
-        allow read: if activeUser() && request.auth.uid == userId;
-        allow create: if request.resource.data.keys().hasOnly(['uid', 'itemId', 'amountCents', 'createdAt'])
-          && validCosmeticPurchase(userId, purchaseId);
-        allow update, delete: if false;
+        allow read, write: if false;
       }
     }
 
     match /leaderboard/{userId} {
-      allow read: if activeUser();
-      allow create: if activeUser()
-        && request.auth.uid == userId
-        && request.resource.data.keys().hasOnly([
-          'displayName', 'balanceCents', 'level', 'avatarUrl', 'username',
-          'avatarAsProfilePhoto', 'equippedAvatarItems', 'equippedFrame'
-        ])
-        && request.resource.data.avatarUrl is string
-        && request.resource.data.username is string
-        && request.resource.data.avatarAsProfilePhoto is bool
-        && request.resource.data.equippedAvatarItems is list
-        && request.resource.data.get('equippedFrame', '') == ''
-        && request.resource.data.username
-          == getAfter(/databases/$(database)/documents/users/$(userId)).data.username
-        && request.resource.data.displayName
-          == getAfter(/databases/$(database)/documents/users/$(userId)).data.displayName
-        && request.resource.data.balanceCents
-          == getAfter(/databases/$(database)/documents/users/$(userId)).data.balanceCents
-        && request.resource.data.level
-          == getAfter(/databases/$(database)/documents/users/$(userId)).data.level
-        && request.resource.data.avatarUrl
-          == getAfter(/databases/$(database)/documents/users/$(userId)).data.avatarUrl
-        && request.resource.data.avatarAsProfilePhoto
-          == getAfter(/databases/$(database)/documents/users/$(userId)).data.avatarAsProfilePhoto
-        && request.resource.data.equippedAvatarItems
-          == getAfter(/databases/$(database)/documents/users/$(userId)).data.equippedAvatarItems;
-      allow delete: if false;
-      allow update: if activeUser()
-        && request.auth.uid == userId
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'displayName', 'balanceCents', 'username', 'level', 'avatarUrl',
-          'avatarAsProfilePhoto', 'equippedAvatarItems', 'equippedFrame'
-        ])
-        && validDisplayName(request.resource.data.displayName)
-        && request.resource.data.displayName
-          == getAfter(/databases/$(database)/documents/users/$(userId)).data.displayName
-        && request.resource.data.balanceCents
-          == getAfter(/databases/$(database)/documents/users/$(userId)).data.balanceCents
-        && request.resource.data.username
-          == getAfter(/databases/$(database)/documents/users/$(userId)).data.username
-        && request.resource.data.level
-          == getAfter(/databases/$(database)/documents/users/$(userId)).data.level
-        && request.resource.data.avatarUrl
-          == getAfter(/databases/$(database)/documents/users/$(userId)).data.avatarUrl
-        && request.resource.data.avatarAsProfilePhoto
-          == getAfter(/databases/$(database)/documents/users/$(userId)).data.avatarAsProfilePhoto
-        && request.resource.data.equippedAvatarItems
-          == getAfter(/databases/$(database)/documents/users/$(userId)).data.equippedAvatarItems
-        && request.resource.data.get('equippedFrame', '')
-          == getAfter(/databases/$(database)/documents/users/$(userId)).data.get('equippedFrame', '');
+      allow read, write: if false;
     }
 
     match /usernames/{username} {

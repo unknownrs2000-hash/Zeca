@@ -1,0 +1,303 @@
+﻿240: exports._calculateCurrencyTransfer = calculateCurrencyTransfer;
+241: exports._normalizePixKey = normalizePixKey;
+303: played: FieldValue.increment(1),
+304: wins: FieldValue.increment(won ? 1 : 0),
+305: losses: FieldValue.increment(lost ? 1 : 0),
+306: ties: FieldValue.increment(tied ? 1 : 0),
+307: netCents: FieldValue.increment(netCents),
+308: currentStreak: won ? FieldValue.increment(1) : 0,
+320: progress: FieldValue.increment(1),
+324: weeklyScores: { [week]: FieldValue.increment(won ? 1 : 0) },
+543: totalWonCents: FieldValue.increment(profitCents > 0 ? profitCents : 0),
+544: totalLostCents: FieldValue.increment(profitCents < 0 ? -profitCents : 0),
+569: exports.ensurePlayerProfile = onCall(async (request) => {
+577: exports.ensurePlayerProfile = onCall(async (request) => {
+585: const financialStore = await getFinancialStore();
+601: delete existing.balanceCents;
+665: const balanceCents = wallet.balanceCents;
+674: balanceCents,
+703: balanceCents: profile.balanceCents,
+725: exports.updatePlayerProfile = onCall(async (request) => {
+802: exports.registerPixKey = onCall(async (request) => {
+855: exports.lookupPixKey = onCall(async (request) => {
+898: const store = await getFinancialStore();
+908: const balanceCents = await store.getBalance(senderUid);
+909: if (balanceCents === null) throw new HttpsError("unavailable", "A carteira ainda não foi migrada.");
+913: balanceCents,
+941: balanceCents: settled.balances[senderUid],
+1079: return { ...operation.result.response, balanceCents: operation.balances[senderUid] };
+1082: exports.transferByPixKey = onCall(async (request) => {
+1111: balanceCents: prior.senderBalanceAfter,
+1186: balanceCents: prior.senderBalanceAfter,
+1239: const senderBalance = sender.balanceCents || 0;
+1240: const recipientBalance = recipient.balanceCents || 0;
+1250: transaction.update(senderRef, { balanceCents: senderAfter });
+1251: transaction.update(recipientRef, { balanceCents: recipientAfter });
+1252: transaction.update(senderRankRef, { balanceCents: senderAfter });
+1253: transaction.update(recipientRankRef, { balanceCents: recipientAfter });
+1301: totalFeeCents: FieldValue.increment(feeCents),
+1302: transferCount: FieldValue.increment(1),
+1332: balanceCents: senderAfter,
+1361: const store = await getFinancialStore();
+1390: const balanceCents = await store.getBalance(uid);
+1391: if (balanceCents === null) throw new HttpsError("unavailable", "A carteira ainda não foi migrada.");
+1392: return { ...legacyRequest.get("response"), balanceCents };
+1485: balanceCents: balanceFinal,
+1614: minimumBalances: [{ uid, minimumBalanceCents: amountCents }],
+1624: exports.playGame = onCall(async (request) => {
+1678: const balance = profile.balanceCents || 0;
+1749: balanceCents: balanceFinal,
+1758: transaction.update(rankRef, { balanceCents: balanceFinal, level: progression.level });
+1787: balanceCents: balanceFinal,
+1801: exports.startSoloChallenge = onCall(async (request) => {
+1821: const balanceCents = profile.get("balanceCents") || 0;
+1822: if (balanceCents < amountCents) {
+1848: exports.queueJokenpoMatch = onCall(async (request) => {
+1946: exports.cancelJokenpoQueue = onCall(async (request) => {
+1962: exports.requestJokenpoRematch = onCall(async (request) => {
+2057: exports.submitJokenpoChoice = onCall(async (request) => {
+2175: exports.listFootballMatches = onCall(async (request) => {
+2206: exports.listMySportsBets = onCall(async (request) => {
+2219: const store = await getFinancialStore();
+2261: const balanceCents = await store.getBalance(uid);
+2262: if (balanceCents === null) throw new HttpsError("unavailable", "A carteira ainda não foi migrada.");
+2263: return { betId: requestId, status: prior.status, oddsBps: prior.oddsBps, payoutPotentialCents: prior.payoutPotentialCents, balanceCents };
+2303: const response = { betId: requestId, status: "open", oddsBps, payoutPotentialCents, balanceCents: balanceAfter };
+2309: minimumBalances: [{ uid, minimumBalanceCents: amountCents }],
+2327: exports.placeSportsBet = onCall(async (request) => {
+2422: const balanceCents = userSnapshot.get("balanceCents") || 0;
+2423: if (balanceCents < amountCents) throw new HttpsError("failed-precondition", "Saldo insuficiente.");
+2424: const balanceAfter = balanceCents - amountCents;
+2457: transaction.update(userRef, { balanceCents: balanceAfter });
+2458: transaction.update(rankRef, { balanceCents: balanceAfter });
+2467: response = { betId: requestId, status: "open", oddsBps, payoutPotentialCents, balanceCents: balanceAfter };
+2474: const store = await getFinancialStore();
+2580: minimumBalances: [{ uid, minimumBalanceCents: 0 }],
+2603: response: { settledCount: 1, betId, balanceCents: balanceAfter },
+2611: exports.settleMySportsBets = onCall(async (request) => {
+2686: const balanceCents = (profile.balanceCents || 0) + payoutCents
+2688: if (!Number.isSafeInteger(balanceCents)) throw new HttpsError("failed-precondition", "Saldo resultante inválido.");
+2690: balanceCents,
+2699: transaction.update(rankRef, { balanceCents, level: progression.level });
+2750: const store = await getFinancialStore();
+2811: minimumBalances: [{ uid, minimumBalanceCents: amountCents }],
+2833: exports.startMines = onCall(async (request) => {
+2888: const balance = profile.balanceCents || 0;
+2904: transaction.update(userRef, { balanceCents: balanceAfter, lastGameActionAtMs: startedAtMs });
+2905: transaction.update(rankRef, { balanceCents: balanceAfter });
+2919: exports.getActiveMines = onCall(async (request) => {
+2927: const store = await getFinancialStore();
+2989: balanceCents: balanceFinal,
+3039: minimumBalances: [{ uid, minimumBalanceCents: 0 }],
+3049: exports.revealMinesCell = onCall(async (request) => {
+3096: const balanceFinal = (profile.balanceCents || 0) + progression.rewardCents + missions.totalRewardCents;
+3102: balanceCents: balanceFinal,
+3111: transaction.update(rankRef, { balanceCents: balanceFinal, level: progression.level });
+3135: balanceCents: balanceFinal,
+3160: const store = await getFinancialStore();
+3221: balanceCents: balanceFinal,
+3286: minimumBalances: [{ uid, minimumBalanceCents: 0 }],
+3296: exports.cashOutMines = onCall(async (request) => {
+3344: const balanceAfterPayout = (profile.balanceCents || 0) + payout.payoutCents;
+3350: balanceCents: balanceFinal,
+3359: transaction.update(rankRef, { balanceCents: balanceFinal, level: progression.level });
+3391: balanceCents: balanceFinal,
+3498: exports._cleanupExpiredTugRooms = cleanupExpiredTugRooms;
+3518: const balanceCents = (userSnapshot.get("balanceCents") || 0) + room.stakeCents;
+3519: transaction.update(userSnapshot.ref, { balanceCents });
+3520: transaction.update(rankSnapshot.ref, { balanceCents });
+3545: exports.listTugRooms = onCall(async (request) => {
+3622: exports.getTugRoomPresets = onCall(async (request) => {
+3629: exports.saveTugRoomPresets = onCall(async (request) => {
+3656: exports.getTugRoomMessages = onCall(async (request) => {
+3673: exports.sendTugRoomMessage = onCall(async (request) => {
+3711: exports.createTugRoom = onCall(async (request) => {
+3764: const balance = profile.balanceCents || 0;
+3766: transaction.update(userRef, { balanceCents: balance - stakeCents });
+3767: transaction.update(rankRef, { balanceCents: balance - stakeCents });
+3809: exports.joinTugRoom = onCall(async (request) => {
+3858: const balance = userSnapshot.get("balanceCents") || 0;
+3874: transaction.update(userRef, { balanceCents: balance - room.stakeCents });
+3875: transaction.update(rankRef, { balanceCents: balance - room.stakeCents });
+3890: exports.manageTugRoom = onCall(async (request) => {
+3984: if (difference > 0 && stakePlayers.some((player) => (player.userSnapshot.get("balanceCents") || 0) < difference)) {
+4006: const balance = player.userSnapshot.get("balanceCents") || 0;
+4008: transaction.update(player.userSnapshot.ref, { balanceCents: balance - difference });
+4009: transaction.update(player.rankSnapshot.ref, { balanceCents: balance - difference });
+4058: const refundedBalance = (player.userSnapshot.get("balanceCents") || 0) + room.stakeCents;
+4059: transaction.update(player.userSnapshot.ref, { balanceCents: refundedBalance });
+4060: transaction.update(player.rankSnapshot.ref, { balanceCents: refundedBalance });
+4092: const refundedBalance = (kicked.userSnapshot.get("balanceCents") || 0) + room.stakeCents;
+4093: transaction.update(kicked.userSnapshot.ref, { balanceCents: refundedBalance });
+4094: transaction.update(kicked.rankSnapshot.ref, { balanceCents: refundedBalance });
+4118: exports.startTugRoom = onCall(async (request) => {
+4155: exports.pullTugRope = onCall(async (request) => {
+4226: const balanceCents = (profile.balanceCents || 0)
+4230: if (!Number.isSafeInteger(balanceCents)) throw new HttpsError("failed-precondition", "Saldo resultante inválido.");
+4231: return { won, gamesPlayed, progression, missions, profitCents, balanceCents, wins: (profile.wins || 0) + (won ? 1 : 0) };
+4235: balanceCents: settlement.balanceCents,
+4243: transaction.update(rankRefs[index], { balanceCents: settlement.balanceCents, level: settlement.progression.level });
+4283: const store = await getFinancialStore();
+4333: minimumBalances: [{ uid, minimumBalanceCents: amountCents }],
+4357: const store = await getFinancialStore();
+4414: balanceCents: balanceFinal,
+4459: minimumBalances: [{ uid, minimumBalanceCents: 0 }],
+4469: exports.startCrash = onCall(async (request) => {
+4518: const balance = profile.balanceCents || 0;
+4523: transaction.update(userRef, { balanceCents: balanceAfter, lastGameActionAtMs: startedAtMs });
+4524: transaction.update(rankRef, { balanceCents: balanceAfter });
+4545: exports.cashOutCrash = onCall(async (request) => {
+4593: const balanceAfter = (profile.balanceCents || 0) + payoutCents;
+4606: balanceCents: balanceFinal,
+4615: transaction.update(rankRef, { balanceCents: balanceFinal, level: progression.level });
+4647: balanceCents: balanceFinal,
+4673: balanceCents: game.balanceCents,
+4681: const store = await getFinancialStore();
+4747: balanceCents: walletBalance + totalDeltaCents,
+4815: minimumBalances: [{ uid, minimumBalanceCents: amountCents }],
+4825: exports.startBlackjack = onCall(async (request) => {
+4872: const balance = profile.balanceCents || 0;
+4903: initialGame.balanceCents = balanceAfter;
+4913: balanceCents: balanceAfter,
+4924: balanceCents: balanceAfter,
+4965: const store = await getFinancialStore();
+5024: minimumBalances: [{ uid, minimumBalanceCents: 0 }],
+5062: balanceCents: balanceFinal,
+5107: minimumBalances: [{ uid, minimumBalanceCents: extraWagerCents }],
+5117: exports.blackjackAction = onCall(async (request) => {
+5176: if ((profile.balanceCents || 0) < wagerCents) {
+5210: const balanceBeforePayout = (profile.balanceCents || 0) - extraWagerCents;
+5233: balanceCents: balanceFinal,
+5240: balanceCents: balanceFinal,
+5249: transaction.update(rankRef, { balanceCents: balanceFinal, level: progression.level });
+5285: const store = await getFinancialStore();
+5313: balanceCents: balanceBefore - priceCents,
+5322: minimumBalances: [{ uid, minimumBalanceCents: priceCents }],
+5344: exports.buyCosmetic = onCall(async (request) => {
+5376: const balance = profile.balanceCents || 0;
+5383: balanceCents: balanceAfter,
+5386: transaction.update(rankRef, { balanceCents: balanceAfter });
+5394: response = { itemId, balanceCents: balanceAfter, priceCents, basePriceCents: product.priceCents };
+5439: exports.getWorkCareer = onCall(async (request) => {
+5499: balanceCents: Number.isSafeInteger(data.balanceCents) && data.balanceCents >= 0 ? data.balanceCents : 0,
+5511: exports.applyWorkJob = onCall(async (request) => {
+5547: exports.resignWorkJob = onCall(async (request) => {
+5569: exports.promoteWorkCareer = onCall(async (request) => {
+5590: exports.startWorkShift = onCall(async (request) => {
+5638: const store = await getFinancialStore();
+5664: if (oldResponse) return { ...oldResponse, balanceCents: walletBalance ?? oldResponse.balanceCents };
+5696: balanceCents: balanceAfter,
+5731: exports.completeWorkShift = onCall(async (request) => {
+5780: const balanceCents = profile.balanceCents || 0;
+5781: if (!Number.isSafeInteger(balanceCents) || balanceCents < 0
+5782: || !Number.isSafeInteger(balanceCents + salaryCents)) {
+5791: const balanceAfter = balanceCents + salaryCents;
+5798: balanceCents: balanceAfter,
+5804: transaction.update(userRef, { balanceCents: balanceAfter, career: nextCareer });
+5805: transaction.update(rankRef, { balanceCents: balanceAfter });
+5825: exports.equipFrame = onCall(async (request) => {
+5855: exports.equipTitle = onCall(async (request) => {
+5881: exports.equipAvatarItem = onCall(async (request) => {
+5920: exports.getPlayerProfile = onCall(async (request) => {
+5951: const financialStore = await getFinancialStore();
+5952: const balanceCents = await financialStore.getBalance(targetUid);
+5953: if (balanceCents === null) throw new HttpsError("unavailable", "A carteira deste jogador ainda não foi migrada.");
+5963: balanceCents,
+5974: exports.getGameSettings = onCall(async (request) => {
+5985: exports.getMissions = onCall(async (request) => {
+5992: exports.adminUpdateGameSettings = onCall(async (request) => {
+6044: exports.adminListUsers = onCall(async (request) => {
+6053: const financialStore = await getFinancialStore();
+6073: balanceCents: balances[index],
+6085: exports.adminGetUserDetails = onCall(async (request) => {
+6092: const financialStore = await getFinancialStore();
+6093: const [userSnapshot, balanceCents, transactions] = await Promise.all([
+6099: if (balanceCents === null) throw new HttpsError("unavailable", "A carteira desta conta ainda não foi migrada.");
+6114: balanceCents,
+6138: exports.adminUpdateUserInventory = onCall(async (request) => {
+6221: exports.adminAdjustBalance = onCall(async (request) => {
+6238: const financialStore = await getFinancialStore();
+6281: return { ...operation.result, balanceCents: operation.balances[targetUid] };
+6284: exports.adminSetUserBlocked = onCall(async (request) => {
+6363: exports.adminDeleteUser = onCall(async (request) => {
+6480: exports.createChatGroup = onCall(async (request) => {
+6546: exports.updateChatGroup = onCall(async (request) => {
+6576: exports.manageChatGroupMembers = onCall(async (request) => {
+6653: exports.dissolveChatGroup = onCall(async (request) => {
+6673: exports.updateChatGroupPhoto = onCall(async (request) => {
+6701: exports.renameChatFlame = onCall(async (request) => {
+6720: exports.editChatMessage = onCall(async (request) => {
+6755: exports.signChatAudioUpload = onCall(async (request) => {
+6808: exports.sendChatMessage = onCall(async (request) => {
+7001: exports.getSocialDashboard = onCall(async (request) => {
+7126: exports.getAccountSettings = onCall(async (request) => {
+7195: exports.createWhatsAppLinkCode = onCall(async (request) => {
+7220: exports.setAccountCountry = onCall(async (request) => {
+7260: exports.getAccountCurrency = onCall(async (request) => {
+7291: exports.getLeaderboardCurrencyInfo = onCall(async (request) => {
+7322: exports.unlinkWhatsAppAccount = onCall(async (request) => {
+7505: const store = await getFinancialStore();
+7566: const balanceCents = userSnapshot.get("balanceCents") ?? 0;
+7567: if (!Number.isSafeInteger(balanceCents) || balanceCents < 0) {
+7570: const nextBalanceCents = balanceCents + amountCents;
+7571: if (!Number.isSafeInteger(nextBalanceCents)) {
+7581: balanceCents: nextBalanceCents,
+7585: transaction.update(rankRef, { balanceCents: nextBalanceCents });
+7603: const store = await getFinancialStore();
+7610: return { linked: true, balanceCents: currentBalance, countryCode, currencyCode, rate, rateDate };
+7621: return { linked: true, recipientLinked: false, balanceCents: currentBalance, countryCode, currencyCode, rate, rateDate };
+7646: return { ...existing.result.response, balanceCents: existing.balances[uid] };
+7655: return { linked: true, balanceCents: currentBalance, countryCode, currencyCode, rate, rateDate };
+7703: balanceCents: { $walletBalance: uid },
+7710: return { ...operation.result.response, balanceCents: operation.balances[uid] };
+7713: exports._operateWhatsAppWallet = async (request) => {
+7775: let balanceCents;
+7781: balanceCents = accountSnapshot.get("balanceCents") ?? 0;
+7792: return { linked: true, recipientLinked: false, balanceCents, countryCode, currencyCode, rate, rateDate };
+7826: result = operationSnapshot.get("balanceCents");
+7829: const currentBalance = userSnapshot.get("balanceCents") ?? 0;
+7844: const recipientBalance = recipientSnapshot.get("balanceCents") ?? 0;
+7866: balanceCents: senderBalanceAfter,
+7869: transaction.update(userRef, { balanceCents: senderBalanceAfter });
+7870: if (rankSnapshot.exists) transaction.update(rankRef, { balanceCents: senderBalanceAfter });
+7880: transaction.update(recipientRef, { balanceCents: recipientNextBalance });
+7881: if (recipientRank?.exists) transaction.update(recipientRankRef, { balanceCents: recipientNextBalance });
+7892: balanceCents = result;
+7895: if (!Number.isSafeInteger(balanceCents) || balanceCents < 0) {
+7898: return { linked: true, balanceCents, countryCode, currencyCode, rate, rateDate };
+7901: exports._operateWhatsAppCareer = async (request) => {
+7957: exports.getLinkedWhatsAppEconomy = onCall(async (request) => {
+7974: const balanceCents = currentProfile.get("balanceCents");
+7975: if (!Number.isSafeInteger(balanceCents) || balanceCents < 0
+7981: return { ...economy, totalGold: balanceCents, totalBankGold: 0 };
+7993: exports.getLinkedWhatsAppDashboard = onCall(async (request) => {
+8055: exports.claimWhatsAppMissionReward = onCall(async (request) => {
+8115: exports._completeWhatsAppLink = async (request) => {
+8205: exports.saveAccountSettings = onCall(async (request) => {
+8285: exports.manageFriend = onCall(async (request) => {
+8350: exports.publishAppAnnouncement = onCall(async (request) => {
+8374: exports.createSupportTicket = onCall(async (request) => {
+8400: exports.adminListSupportTickets = onCall(async (request) => {
+8417: exports.createSocialClan = onCall(async (request) => {
+8511: exports.joinSocialClan = onCall(async (request) => {
+8515: exports.joinSocialClanByInvite = onCall(async (request) => {
+8524: exports.requestSocialClanJoin = onCall(async (request) => {
+8545: exports.inviteSocialClanMember = onCall(async (request) => {
+8579: exports.acceptSocialClanInvite = onCall(async (request) => {
+8618: exports.approveSocialClanRequest = onCall(async (request) => {
+8659: exports.removeSocialClanMember = onCall(async (request) => {
+8682: exports.leaveSocialClan = onCall(async (request) => {
+8715: const store = await getFinancialStore();
+8743: return { ok: true, balanceCents: walletBalance };
+8751: const response = { ok: true, balanceCents: balanceAfter };
+8778: exports.claimWeeklyEventReward = onCall(async (request) => {
+8788: let balanceCents = 0;
+8800: balanceCents = profile.balanceCents || 0;
+8807: balanceCents = (profile.balanceCents || 0) + rewardCents;
+8808: if (!Number.isSafeInteger(balanceCents)) throw new HttpsError("failed-precondition", "Saldo resultante inválido.");
+8810: balanceCents,
+8813: transaction.update(rankRef, { balanceCents });
+8823: return { ok: true, balanceCents };
+8826: exports.submitPlayerReport = onCall(async (request) => {
+8864: exports.adminListPlayerReports = onCall(async (request) => {
+8876: exports.adminModeratePlayerReport = onCall(async (request) => {

@@ -1,0 +1,28 @@
+﻿ m Whatsapp
+ M app/build.gradle.kts
+ M app/src/main/java/com/example/zeca/FirebaseRepository.kt
+ M app/src/main/java/com/example/zeca/MainActivity.kt
+ M app/src/main/java/com/example/zeca/ui/TelaAdmin.kt
+ M app/src/main/java/com/example/zeca/ui/TelaApostasEsportivas.kt
+ M app/src/main/java/com/example/zeca/ui/TelaCaboGuerra.kt
+ M app/src/main/java/com/example/zeca/ui/TelaInicio.kt
+ M app/src/main/java/com/example/zeca/ui/TelasAbas.kt
+ M firestore.rules
+ M functions/firestore-rules.test.js
+ M functions/index.js
+ M functions/index.test.js
+ M functions/package-lock.json
+ M functions/package.json
+ M functions/server.js
+?? .diag/
+?? functions/financial-mode.js
+?? functions/financial-mode.test.js
+?? functions/financial-mongo.js
+?? functions/financial-projection.js
+?? functions/financial-projection.test.js
+?? functions/financial-runtime.js
+?? functions/financial-runtime.test.js
+?? functions/financial-store.js
+?? functions/financial-store.test.js
+?? functions/scripts/financial-migration-lib.js
+?? functions/scripts/prepare-tug-cutover.js

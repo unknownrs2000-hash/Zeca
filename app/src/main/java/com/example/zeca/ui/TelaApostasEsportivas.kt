@@ -316,9 +316,7 @@ private fun calcularOddMultiplaBps(pernas: List<PernaApostaEsportiva>): Long? {
     return odd.toLong()
 }
 
-private fun formatarSaldoEsportivo(centavos: Long): String =
-    NumberFormat.getCurrencyInstance(Locale.forLanguageTag("pt-BR"))
-        .format(BigDecimal.valueOf(centavos, 2))
+private fun formatarSaldoEsportivo(centavos: Long): String = AppCurrencyFormatter.format(centavos)
 
 private fun formatarHorarioEsportivo(timestampMs: Long): String =
     SimpleDateFormat("dd/MM HH:mm", Locale.forLanguageTag("pt-BR")).format(Date(timestampMs))

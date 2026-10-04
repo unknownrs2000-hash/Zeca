@@ -896,9 +896,7 @@ private fun TugRopeVisual(lead: Int) {
     }
 }
 
-private fun formatarSaldoTug(centavos: Long): String =
-    NumberFormat.getCurrencyInstance(Locale.forLanguageTag("pt-BR"))
-        .format(BigDecimal.valueOf(centavos, 2))
+private fun formatarSaldoTug(centavos: Long): String = AppCurrencyFormatter.format(centavos)
 
 private fun parseSaldoTug(valor: String): Long? = runCatching {
     BigDecimal(valor.trim().replace(',', '.')).movePointRight(2).longValueExact()

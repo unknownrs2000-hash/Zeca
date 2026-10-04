@@ -195,17 +195,13 @@ async function writePrivateMessage(senderUid, recipientUid, messageId, senderUid
   });
 }
 
-test("allows purchase with fixed catalog price and atomically debits/inserts receipt", async () => {
+test("denies direct client access to balance, ranking, transactions, and cosmetic purchases", async () => {
   const uid = "player-valid";
   await seedPlayer(uid);
-  const balanceAfter = await assertSucceeds(purchase(uid, "frame_aurora"));
-  assert.equal(balanceAfter, 48_701);
-
   const database = environment.authenticatedContext(uid).firestore();
-  const profile = await getDoc(doc(database, "users", uid));
-  assert.equal(profile.data().balanceCents, 48_701);
-  assert.deepEqual(profile.data().inventory, ["frame_aurora"]);
-  assert.equal(profile.data().lastPurchaseId, "purchase-test-0001");
+  await assertFails(getDoc(doc(database, "leaderboard", uid)));
+  await assertFails(getDoc(doc(database, "users", uid, "transactions", "purchase-test-0001")));
+  await assertFails(purchase(uid, "frame_aurora"));
 });
 
 test("denies arbitrary balance changes", async () => {
@@ -222,10 +218,10 @@ test("denies altered cosmetic prices and unknown catalog items", async () => {
   await assertFails(purchase(uid, "admin_item", "purchase-unknown-item", 1));
 });
 
-test("denies duplicate cosmetic ownership", async () => {
+test("denies client cosmetic purchases regardless of ownership or request ID", async () => {
   const uid = "player-duplicate";
   await seedPlayer(uid);
-  await assertSucceeds(purchase(uid, "title_lucky", "purchase-title-valid"));
+  await assertFails(purchase(uid, "title_lucky", "purchase-title-valid"));
   await assertFails(purchase(uid, "title_lucky", "purchase-title-again"));
 });
 
@@ -351,10 +347,10 @@ test("allows only the message author to edit text within the chat limit", async 
   await assertFails(updateDoc(messageRef(author), { text: "x".repeat(501), editedAt: serverTimestamp() }));
 });
 
-test("allows a new account to create an incomplete profile before choosing its username", async () => {
+test("denies direct profile and initial wallet creation from a new client", async () => {
   const uid = "new-profile-user";
   const database = environment.authenticatedContext(uid).firestore();
-  await assertSucceeds(runTransaction(database, async (transaction) => {
+  await assertFails(runTransaction(database, async (transaction) => {
     transaction.set(doc(database, "users", uid), {
       uid,
       displayName: "Jogador Novo",
@@ -440,17 +436,13 @@ test("group members cannot edit streak or last-message metadata directly", async
   }));
 });
 
-test("allows purchase of a priced avatar cosmetic", async () => {
+test("denies direct purchase of a priced avatar cosmetic", async () => {
   const uid = "avatar-buyer";
   await seedPlayer(uid);
-  await assertSucceeds(purchase(uid, "avatar_hair_wave", "purchase-avatar-0001"));
-  const database = environment.authenticatedContext(uid).firestore();
-  const profile = await getDoc(doc(database, "users", uid));
-  assert.equal(profile.data().balanceCents, 49_001);
-  assert.deepEqual(profile.data().inventory, ["avatar_hair_wave"]);
+  await assertFails(purchase(uid, "avatar_hair_wave", "purchase-avatar-0001"));
 });
 
-test("allows legacy profiles to receive only safe default avatar fields once", async () => {
+test("denies client migration of legacy avatar defaults", async () => {
   const uid = "legacy-avatar-profile";
   await environment.withSecurityRulesDisabled(async (context) => {
     await context.firestore().doc(`users/${uid}`).set({
@@ -473,12 +465,12 @@ test("allows legacy profiles to receive only safe default avatar fields once", a
   });
   const database = environment.authenticatedContext(uid).firestore();
   const userRef = doc(database, "users", uid);
-  await assertSucceeds(updateDoc(userRef, { avatarAsProfilePhoto: false, equippedAvatarItems: [] }));
+  await assertFails(updateDoc(userRef, { avatarAsProfilePhoto: false, equippedAvatarItems: [] }));
   await assertFails(updateDoc(userRef, { equippedAvatarItems: ["avatar_crown_neon"] }));
   await assertFails(updateDoc(userRef, { avatarAsProfilePhoto: true }));
 });
 
-test("allows legacy balance initialization and avatar defaults in one atomic update", async () => {
+test("denies legacy balance initialization from the client", async () => {
   const uid = "legacy-balance-avatar-profile";
   await environment.withSecurityRulesDisabled(async (context) => {
     await context.firestore().doc(`users/${uid}`).set({
@@ -500,7 +492,7 @@ test("allows legacy balance initialization and avatar defaults in one atomic upd
     });
   });
   const database = environment.authenticatedContext(uid).firestore();
-  await assertSucceeds(updateDoc(doc(database, "users", uid), {
+  await assertFails(updateDoc(doc(database, "users", uid), {
     balanceCents: 50_000,
     balanceInitialized: true,
     avatarAsProfilePhoto: false,
@@ -514,7 +506,7 @@ test("allows legacy balance initialization and avatar defaults in one atomic upd
   }));
 });
 
-test("allows profile reconciliation to synchronize avatar metadata to the leaderboard", async () => {
+test("denies direct profile reconciliation writes to the leaderboard", async () => {
   const uid = "legacy-ranking-avatar-sync";
   await environment.withSecurityRulesDisabled(async (context) => {
     const database = context.firestore();
@@ -547,20 +539,9 @@ test("allows profile reconciliation to synchronize avatar metadata to the leader
   const database = environment.authenticatedContext(uid).firestore();
   const userRef = doc(database, "users", uid);
   const rankRef = doc(database, "leaderboard", uid);
-  await assertSucceeds(runTransaction(database, async (transaction) => {
-    transaction.update(userRef, {
-      avatarAsProfilePhoto: false,
-      equippedAvatarItems: [],
-    });
-    transaction.update(rankRef, {
-      displayName: "Perfil Antigo",
-      username: "perfilantigo",
-      balanceCents: 19_010,
-      level: 2,
-      avatarUrl: "",
-      avatarAsProfilePhoto: false,
-      equippedAvatarItems: [],
-    });
+  await assertFails(runTransaction(database, async (transaction) => {
+    transaction.update(userRef, { avatarAsProfilePhoto: false, equippedAvatarItems: [] });
+    transaction.update(rankRef, { displayName: "Perfil Antigo", username: "perfilantigo", level: 2 });
   }));
 
   await assertFails(updateDoc(rankRef, { equippedAvatarItems: ["avatar_crown_neon"] }));

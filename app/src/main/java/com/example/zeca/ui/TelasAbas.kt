@@ -515,6 +515,9 @@ fun TelaCarteira(
     onSalvarChave: (String, String, (String?) -> Unit) -> Unit,
     onBuscarDestinatario: (String, (JogadorDestino?, String?) -> Unit) -> Unit,
     onTransferir: (String, Long, String, (ResultadoTransferencia?, String?) -> Unit) -> Unit,
+    erroFinanceiro: String = "",
+    carregandoHistorico: Boolean = false,
+    erroHistorico: String = "",
 ) {
     val context = LocalContext.current
     val moedaDaConta = AppCurrencyFormatter.current.value
@@ -620,6 +623,9 @@ fun TelaCarteira(
         GlassCard {
             Text("SALDO DISPONÍVEL", color = Color.White.copy(alpha = 0.62f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
             Text(formatarReais(saldoCentavos), color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black)
+            if (erroFinanceiro.isNotBlank()) {
+                Text("Falha de atualização. Exibindo o último saldo recebido.", color = Cores.Laranja, fontSize = 12.sp)
+            }
         }
 
         Opcoes(listOf("Cobrar", "Enviar", "Histórico", "Chave Pix"), areaCarteira) { areaCarteira = it }
@@ -883,8 +889,19 @@ fun TelaCarteira(
 
             "Histórico" -> GlassCard {
                 Text("Movimentações", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                if (erroHistorico.isNotBlank()) {
+                    Text(erroHistorico, color = Cores.Laranja, fontSize = 12.sp)
+                }
                 if (historico.isEmpty()) {
-                    Text("Nenhuma movimentação por enquanto.", color = Color.White.copy(alpha = 0.65f), fontSize = 13.sp)
+                    Text(
+                        when {
+                            carregandoHistorico -> "Carregando extrato..."
+                            erroHistorico.isNotBlank() -> "Extrato temporariamente indisponível."
+                            else -> "Nenhuma movimentação por enquanto."
+                        },
+                        color = Color.White.copy(alpha = 0.65f),
+                        fontSize = 13.sp,
+                    )
                 } else {
                     historico.take(8).forEach { movimento ->
                         Row(

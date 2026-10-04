@@ -30,6 +30,8 @@ import java.util.Date
 import java.util.Locale
 import java.util.Currency
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
 data class PerfilJogador(
@@ -316,6 +318,10 @@ data class UsuarioAdmin(
     val avatarComoFotoPerfil: Boolean = false,
     val avatarItensEquipados: List<String> = emptyList(),
     val molduraEquipada: String = "",
+    val countryCode: String = "BR",
+    val currencyCode: String = "BRL",
+    val currencyRate: Double = 1.0,
+    val currencyRateDate: String = "",
 )
 
 data class MovimentoAdmin(
@@ -763,120 +769,96 @@ object FirebaseRepository {
     private const val CLOUDINARY_UPLOAD_PRESET = "zeca_unsigned"
     private const val REQUEST_TIMEOUT_MS = 90_000L
     private val principal = android.os.Handler(android.os.Looper.getMainLooper())
+    private val financialObservers = CopyOnWriteArrayList<Pair<String, (Long?, Exception?) -> Unit>>()
+    private val financialBalanceCache = ConcurrentHashMap<String, Long>()
 
     fun garantirPerfil(user: FirebaseUser, callback: (Exception?) -> Unit) {
-        val userRef = database.collection("users").document(user.uid)
-        val rankRef = database.collection("leaderboard").document(user.uid)
-        val nomeConta = (user.displayName ?: user.email?.substringBefore('@') ?: "Jogador")
-            .trim()
-            .take(24)
-            .let { if (it.length >= 2) it else "Jogador" }
-        database.runTransaction { transaction ->
-            val userSnapshot = transaction.get(userRef)
-            val rankSnapshot = transaction.get(rankRef)
-            if (!userSnapshot.exists()) {
-                val profile = mapOf(
-                    "uid" to user.uid,
-                    "displayName" to nomeConta,
-                    "username" to "",
-                    "profileSetupComplete" to false,
-                    "email" to (user.email ?: ""),
-                    "balanceCents" to 50_000L,
-                    "balanceInitialized" to true,
-                    "level" to 1L,
-                    "avatarUrl" to (user.photoUrl?.toString() ?: ""),
-                    "avatarAsProfilePhoto" to false,
-                    "equippedAvatarItems" to emptyList<String>(),
-                    "equippedFrame" to "",
-                    "pixKey" to "",
-                    "pixKeyType" to "",
-                    "pixKeyHash" to "",
-                    "gamesPlayed" to 0L,
-                    "wins" to 0L,
-                    "inventory" to emptyList<String>(),
-                    "createdAt" to com.google.firebase.firestore.FieldValue.serverTimestamp(),
-                )
-                transaction.set(userRef, profile)
-                transaction.set(
-                    rankRef,
-                    mapOf(
-                        "displayName" to nomeConta,
-                        "username" to "",
-                        "balanceCents" to 50_000L,
-                        "level" to 1L,
-                        "avatarUrl" to (user.photoUrl?.toString() ?: ""),
-                        "avatarAsProfilePhoto" to false,
-                        "equippedAvatarItems" to emptyList<String>(),
-                    ),
-                )
-            } else {
-                val profile = userSnapshot.data ?: emptyMap()
-                val balance = (profile["balanceCents"] as? Number)?.toLong()?.coerceAtLeast(0L) ?: 0L
-                val initialized = profile["balanceInitialized"] == true
-                val gamesPlayed = (profile["gamesPlayed"] as? Number)?.toLong() ?: 0L
-                val wins = (profile["wins"] as? Number)?.toLong() ?: 0L
-                val canReceiveStartingBalance = !initialized && balance == 0L && gamesPlayed == 0L && wins == 0L
-                val nextBalance = if (canReceiveStartingBalance) 50_000L else balance
-                val updates = mutableMapOf<String, Any>()
-                if (!initialized || nextBalance != balance) {
-                    updates["balanceInitialized"] = true
-                    updates["balanceCents"] = nextBalance
-                }
-                val profileName = profile["displayName"] as? String ?: nomeConta
-                val username = profile["username"] as? String ?: ""
-                val profileLevel = (profile["level"] as? Number)?.toLong()?.takeIf { it > 0L } ?: 1L
-                val profileAvatar = (profile["avatarUrl"] as? String).orEmpty()
-                    .ifBlank { user.photoUrl?.toString().orEmpty() }
-                val avatarAsProfilePhoto = profile["avatarAsProfilePhoto"] as? Boolean ?: false
-                val equippedAvatarItems = (profile["equippedAvatarItems"] as? List<*>)?.filterIsInstance<String>().orEmpty()
-                val equippedFrame = profile["equippedFrame"] as? String ?: ""
-                if ("avatarAsProfilePhoto" !in profile) updates["avatarAsProfilePhoto"] = false
-                if ("equippedAvatarItems" !in profile) updates["equippedAvatarItems"] = emptyList<String>()
-                if (updates.isNotEmpty()) transaction.update(userRef, updates)
-                val publicProfile = mapOf(
-                    "displayName" to profileName,
-                    "username" to username,
-                    "balanceCents" to nextBalance,
-                    "level" to profileLevel,
-                    "avatarUrl" to profileAvatar,
-                    "avatarAsProfilePhoto" to avatarAsProfilePhoto,
-                    "equippedAvatarItems" to equippedAvatarItems,
-                    "equippedFrame" to equippedFrame,
-                )
-                if (!rankSnapshot.exists()) transaction.set(rankRef, publicProfile)
-                else transaction.update(
-                    rankRef,
-                    mapOf(
-                        "displayName" to profileName,
-                        "username" to username,
-                        "balanceCents" to nextBalance,
-                        "level" to profileLevel,
-                        "avatarUrl" to profileAvatar,
-                        "avatarAsProfilePhoto" to avatarAsProfilePhoto,
-                        "equippedAvatarItems" to equippedAvatarItems,
-                        "equippedFrame" to equippedFrame,
-                    ),
-                )
-            }
-            null
+        chamarFunction("ensurePlayerProfile", emptyMap()) { _, error ->
+            callback(error?.let(::erroParaPerfilServidor))
         }
-            .addOnSuccessListener {
-                callback(null)
-                if (!user.photoUrl?.toString().isNullOrBlank()) {
-                    chamarFunction("ensurePlayerProfile", emptyMap()) { _, _ -> }
-                }
-            }
-            .addOnFailureListener {
-                chamarFunction("ensurePlayerProfile", emptyMap()) { _, fallbackError ->
-                    callback(fallbackError?.let(::erroParaPerfilServidor))
-                }
-            }
     }
 
     fun observarPerfil(uid: String, callback: (PerfilJogador?) -> Unit): ListenerRegistration =
         database.collection("users").document(uid).addSnapshotListener { snapshot, _ ->
             callback(snapshot?.let(::toPerfil))
         }
+
+    fun observarSaldo(callback: (Long?, Exception?) -> Unit): ListenerRegistration {
+        val uid = auth.currentUser?.uid
+        if (uid.isNullOrBlank()) {
+            callback(null, IllegalStateException("Entre na sua conta para consultar o saldo."))
+            return object : ListenerRegistration { override fun remove() = Unit }
+        }
+        val observer = uid to callback
+        financialObservers.add(observer)
+        carregarSaldo { balance, error ->
+            if (error != null) callback(balance, error)
+        }
+        return object : ListenerRegistration {
+            override fun remove() { financialObservers.remove(observer) }
+        }
+    }
+
+    fun carregarSaldo(callback: (Long?, Exception?) -> Unit) {
+        val uid = auth.currentUser?.uid
+        if (uid.isNullOrBlank()) {
+            callback(null, IllegalStateException("Entre na sua conta para consultar o saldo."))
+            return
+        }
+        consultarApiGet("/api/financial/balance") { data, error ->
+            val balance = (data?.get("balanceCents") as? Number)?.toLong()
+            if (error == null && balance != null && balance >= 0L) {
+                financialBalanceCache[uid] = balance
+                financialObservers.filter { it.first == uid }.forEach { it.second(balance, null) }
+                callback(balance, null)
+            } else {
+                val failure = error ?: IllegalStateException("O servidor retornou um saldo inválido.")
+                callback(financialBalanceCache[uid], failure)
+            }
+        }
+    }
+
+    fun carregarRanking(callback: (List<JogadorRanking>?, Exception?) -> Unit) {
+        consultarApiGet("/api/financial/leaderboard?limit=50") { data, error ->
+            if (error != null) {
+                callback(null, error)
+                return@consultarApiGet
+            }
+            val players = (data?.get("players") as? List<*>).orEmpty().mapNotNull { raw ->
+                val player = raw as? Map<*, *> ?: return@mapNotNull null
+                toJogadorRanking(player)
+            }
+            callback(players, null)
+        }
+    }
+
+    fun observarRanking(callback: (List<JogadorRanking>) -> Unit): ListenerRegistration {
+        var active = true
+        fun refresh() {
+            carregarRanking { players, _ ->
+                if (active && players != null) callback(players)
+                if (active) principal.postDelayed({ refresh() }, 30_000)
+            }
+        }
+        refresh()
+        return object : ListenerRegistration {
+            override fun remove() { active = false }
+        }
+    }
+
+    fun carregarMovimentos(callback: (List<Movimento>?, Exception?) -> Unit) {
+        consultarApiGet("/api/financial/transactions?limit=30") { data, error ->
+            if (error != null) {
+                callback(null, error)
+                return@consultarApiGet
+            }
+            val movements = (data?.get("transactions") as? List<*>).orEmpty().mapNotNull { raw ->
+                val entry = raw as? Map<*, *> ?: return@mapNotNull null
+                toMovimento(entry)
+            }
+            callback(movements, null)
+        }
+    }
 
     private fun enriquecerMoedasRanking(
         jogadores: List<JogadorRanking>,
@@ -921,47 +903,24 @@ object FirebaseRepository {
         }
     }
 
-    fun observarRanking(callback: (List<JogadorRanking>) -> Unit): ListenerRegistration {
-        val metadataRequest = AtomicInteger()
-        return database.collection("leaderboard")
-            .orderBy("balanceCents", Query.Direction.DESCENDING)
-            .limit(50)
-            .addSnapshotListener { snapshot, error ->
-                val jogadores = snapshot?.documents.orEmpty().mapNotNull(::toJogadorRanking)
-                if (error != null || jogadores.isEmpty()
-                    || jogadores.all { it.currencyCode.isNotBlank() && it.currencyRateDate.isNotBlank() }
-                ) {
-                    callback(jogadores)
-                    return@addSnapshotListener
-                }
-                val request = metadataRequest.incrementAndGet()
-                enriquecerMoedasRanking(jogadores) { enriquecidos, hydrationError ->
-                    if (metadataRequest.get() != request) return@enriquecerMoedasRanking
-                    callback(if (hydrationError == null) enriquecidos else jogadores)
-                }
-            }
-    }
-
     fun buscarJogadoresPorUsername(prefixo: String, callback: (List<JogadorRanking>, Exception?) -> Unit) {
         val prefixoNormalizado = prefixo.trim().removePrefix("@").lowercase(java.util.Locale.ROOT)
         if (prefixoNormalizado.isBlank()) {
             callback(emptyList(), null)
             return
         }
-        database.collection("leaderboard")
-            .orderBy("username")
-            .startAt(prefixoNormalizado)
-            .endAt("$prefixoNormalizado\uf8ff")
-            .limit(5)
-            .get()
-            .addOnSuccessListener { snapshot ->
-                enriquecerMoedasRanking(
-                    snapshot.documents.mapNotNull(::toJogadorRanking),
-                    atualizarSempre = true,
-                    callback = callback,
-                )
+        val encodedPrefix = java.net.URLEncoder.encode(prefixoNormalizado, "UTF-8")
+        consultarApiGet("/api/financial/players?username=$encodedPrefix") { data, error ->
+            if (error != null) {
+                callback(emptyList(), error)
+                return@consultarApiGet
             }
-            .addOnFailureListener { error -> callback(emptyList(), error) }
+            val players = (data?.get("players") as? List<*>).orEmpty().mapNotNull { raw ->
+                val player = raw as? Map<*, *> ?: return@mapNotNull null
+                toJogadorRanking(player)
+            }
+            callback(players, null)
+        }
     }
 
     fun observarPresencasChat(callback: (List<PresencaChat>) -> Unit): ListenerRegistration =
@@ -1338,48 +1297,17 @@ object FirebaseRepository {
         ) { _, erro -> callback(erro) }
     }
 
-    fun observarMovimentos(uid: String, callback: (List<Movimento>, Boolean) -> Unit): ListenerRegistration =
-        database.collection("users").document(uid).collection("transactions")
-            .orderBy("createdAt", Query.Direction.DESCENDING)
-            .limit(30)
-            .addSnapshotListener { snapshot, _ ->
-                if (snapshot == null) return@addSnapshotListener
-                callback(snapshot.documents.mapNotNull { doc ->
-                    val data = doc.data ?: return@mapNotNull null
-                    val description = data["description"] as? String ?: "Movimentação"
-                    val delta = (data["deltaCents"] as? Number)?.toLong() ?: 0L
-                    val transfer = data["type"] == "pix_transfer"
-                    val counterparty = data["counterpartyName"] as? String
-                        ?: description.removePrefix("De ").removePrefix("Para ")
-                    Movimento(
-                        titulo = when {
-                            transfer && delta > 0L -> "Recebido de $counterparty"
-                            transfer -> "Enviado para $counterparty"
-                            else -> description
-                        },
-                        variacaoCentavos = delta,
-                        horario = (data["createdAt"] as? com.google.firebase.Timestamp)
-                            ?.toDate()?.let { java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.forLanguageTag("pt-BR")).format(it) }
-                            ?: "Agora",
-                        id = doc.id,
-                        ehTransferenciaPix = transfer,
-                        ehPremioNivel = data["type"] == "level_reward",
-                        contrapartida = counterparty,
-                        valorBaseCentavos = (data["amountCents"] as? Number)?.toLong() ?: 0L,
-                        valorRemetenteCentavos = (data["amountCentsInSenderCurrency"] as? Number)?.toLong() ?: 0L,
-                        valorDestinatarioCentavos = (data["recipientAmountCents"] as? Number)?.toLong() ?: 0L,
-                        debitoRemetenteCentavos = (data["senderDebitCentsInSenderCurrency"] as? Number)?.toLong() ?: 0L,
-                        taxaBaseCentavos = (data["feeCents"] as? Number)?.toLong() ?: 0L,
-                        taxaRemetenteCentavos = (data["feeCentsInSenderCurrency"] as? Number)?.toLong() ?: 0L,
-                        moedaRemetente = data["senderCurrencyCode"] as? String ?: "BRL",
-                        moedaDestinatario = data["recipientCurrencyCode"] as? String ?: "BRL",
-                        paisRemetente = data["senderCountryCode"] as? String ?: "BR",
-                        paisDestinatario = data["recipientCountryCode"] as? String ?: "BR",
-                        cotacaoTransferencia = (data["exchangeRate"] as? Number)?.toDouble() ?: 1.0,
-                        dataCotacao = data["rateDate"] as? String ?: "",
-                    )
-                }, snapshot.metadata.isFromCache)
+    fun observarMovimentos(uid: String, callback: (List<Movimento>, Boolean) -> Unit): ListenerRegistration {
+        var active = true
+        if (auth.currentUser?.uid == uid) {
+            carregarMovimentos { movements, error ->
+                if (active && error == null && movements != null) callback(movements, false)
             }
+        }
+        return object : ListenerRegistration {
+            override fun remove() { active = false }
+        }
+    }
 
     fun atualizarPerfil(
         username: String,
@@ -1849,6 +1777,13 @@ object FirebaseRepository {
             val users = (data?.get("users") as? List<*>)?.mapNotNull { raw ->
                 val user = raw as? Map<*, *> ?: return@mapNotNull null
                 val uid = user["uid"] as? String ?: return@mapNotNull null
+                val countryCode = (user["countryCode"] as? String ?: "").trim().uppercase(Locale.ROOT)
+                val rawCurrencyCode = (user["currencyCode"] as? String ?: "").trim().uppercase(Locale.ROOT)
+                val currencyCode = rawCurrencyCode.ifBlank {
+                    if (countryCode.isBlank()) "BRL" else runCatching {
+                        Currency.getInstance(Locale("", countryCode)).currencyCode
+                    }.getOrNull() ?: "BRL"
+                }
                 UsuarioAdmin(
                     uid = uid,
                     nome = user["displayName"] as? String ?: "Jogador",
@@ -1860,6 +1795,10 @@ object FirebaseRepository {
                     avatarComoFotoPerfil = user["avatarAsProfilePhoto"] as? Boolean ?: false,
                     avatarItensEquipados = (user["equippedAvatarItems"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
                     molduraEquipada = user["equippedFrame"] as? String ?: "",
+                    countryCode = countryCode,
+                    currencyCode = currencyCode,
+                    currencyRate = (user["currencyRate"] as? Number)?.toDouble()?.takeIf { it.isFinite() && it > 0.0 } ?: 1.0,
+                    currencyRateDate = user["currencyRateDate"] as? String ?: "",
                 )
             }.orEmpty()
             callback(users, data?.get("nextCursor") as? String ?: "", error)
@@ -1867,34 +1806,51 @@ object FirebaseRepository {
     }
 
     fun buscarResumoVisualLeaderboard(uid: String, callback: (UsuarioAdmin?) -> Unit) {
-        database.collection("leaderboard").document(uid).get()
-            .addOnSuccessListener { snapshot ->
-                if (!snapshot.exists()) {
-                    callback(null)
-                    return@addOnSuccessListener
-                }
-                callback(
-                    UsuarioAdmin(
-                        uid = uid,
-                        nome = snapshot.getString("displayName") ?: "Jogador",
-                        username = snapshot.getString("username") ?: "",
-                        email = "",
-                        saldoCentavos = snapshot.getLong("balanceCents") ?: 0L,
-                        bloqueado = false,
-                        avatarUrl = snapshot.getString("avatarUrl") ?: "",
-                        avatarComoFotoPerfil = snapshot.getBoolean("avatarAsProfilePhoto") == true,
-                        avatarItensEquipados = (snapshot.get("equippedAvatarItems") as? List<*>)
-                            ?.filterIsInstance<String>().orEmpty(),
-                    ),
-                )
+        chamarFunction("adminGetUserDetails", mapOf("uid" to uid)) { data, error ->
+            val user = data?.get("user") as? Map<*, *>
+            if (error != null || user == null) {
+                callback(null)
+                return@chamarFunction
             }
-            .addOnFailureListener { callback(null) }
+            val countryCode = (user["countryCode"] as? String ?: "").trim().uppercase(Locale.ROOT)
+            val currencyCode = (user["currencyCode"] as? String ?: "").trim().uppercase(Locale.ROOT).ifBlank {
+                if (countryCode.isBlank()) "BRL" else runCatching {
+                    Currency.getInstance(Locale("", countryCode)).currencyCode
+                }.getOrNull() ?: "BRL"
+            }
+            callback(
+                UsuarioAdmin(
+                    uid = user["uid"] as? String ?: uid,
+                    nome = user["displayName"] as? String ?: "Jogador",
+                    username = user["username"] as? String ?: "",
+                    email = user["email"] as? String ?: "",
+                    saldoCentavos = (user["balanceCents"] as? Number)?.toLong() ?: 0L,
+                    bloqueado = user["isBlocked"] as? Boolean ?: false,
+                    avatarUrl = user["avatarUrl"] as? String ?: "",
+                    avatarComoFotoPerfil = user["avatarAsProfilePhoto"] as? Boolean ?: false,
+                    avatarItensEquipados = (user["equippedAvatarItems"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
+                    molduraEquipada = user["equippedFrame"] as? String ?: "",
+                    countryCode = countryCode,
+                    currencyCode = currencyCode,
+                    currencyRate = (user["currencyRate"] as? Number)?.toDouble()
+                        ?.takeIf { it.isFinite() && it > 0.0 } ?: 1.0,
+                    currencyRateDate = user["currencyRateDate"] as? String ?: "",
+                ),
+            )
+        }
     }
 
     fun carregarDetalhesAdmin(uid: String, callback: (DetalhesAdmin?, Exception?) -> Unit) {
         chamarFunction("adminGetUserDetails", mapOf("uid" to uid)) { data, error ->
             val user = data?.get("user") as? Map<*, *>
             val detalhes = if (user == null) null else {
+                val countryCode = (user["countryCode"] as? String ?: "").trim().uppercase(Locale.ROOT)
+                val rawCurrencyCode = (user["currencyCode"] as? String ?: "").trim().uppercase(Locale.ROOT)
+                val currencyCode = rawCurrencyCode.ifBlank {
+                    if (countryCode.isBlank()) "BRL" else runCatching {
+                        Currency.getInstance(Locale("", countryCode)).currencyCode
+                    }.getOrNull() ?: "BRL"
+                }
                 val jogador = UsuarioAdmin(
                     uid = user["uid"] as? String ?: uid,
                     nome = user["displayName"] as? String ?: "Jogador",
@@ -1906,6 +1862,10 @@ object FirebaseRepository {
                     avatarComoFotoPerfil = user["avatarAsProfilePhoto"] as? Boolean ?: false,
                     avatarItensEquipados = (user["equippedAvatarItems"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
                     molduraEquipada = user["equippedFrame"] as? String ?: "",
+                    countryCode = countryCode,
+                    currencyCode = currencyCode,
+                    currencyRate = (user["currencyRate"] as? Number)?.toDouble()?.takeIf { it.isFinite() && it > 0.0 } ?: 1.0,
+                    currencyRateDate = user["currencyRateDate"] as? String ?: "",
                 )
                 val transactions = (data["transactions"] as? List<*>)?.mapNotNull { raw ->
                     val transaction = raw as? Map<*, *> ?: return@mapNotNull null
@@ -2332,7 +2292,7 @@ object FirebaseRepository {
             callback("Este item não está disponível.")
             return
         }
-        chamarFunction("buyCosmetic", mapOf("itemId" to itemId)) { _, error ->
+        chamarFunction("buyCosmetic", mapOf("itemId" to itemId, "requestId" to UUID.randomUUID().toString())) { _, error ->
             callback(error?.localizedMessage)
         }
     }
@@ -3026,6 +2986,12 @@ object FirebaseRepository {
         fun concluir(data: Map<String, Any>?, error: Exception?) {
             if (callbackConcluido.compareAndSet(false, true)) {
                 principal.removeCallbacks(timeout)
+                val balance = (data?.get("balanceCents") as? Number)?.toLong()
+                val uid = auth.currentUser?.uid
+                if (balance != null && balance >= 0L && !uid.isNullOrBlank()) {
+                    financialBalanceCache[uid] = balance
+                    financialObservers.filter { it.first == uid }.forEach { it.second(balance, null) }
+                }
                 callback(data, error)
             }
         }
@@ -3060,6 +3026,48 @@ object FirebaseRepository {
             .addOnFailureListener { erro -> concluir(null, erroParaUsuario(erro)) }
     }
 
+        private fun consultarApiGet(path: String, callback: (Map<String, Any>?, Exception?) -> Unit) {
+            val usuario = auth.currentUser
+            if (usuario == null) {
+                callback(null, IllegalStateException("Entre na sua conta para continuar."))
+                return
+            }
+            usuario.getIdToken(false)
+                .addOnSuccessListener { token ->
+                    Thread {
+                        var data: Map<String, Any>? = null
+                        var error: Exception? = null
+                        try {
+                            val connection = java.net.URL("$SERVER_URL$path")
+                                .openConnection() as java.net.HttpURLConnection
+                            try {
+                                connection.requestMethod = "GET"
+                                connection.connectTimeout = 15_000
+                                connection.readTimeout = 20_000
+                                connection.setRequestProperty("Authorization", "Bearer ${token.token.orEmpty()}")
+                                connection.setRequestProperty("X-Zeca-App-Version", BuildConfig.VERSION_CODE.toString())
+                                val status = connection.responseCode
+                                val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+                                val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                                val json = runCatching { org.json.JSONObject(body) }.getOrNull()
+                                if (status !in 200..299) {
+                                    val message = json?.optJSONObject("error")?.optString("message").orEmpty()
+                                    throw IllegalStateException(message.ifBlank { "Erro no servidor ($status)." })
+                                }
+                                @Suppress("UNCHECKED_CAST")
+                                data = paraValor(json) as? Map<String, Any>
+                            } finally {
+                                connection.disconnect()
+                            }
+                        } catch (exception: Exception) {
+                            error = exception
+                        }
+                        principal.post { callback(data, error) }
+                    }.start()
+                }
+                .addOnFailureListener { error -> callback(null, erroParaUsuario(error)) }
+        }
+
     private fun postarNoServidor(nome: String, dados: Map<String, Any>, token: String): Map<String, Any>? {
         val conexao = java.net.URL("$SERVER_URL/call/$nome").openConnection() as java.net.HttpURLConnection
         try {
@@ -3069,6 +3077,7 @@ object FirebaseRepository {
             conexao.doOutput = true
             conexao.setRequestProperty("Content-Type", "application/json")
             conexao.setRequestProperty("Authorization", "Bearer $token")
+            conexao.setRequestProperty("X-Zeca-App-Version", BuildConfig.VERSION_CODE.toString())
             val corpo = org.json.JSONObject().put("data", org.json.JSONObject(dados)).toString()
             conexao.outputStream.use { it.write(corpo.toByteArray()) }
 
@@ -3142,7 +3151,7 @@ object FirebaseRepository {
         email = snapshot.getString("email") ?: "",
         username = snapshot.getString("username") ?: "",
         profileSetupComplete = snapshot.getBoolean("profileSetupComplete") == true,
-        saldoCentavos = snapshot.getLong("balanceCents") ?: 0L,
+        saldoCentavos = 0L,
         nivel = snapshot.getLong("level")?.toInt() ?: 1,
         avatarUrl = snapshot.getString("avatarUrl") ?: "",
         chavePix = snapshot.getString("pixKey") ?: "",
@@ -3162,10 +3171,10 @@ object FirebaseRepository {
         telefoneVerificado = (snapshot.getLong("phoneVerifiedAtMs") ?: 0L) > 0L,
     )
 
-    private fun toJogadorRanking(snapshot: DocumentSnapshot): JogadorRanking? {
-        val data = snapshot.data ?: return null
+    private fun toJogadorRanking(data: Map<*, *>): JogadorRanking? {
+        val uid = data["uid"] as? String ?: return null
         return JogadorRanking(
-            uid = snapshot.id,
+            uid = uid,
             apelido = data["displayName"] as? String ?: "Jogador",
             saldoCentavos = (data["balanceCents"] as? Number)?.toLong() ?: 0L,
             nivel = (data["level"] as? Number)?.toInt() ?: 1,
@@ -3179,6 +3188,44 @@ object FirebaseRepository {
             avatarItensEquipados = (data["equippedAvatarItems"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
             avatarComoFotoPerfil = data["avatarAsProfilePhoto"] as? Boolean ?: false,
             molduraEquipada = data["equippedFrame"] as? String ?: "",
+        )
+    }
+
+    private fun toMovimento(data: Map<*, *>): Movimento? {
+        val id = data["id"] as? String ?: data["_id"] as? String ?: return null
+        val description = data["description"] as? String ?: "Movimentação"
+        val delta = (data["deltaCents"] as? Number)?.toLong() ?: return null
+        val transfer = data["type"] == "pix_transfer"
+        val counterparty = data["counterpartyName"] as? String
+            ?: description.removePrefix("De ").removePrefix("Para ")
+        val createdAtMs = (data["createdAtMs"] as? Number)?.toLong() ?: 0L
+        val time = if (createdAtMs > 0L) {
+            SimpleDateFormat("dd/MM HH:mm", Locale.forLanguageTag("pt-BR")).format(Date(createdAtMs))
+        } else "Agora"
+        return Movimento(
+            titulo = when {
+                transfer && delta > 0L -> "Recebido de $counterparty"
+                transfer -> "Enviado para $counterparty"
+                else -> description
+            },
+            variacaoCentavos = delta,
+            horario = time,
+            id = id,
+            ehTransferenciaPix = transfer,
+            ehPremioNivel = data["type"] == "level_reward",
+            contrapartida = counterparty,
+            valorBaseCentavos = (data["amountCents"] as? Number)?.toLong() ?: 0L,
+            valorRemetenteCentavos = (data["amountCentsInSenderCurrency"] as? Number)?.toLong() ?: 0L,
+            valorDestinatarioCentavos = (data["recipientAmountCents"] as? Number)?.toLong() ?: 0L,
+            debitoRemetenteCentavos = (data["senderDebitCentsInSenderCurrency"] as? Number)?.toLong() ?: 0L,
+            taxaBaseCentavos = (data["feeCents"] as? Number)?.toLong() ?: 0L,
+            taxaRemetenteCentavos = (data["feeCentsInSenderCurrency"] as? Number)?.toLong() ?: 0L,
+            moedaRemetente = data["senderCurrencyCode"] as? String ?: "BRL",
+            moedaDestinatario = data["recipientCurrencyCode"] as? String ?: "BRL",
+            paisRemetente = data["senderCountryCode"] as? String ?: "BR",
+            paisDestinatario = data["recipientCountryCode"] as? String ?: "BR",
+            cotacaoTransferencia = (data["exchangeRate"] as? Number)?.toDouble() ?: 1.0,
+            dataCotacao = data["rateDate"] as? String ?: "",
         )
     }
 

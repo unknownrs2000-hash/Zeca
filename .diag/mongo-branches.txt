@@ -1,0 +1,244 @@
+﻿149: if (isMongoFinancialMode()) {
+240: exports._calculateCurrencyTransfer = calculateCurrencyTransfer;
+241: exports._normalizePixKey = normalizePixKey;
+569: exports.ensurePlayerProfile = onCall(async (request) => {
+577: exports.ensurePlayerProfile = onCall(async (request) => {
+703: balanceCents: profile.balanceCents,
+725: exports.updatePlayerProfile = onCall(async (request) => {
+781: transaction.update(userRef, {
+802: exports.registerPixKey = onCall(async (request) => {
+845: transaction.update(userRef, {
+855: exports.lookupPixKey = onCall(async (request) => {
+941: balanceCents: settled.balances[senderUid],
+1079: return { ...operation.result.response, balanceCents: operation.balances[senderUid] };
+1082: exports.transferByPixKey = onCall(async (request) => {
+1094: if (isMongoFinancialMode()) {
+1111: balanceCents: prior.senderBalanceAfter,
+1186: balanceCents: prior.senderBalanceAfter,
+1250: transaction.update(senderRef, { balanceCents: senderAfter });
+1251: transaction.update(recipientRef, { balanceCents: recipientAfter });
+1252: transaction.update(senderRankRef, { balanceCents: senderAfter });
+1253: transaction.update(recipientRankRef, { balanceCents: recipientAfter });
+1332: balanceCents: senderAfter,
+1485: balanceCents: balanceFinal,
+1614: minimumBalances: [{ uid, minimumBalanceCents: amountCents }],
+1624: exports.playGame = onCall(async (request) => {
+1641: if (isMongoFinancialMode()) return playGameMongo(request, uid, game, amountCents, requestId);
+1748: transaction.update(userRef, {
+1749: balanceCents: balanceFinal,
+1758: transaction.update(rankRef, { balanceCents: balanceFinal, level: progression.level });
+1787: balanceCents: balanceFinal,
+1801: exports.startSoloChallenge = onCall(async (request) => {
+1848: exports.queueJokenpoMatch = onCall(async (request) => {
+1946: exports.cancelJokenpoQueue = onCall(async (request) => {
+1962: exports.requestJokenpoRematch = onCall(async (request) => {
+2057: exports.submitJokenpoChoice = onCall(async (request) => {
+2175: exports.listFootballMatches = onCall(async (request) => {
+2206: exports.listMySportsBets = onCall(async (request) => {
+2303: const response = { betId: requestId, status: "open", oddsBps, payoutPotentialCents, balanceCents: balanceAfter };
+2309: minimumBalances: [{ uid, minimumBalanceCents: amountCents }],
+2327: exports.placeSportsBet = onCall(async (request) => {
+2400: if (isMongoFinancialMode()) {
+2457: transaction.update(userRef, { balanceCents: balanceAfter });
+2458: transaction.update(rankRef, { balanceCents: balanceAfter });
+2467: response = { betId: requestId, status: "open", oddsBps, payoutPotentialCents, balanceCents: balanceAfter };
+2580: minimumBalances: [{ uid, minimumBalanceCents: 0 }],
+2603: response: { settledCount: 1, betId, balanceCents: balanceAfter },
+2611: exports.settleMySportsBets = onCall(async (request) => {
+2654: if (isMongoFinancialMode()) {
+2689: transaction.update(userRef, {
+2811: minimumBalances: [{ uid, minimumBalanceCents: amountCents }],
+2833: exports.startMines = onCall(async (request) => {
+2843: if (isMongoFinancialMode()) return startMinesMongo({ uid, amountCents, mineCount, requestId });
+2904: transaction.update(userRef, { balanceCents: balanceAfter, lastGameActionAtMs: startedAtMs });
+2905: transaction.update(rankRef, { balanceCents: balanceAfter });
+2919: exports.getActiveMines = onCall(async (request) => {
+2989: balanceCents: balanceFinal,
+3039: minimumBalances: [{ uid, minimumBalanceCents: 0 }],
+3049: exports.revealMinesCell = onCall(async (request) => {
+3059: if (isMongoFinancialMode()) return revealMinesCellMongo({ uid, gameId, cell, requestId });
+3101: transaction.update(userRef, {
+3102: balanceCents: balanceFinal,
+3111: transaction.update(rankRef, { balanceCents: balanceFinal, level: progression.level });
+3135: balanceCents: balanceFinal,
+3145: transaction.update(userRef, { lastGameActionAtMs: nowMs });
+3221: balanceCents: balanceFinal,
+3286: minimumBalances: [{ uid, minimumBalanceCents: 0 }],
+3296: exports.cashOutMines = onCall(async (request) => {
+3304: if (isMongoFinancialMode()) return cashOutMinesMongo({ uid, gameId, requestId });
+3349: transaction.update(userRef, {
+3350: balanceCents: balanceFinal,
+3359: transaction.update(rankRef, { balanceCents: balanceFinal, level: progression.level });
+3391: balanceCents: balanceFinal,
+3498: exports._cleanupExpiredTugRooms = cleanupExpiredTugRooms;
+3501: if (isMongoFinancialMode()) return false;
+3545: exports.listTugRooms = onCall(async (request) => {
+3622: exports.getTugRoomPresets = onCall(async (request) => {
+3629: exports.saveTugRoomPresets = onCall(async (request) => {
+3656: exports.getTugRoomMessages = onCall(async (request) => {
+3673: exports.sendTugRoomMessage = onCall(async (request) => {
+3711: exports.createTugRoom = onCall(async (request) => {
+3766: transaction.update(userRef, { balanceCents: balance - stakeCents });
+3767: transaction.update(rankRef, { balanceCents: balance - stakeCents });
+3809: exports.joinTugRoom = onCall(async (request) => {
+3874: transaction.update(userRef, { balanceCents: balance - room.stakeCents });
+3875: transaction.update(rankRef, { balanceCents: balance - room.stakeCents });
+3890: exports.manageTugRoom = onCall(async (request) => {
+4008: transaction.update(player.userSnapshot.ref, { balanceCents: balance - difference });
+4009: transaction.update(player.rankSnapshot.ref, { balanceCents: balance - difference });
+4059: transaction.update(player.userSnapshot.ref, { balanceCents: refundedBalance });
+4060: transaction.update(player.rankSnapshot.ref, { balanceCents: refundedBalance });
+4093: transaction.update(kicked.userSnapshot.ref, { balanceCents: refundedBalance });
+4094: transaction.update(kicked.rankSnapshot.ref, { balanceCents: refundedBalance });
+4118: exports.startTugRoom = onCall(async (request) => {
+4155: exports.pullTugRope = onCall(async (request) => {
+4234: transaction.update(userRefs[index], {
+4235: balanceCents: settlement.balanceCents,
+4243: transaction.update(rankRefs[index], { balanceCents: settlement.balanceCents, level: settlement.progression.level });
+4333: minimumBalances: [{ uid, minimumBalanceCents: amountCents }],
+4414: balanceCents: balanceFinal,
+4459: minimumBalances: [{ uid, minimumBalanceCents: 0 }],
+4469: exports.startCrash = onCall(async (request) => {
+4478: if (isMongoFinancialMode()) return startCrashMongo({ uid, amountCents, requestId });
+4523: transaction.update(userRef, { balanceCents: balanceAfter, lastGameActionAtMs: startedAtMs });
+4524: transaction.update(rankRef, { balanceCents: balanceAfter });
+4545: exports.cashOutCrash = onCall(async (request) => {
+4553: if (isMongoFinancialMode()) return cashOutCrashMongo({ uid, gameId, requestId });
+4605: transaction.update(userRef, {
+4606: balanceCents: balanceFinal,
+4615: transaction.update(rankRef, { balanceCents: balanceFinal, level: progression.level });
+4647: balanceCents: balanceFinal,
+4673: balanceCents: game.balanceCents,
+4747: balanceCents: walletBalance + totalDeltaCents,
+4815: minimumBalances: [{ uid, minimumBalanceCents: amountCents }],
+4825: exports.startBlackjack = onCall(async (request) => {
+4834: if (isMongoFinancialMode()) return startBlackjackMongo({ uid, amountCents, requestId });
+4912: transaction.update(userRef, {
+4913: balanceCents: balanceAfter,
+4924: balanceCents: balanceAfter,
+5024: minimumBalances: [{ uid, minimumBalanceCents: 0 }],
+5062: balanceCents: balanceFinal,
+5107: minimumBalances: [{ uid, minimumBalanceCents: extraWagerCents }],
+5117: exports.blackjackAction = onCall(async (request) => {
+5127: if (isMongoFinancialMode()) return blackjackActionMongo({ uid, gameId, requestId, action });
+5233: balanceCents: balanceFinal,
+5239: transaction.update(userRef, {
+5240: balanceCents: balanceFinal,
+5249: transaction.update(rankRef, { balanceCents: balanceFinal, level: progression.level });
+5313: balanceCents: balanceBefore - priceCents,
+5322: minimumBalances: [{ uid, minimumBalanceCents: priceCents }],
+5344: exports.buyCosmetic = onCall(async (request) => {
+5351: if (isMongoFinancialMode()) {
+5382: transaction.update(userRef, {
+5383: balanceCents: balanceAfter,
+5386: transaction.update(rankRef, { balanceCents: balanceAfter });
+5394: response = { itemId, balanceCents: balanceAfter, priceCents, basePriceCents: product.priceCents };
+5439: exports.getWorkCareer = onCall(async (request) => {
+5469: transaction.update(userRef, { career });
+5499: balanceCents: Number.isSafeInteger(data.balanceCents) && data.balanceCents >= 0 ? data.balanceCents : 0,
+5511: exports.applyWorkJob = onCall(async (request) => {
+5542: transaction.update(userRef, { career });
+5547: exports.resignWorkJob = onCall(async (request) => {
+5564: transaction.update(userRef, { career });
+5569: exports.promoteWorkCareer = onCall(async (request) => {
+5585: transaction.update(userRef, { career });
+5590: exports.startWorkShift = onCall(async (request) => {
+5631: transaction.update(userRef, { "career.activeSessionId": requestId });
+5664: if (oldResponse) return { ...oldResponse, balanceCents: walletBalance ?? oldResponse.balanceCents };
+5696: balanceCents: balanceAfter,
+5731: exports.completeWorkShift = onCall(async (request) => {
+5739: if (isMongoFinancialMode()) return completeWorkShiftMongo({ uid, sessionId, answerIndex });
+5798: balanceCents: balanceAfter,
+5804: transaction.update(userRef, { balanceCents: balanceAfter, career: nextCareer });
+5805: transaction.update(rankRef, { balanceCents: balanceAfter });
+5825: exports.equipFrame = onCall(async (request) => {
+5848: transaction.update(userRef, { equippedFrame: itemId });
+5855: exports.equipTitle = onCall(async (request) => {
+5875: transaction.update(userRef, { equippedTitle: itemId });
+5881: exports.equipAvatarItem = onCall(async (request) => {
+5914: transaction.update(userRef, { equippedAvatarItems });
+5920: exports.getPlayerProfile = onCall(async (request) => {
+5974: exports.getGameSettings = onCall(async (request) => {
+5985: exports.getMissions = onCall(async (request) => {
+5992: exports.adminUpdateGameSettings = onCall(async (request) => {
+6044: exports.adminListUsers = onCall(async (request) => {
+6073: balanceCents: balances[index],
+6085: exports.adminGetUserDetails = onCall(async (request) => {
+6138: exports.adminUpdateUserInventory = onCall(async (request) => {
+6201: transaction.update(userRef, userUpdate);
+6221: exports.adminAdjustBalance = onCall(async (request) => {
+6281: return { ...operation.result, balanceCents: operation.balances[targetUid] };
+6284: exports.adminSetUserBlocked = onCall(async (request) => {
+6337: transaction.update(userRef, {
+6363: exports.adminDeleteUser = onCall(async (request) => {
+6480: exports.createChatGroup = onCall(async (request) => {
+6546: exports.updateChatGroup = onCall(async (request) => {
+6576: exports.manageChatGroupMembers = onCall(async (request) => {
+6653: exports.dissolveChatGroup = onCall(async (request) => {
+6673: exports.updateChatGroupPhoto = onCall(async (request) => {
+6701: exports.renameChatFlame = onCall(async (request) => {
+6720: exports.editChatMessage = onCall(async (request) => {
+6755: exports.signChatAudioUpload = onCall(async (request) => {
+6808: exports.sendChatMessage = onCall(async (request) => {
+7001: exports.getSocialDashboard = onCall(async (request) => {
+7126: exports.getAccountSettings = onCall(async (request) => {
+7195: exports.createWhatsAppLinkCode = onCall(async (request) => {
+7220: exports.setAccountCountry = onCall(async (request) => {
+7244: transaction.update(userRef, {
+7260: exports.getAccountCurrency = onCall(async (request) => {
+7280: transaction.update(userRef, { currencyRate: rate, currencyRateDate: rateDate });
+7291: exports.getLeaderboardCurrencyInfo = onCall(async (request) => {
+7322: exports.unlinkWhatsAppAccount = onCall(async (request) => {
+7359: transaction.update(userRef, {
+7482: if (isMongoFinancialMode()) {
+7562: transaction.update(userRef, { whatsappWalletMigratedLinkedAtMs: linkedAtMs });
+7580: transaction.update(userRef, {
+7581: balanceCents: nextBalanceCents,
+7585: transaction.update(rankRef, { balanceCents: nextBalanceCents });
+7610: return { linked: true, balanceCents: currentBalance, countryCode, currencyCode, rate, rateDate };
+7621: return { linked: true, recipientLinked: false, balanceCents: currentBalance, countryCode, currencyCode, rate, rateDate };
+7646: return { ...existing.result.response, balanceCents: existing.balances[uid] };
+7655: return { linked: true, balanceCents: currentBalance, countryCode, currencyCode, rate, rateDate };
+7703: balanceCents: { $walletBalance: uid },
+7710: return { ...operation.result.response, balanceCents: operation.balances[uid] };
+7713: exports._operateWhatsAppWallet = async (request) => {
+7760: if (isMongoFinancialMode()) {
+7866: balanceCents: senderBalanceAfter,
+7869: transaction.update(userRef, { balanceCents: senderBalanceAfter });
+7870: if (rankSnapshot.exists) transaction.update(rankRef, { balanceCents: senderBalanceAfter });
+7880: transaction.update(recipientRef, { balanceCents: recipientNextBalance });
+7881: if (recipientRank?.exists) transaction.update(recipientRankRef, { balanceCents: recipientNextBalance });
+7901: exports._operateWhatsAppCareer = async (request) => {
+7957: exports.getLinkedWhatsAppEconomy = onCall(async (request) => {
+7993: exports.getLinkedWhatsAppDashboard = onCall(async (request) => {
+8055: exports.claimWhatsAppMissionReward = onCall(async (request) => {
+8102: transaction.update(userRef, { whatsappIntegrationPoints: integrationPoints });
+8115: exports._completeWhatsAppLink = async (request) => {
+8193: transaction.update(userRef, {
+8205: exports.saveAccountSettings = onCall(async (request) => {
+8285: exports.manageFriend = onCall(async (request) => {
+8350: exports.publishAppAnnouncement = onCall(async (request) => {
+8374: exports.createSupportTicket = onCall(async (request) => {
+8400: exports.adminListSupportTickets = onCall(async (request) => {
+8417: exports.createSocialClan = onCall(async (request) => {
+8475: transaction.update(userRef, { clanId });
+8506: transaction.update(userRef, { clanId });
+8511: exports.joinSocialClan = onCall(async (request) => {
+8515: exports.joinSocialClanByInvite = onCall(async (request) => {
+8524: exports.requestSocialClanJoin = onCall(async (request) => {
+8545: exports.inviteSocialClanMember = onCall(async (request) => {
+8579: exports.acceptSocialClanInvite = onCall(async (request) => {
+8612: transaction.update(userRef, { clanId });
+8618: exports.approveSocialClanRequest = onCall(async (request) => {
+8642: transaction.update(userRef, { clanId });
+8659: exports.removeSocialClanMember = onCall(async (request) => {
+8682: exports.leaveSocialClan = onCall(async (request) => {
+8709: transaction.update(userRef, { clanId: FieldValue.delete() });
+8743: return { ok: true, balanceCents: walletBalance };
+8751: const response = { ok: true, balanceCents: balanceAfter };
+8778: exports.claimWeeklyEventReward = onCall(async (request) => {
+8783: if (isMongoFinancialMode()) return claimWeeklyEventRewardMongo({ uid, eventId, eventIdentity });
+8809: transaction.update(userRef, {
+8826: exports.submitPlayerReport = onCall(async (request) => {
+8864: exports.adminListPlayerReports = onCall(async (request) => {
+8876: exports.adminModeratePlayerReport = onCall(async (request) => {

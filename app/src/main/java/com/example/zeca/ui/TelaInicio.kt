@@ -107,6 +107,8 @@ fun TelaInicio(
     atividadeRecente: List<String>,
     ranking: List<JogadorRanking> = emptyList(),
     erroSincronizacao: String = "",
+    carregandoRanking: Boolean = false,
+    erroRanking: String = "",
     ganhoTotalCentavos: Long = 0L,
     perdaTotalCentavos: Long = 0L,
     onCarregarMissoes: ((EstadoMissoes?, Exception?) -> Unit) -> Unit,
@@ -225,8 +227,19 @@ fun TelaInicio(
 
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Ranking de saldo", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                if (erroRanking.isNotBlank()) {
+                    Text(erroRanking, color = Cores.Laranja, fontSize = 12.sp)
+                }
                 if (ranking.isEmpty()) {
-                    Text("O ranking aparecerá quando outros jogadores entrarem.", color = Color.White.copy(alpha = 0.65f), fontSize = 13.sp)
+                    Text(
+                        when {
+                            carregandoRanking -> "Carregando ranking..."
+                            erroRanking.isNotBlank() -> "O ranking está temporariamente indisponível."
+                            else -> "O ranking aparecerá quando outros jogadores entrarem."
+                        },
+                        color = Color.White.copy(alpha = 0.65f),
+                        fontSize = 13.sp,
+                    )
                 } else {
                     ranking.take(10).forEachIndexed { index, jogador ->
                         Row(
