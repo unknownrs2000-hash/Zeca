@@ -24,8 +24,7 @@ import androidx.compose.ui.unit.sp
 import com.example.zeca.ui.theme.Cores
 import java.util.Locale
 
-internal fun formatarValorCampo(centavos: Long): String =
-    String.format(Locale.ROOT, "%d,%02d", centavos / 100, centavos % 100)
+internal fun formatarValorCampo(centavosBase: Long): String = textoCampoDaBase(centavosBase)
 
 @Composable
 internal fun SaldoAnimado(saldoCentavos: Long) {
@@ -49,15 +48,14 @@ internal fun ChipsAposta(
     habilitado: Boolean,
     onEscolher: (Long) -> Unit,
 ) {
-    val maximo = saldoCentavos.coerceAtMost(1_000_000L)
-    val opcoes = listOf(
-        "R$ 5" to 500L,
-        "R$ 10" to 1_000L,
-        "R$ 50" to 5_000L,
-        "R$ 100" to 10_000L,
-        "½" to (saldoCentavos / 2).coerceIn(100L, 1_000_000L),
-        "Máx" to maximo,
-    )
+    val moeda = AppCurrencyFormatter.current.value
+    val maximo = baseNoCampo(saldoCentavos.coerceAtMost(1_000_000L))
+    val metade = baseNoCampo((saldoCentavos / 2).coerceIn(100L, 1_000_000L))
+    val opcoes: List<Pair<String, Long>> = listOf(5L, 10L, 50L, 100L).map { inteiro ->
+        val centavosNaConta = inteiro * 100L
+        formatarValorNaMoeda(codigoMoedaDaConta(), moeda.countryCode, centavosNaConta) to
+            centavosDaContaParaBase(centavosNaConta)
+    } + listOf("½" to metade, "Máx" to maximo)
     Row(
         modifier = Modifier.horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(6.dp),

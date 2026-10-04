@@ -230,11 +230,11 @@ fun TelaCaboGuerra(
 
     fun apostarEmSala(amount: Long): Boolean {
         if (amount < 100L) {
-            erro = "A aposta mínima é R$ 1,00."
+            erro = "A aposta mínima é ${formatarSaldoTug(100L)}."
             return false
         }
         if (amount > 1_000_000L) {
-            erro = "A aposta máxima é R$ 10.000,00."
+            erro = "A aposta máxima é ${formatarSaldoTug(1_000_000L)}."
             return false
         }
         if (amount > saldoCentavos) {
@@ -335,7 +335,7 @@ fun TelaCaboGuerra(
                                 onValueChange = { stakeTexto = it.filter { char -> char.isDigit() || char == ',' || char == '.' }.take(12) },
                                 modifier = Modifier.fillMaxWidth(),
                                 label = { Text("Aposta por jogador") },
-                                prefix = { Text("R$ ") },
+                                prefix = { Text("${codigoMoedaDaConta()} ") },
                                 singleLine = true,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             )
@@ -592,8 +592,7 @@ fun TelaCaboGuerra(
                         enabled = !carregando,
                         onClick = {
                             modoSala = preset.modo
-                            stakeTexto = formatarSaldoTug(preset.apostaCentavos).removePrefix("R$ ").trim()
-                                .replace(".", "").replace(",", ".")
+                            stakeTexto = textoCampoDaBase(preset.apostaCentavos)
                         },
                     ) { Text("${preset.nome} · ${preset.modo} · ${formatarSaldoTug(preset.apostaCentavos)}") }
                 }
@@ -898,6 +897,5 @@ private fun TugRopeVisual(lead: Int) {
 
 private fun formatarSaldoTug(centavos: Long): String = AppCurrencyFormatter.format(centavos)
 
-private fun parseSaldoTug(valor: String): Long? = runCatching {
-    BigDecimal(valor.trim().replace(',', '.')).movePointRight(2).longValueExact()
-}.getOrNull()?.takeIf { it > 0 }
+private fun parseSaldoTug(valor: String): Long? =
+    parseValorBaseCentavos(valor)?.takeIf { it > 0 }

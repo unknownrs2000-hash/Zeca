@@ -116,14 +116,14 @@ fun TelaApostasEsportivas(
             onValueChange = { valorAposta = it.filter { char -> char.isDigit() || char == ',' || char == '.' }.take(12) },
             modifier = Modifier.fillMaxWidth(),
             label = { Text("Valor da aposta") },
-            prefix = { Text("R$ ") },
+            prefix = { Text("${codigoMoedaDaConta()} ") },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         )
         if (valorApostaCentavos == null) {
-            Text("Informe uma aposta de pelo menos R$ 1,00.", color = Color(0xFFFFB7A7), fontSize = 10.sp)
+            Text("Informe uma aposta de pelo menos ${formatarSaldoEsportivo(100L)}.", color = Color(0xFFFFB7A7), fontSize = 10.sp)
         } else if (valorApostaCentavos > 1_000_000L) {
-            Text("O limite por bilhete é R$ 10.000,00.", color = Color(0xFFFFB7A7), fontSize = 10.sp)
+            Text("O limite por bilhete é ${formatarSaldoEsportivo(1_000_000L)}.", color = Color(0xFFFFB7A7), fontSize = 10.sp)
         } else if (valorApostaCentavos > saldoCentavos) {
             Text("Saldo insuficiente para este bilhete.", color = Color(0xFFFFB7A7), fontSize = 10.sp)
         }
@@ -301,10 +301,8 @@ fun TelaApostasEsportivas(
     }
 }
 
-@Composable
-private fun parseValorAposta(valorTexto: String): Long? = runCatching {
-    BigDecimal(valorTexto.trim().replace(',', '.')).movePointRight(2).longValueExact()
-}.getOrNull()?.takeIf { it >= 100L }
+private fun parseValorAposta(valorTexto: String): Long? =
+    parseValorBaseCentavos(valorTexto)?.takeIf { it >= 100L }
 
 private fun calcularOddMultiplaBps(pernas: List<PernaApostaEsportiva>): Long? {
     var odd = BigInteger.valueOf(10_000L)

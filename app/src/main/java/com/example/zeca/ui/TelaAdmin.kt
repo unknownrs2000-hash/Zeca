@@ -138,7 +138,9 @@ fun TelaAdmin(
     var extratoExpandido by remember(selecionado?.uid) { mutableStateOf(false) }
     var extratoOculto by remember(selecionado?.uid) { mutableStateOf(false) }
     val avataresConsultados = remember { mutableSetOf<String>() }
-    val valorAjusteCentavos = parseSaldoAdmin(valorAjuste)
+    val usuarioAjuste = detalhes?.usuario ?: selecionado
+    val taxaAjuste = usuarioAjuste?.currencyRate ?: 1.0
+    val valorAjusteCentavos = parseValorAdminEmBaseCentavos(valorAjuste, taxaAjuste)
     val contexto = LocalContext.current
 
     LaunchedEffect(Unit) {
@@ -514,15 +516,19 @@ fun TelaAdmin(
                     value = valorAjuste,
                     onValueChange = { valorAjuste = it.filter { char -> char.isDigit() || char == ',' || char == '.' }.take(12) },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Valor · saldo virtual") },
-                    prefix = { Text("R$ ") },
+                    label = { Text("Valor · saldo virtual (${user.currencyCode.ifBlank { "BRL" }})") },
+                    prefix = { Text("${simboloMoedaAdmin(user.currencyCode, user.countryCode)} ") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 )
                 if (valorAjusteCentavos == null) {
-                    Text("Digite um valor maior que R$ 0,00 usando vírgula nos centavos.", color = Cores.Laranja, fontSize = 10.sp)
+                    Text("Digite um valor maior que zero usando vírgula nos centavos.", color = Cores.Laranja, fontSize = 10.sp)
                 } else if (valorAjusteCentavos > LIMITE_AJUSTE_ADMIN_CENTAVOS) {
-                    Text("O limite por ajuste é R$ 10.000,00.", color = Cores.Laranja, fontSize = 10.sp)
+                    Text(
+                        "O limite por ajuste é ${formatarSaldoAdmin(LIMITE_AJUSTE_ADMIN_CENTAVOS, user.currencyCode, user.countryCode, user.currencyRate)}.",
+                        color = Cores.Laranja,
+                        fontSize = 10.sp,
+                    )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = { credito = true }, colors = ButtonDefaults.buttonColors(containerColor = if (credito) Cores.Verde else Color.White.copy(alpha = 0.14f))) {
@@ -536,7 +542,7 @@ fun TelaAdmin(
                     onClick = {
                         val amount = valorAjusteCentavos
                         if (amount == null || amount > LIMITE_AJUSTE_ADMIN_CENTAVOS || motivoAcao.trim().length < 8) {
-                            mensagem = "Informe um valor de até R$ 10.000,00 e um motivo com pelo menos 8 caracteres."
+                            mensagem = "Informe um valor de até ${formatarSaldoAdmin(LIMITE_AJUSTE_ADMIN_CENTAVOS, user.currencyCode, user.countryCode, user.currencyRate)} e um motivo com pelo menos 8 caracteres."
                         } else {
                             carregando = true
                             onAjustarSaldo(user.uid, if (credito) amount else -amount, motivoAcao.trim(), UUID.randomUUID().toString()) { _, error ->
@@ -793,6 +799,26 @@ private fun formatarSaldoAdmin(
 private fun nomeItemInventario(itemId: String): String =
     itensInventarioAdmin.firstOrNull { it.id == itemId }?.nome ?: itemId
 
-private fun parseSaldoAdmin(valor: String): Long? = runCatching {
-    BigDecimal(valor.trim().replace(',', '.')).movePointRight(2).longValueExact()
-}.getOrNull()?.takeIf { it > 0 }
+private fun parseValorAdminEmBaseCentavos(valor: String, rate: Double): Long? {
+    val taxa = rate.takeIf { it.isFinite() && it > 0.0 } ?: 1.0
+    return runCatching {
+        BigDecimal(valor.trim().replace(',', '.'))
+            .divide(BigDecimal.valueOf(taxa), 10, java.math.RoundingMode.HALF_UP)
+            .movePointRight(2)
+            .setScale(0, java.math.RoundingMode.HALF_UP)
+            .longValueExact()
+    }.getOrNull()?.takeIf { it > 0 }
+}
+
+private fun simboloMoedaAdmin(currencyCode: String, countryCode: String): String {
+    val moeda = runCatching {
+        Currency.getInstance(currencyCode.ifBlank { "BRL" }.uppercase(Locale.ROOT))
+    }.getOrElse { Currency.getInstance("BRL") }
+    val locale = runCatching {
+        Locale.Builder()
+            .setLanguage("pt")
+            .setRegion(countryCode.trim().uppercase(Locale.ROOT).ifBlank { "BR" })
+            .build()
+    }.getOrElse { Locale.forLanguageTag("pt-BR") }
+    return moeda.getSymbol(locale)
+}

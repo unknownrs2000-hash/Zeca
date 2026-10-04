@@ -175,7 +175,7 @@ fun TelaJogos(
         }
     }
 
-    val apostaCentavos = parseValorCentavos(apostaTexto)
+    val apostaCentavos = parseValorBaseCentavos(apostaTexto)
     val apostaValida = apostaCentavos != null && apostaCentavos in 100..1_000_000 && apostaCentavos <= saldoCentavos
     val apostaTravada = when (jogo) {
         in miniJogosSolo.map { it.nome } -> desafioSoloAtivo
@@ -374,7 +374,7 @@ fun TelaJogos(
                     onValueChange = { apostaTexto = it; mensagem = "" },
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("Aposta") },
-                    prefix = { Text("R$ ") },
+                    prefix = { Text("${codigoMoedaDaConta()} ") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 )
@@ -387,7 +387,7 @@ fun TelaJogos(
                         mensagem = ""
                     },
                 )
-                Text("Mínimo R$ 1,00 · máximo R$ 10.000,00", color = Color.White.copy(alpha = 0.54f), fontSize = 11.sp)
+                Text("Mínimo ${formatarReais(100L)} · máximo ${formatarReais(1_000_000L)}", color = Color.White.copy(alpha = 0.54f), fontSize = 11.sp)
             }
 
             when (jogo) {
