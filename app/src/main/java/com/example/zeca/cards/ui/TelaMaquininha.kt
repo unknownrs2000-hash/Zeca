@@ -25,8 +25,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.zeca.ui.theme.Cores
 import com.example.zeca.cards.data.CardsRepository
 import com.example.zeca.cards.data.Cobranca
 import com.example.zeca.cards.data.STATUS_EXPIRADA
@@ -104,54 +108,77 @@ fun TelaMaquininha(onVoltar: () -> Unit) {
             .verticalScroll(rememberScrollState())
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        TextButton(onClick = onVoltar, modifier = Modifier.align(Alignment.Start)) { Text("Voltar") }
-        Text("Maquininha", style = MaterialTheme.typography.headlineSmall)
+        CabecalhoZeca(
+            titulo = "Maquininha",
+            subtitulo = if (cobranca == null) "Cobre por QR code ou por aproximação do celular." else null,
+            onVoltar = onVoltar,
+        )
 
         val atual = cobranca
         if (atual == null) {
-            OutlinedTextField(
-                value = valorTexto,
-                onValueChange = { valorTexto = it },
-                label = { Text("Valor (${moedaDaConta()})") },
+            CampoZeca(
+                valor = valorTexto,
+                onValor = { valorTexto = it },
+                etiqueta = "Valor (${moedaDaConta()})",
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                singleLine = true,
+            )
+            CampoZeca(
+                valor = descricao,
+                onValor = { if (it.length <= 80) descricao = it },
+                etiqueta = "Descrição (opcional)",
+            )
+            BotaoPrimario(
+                texto = if (carregando) "Gerando..." else "Gerar cobrança",
+                onClick = ::gerar,
+                enabled = !carregando,
                 modifier = Modifier.fillMaxWidth(),
             )
-            OutlinedTextField(
-                value = descricao,
-                onValueChange = { if (it.length <= 80) descricao = it },
-                label = { Text("Descrição (opcional)") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Button(onClick = ::gerar, enabled = !carregando, modifier = Modifier.fillMaxWidth()) {
-                if (carregando) CircularProgressIndicator(modifier = Modifier.padding(2.dp)) else Text("Gerar cobrança")
-            }
         } else {
-            Text(formatarBase(atual.valorBaseCentavos), style = MaterialTheme.typography.headlineMedium)
-            if (atual.descricao.isNotBlank()) Text(atual.descricao)
+            PainelZeca {
+                RotuloZeca(
+                    when (atual.status) {
+                        STATUS_PAGA -> "PAGAMENTO RECEBIDO"
+                        STATUS_EXPIRADA -> "COBRANÇA EXPIRADA"
+                        else -> "AGUARDANDO PAGAMENTO"
+                    },
+                )
+                Text(
+                    formatarBase(atual.valorBaseCentavos),
+                    color = if (atual.status == STATUS_EXPIRADA) CorPerigo else Cores.Verde,
+                    fontSize = 34.sp,
+                    fontWeight = FontWeight.Black,
+                )
+                if (atual.descricao.isNotBlank()) {
+                    Text(atual.descricao, color = Color.White.copy(alpha = 0.8f), fontSize = 14.sp)
+                }
+            }
 
             when (atual.status) {
-                STATUS_PAGA -> {
-                    Text("Pagamento recebido!", style = MaterialTheme.typography.titleLarge)
-                    Button(onClick = ::reiniciar, modifier = Modifier.fillMaxWidth()) { Text("Nova cobrança") }
-                }
-                STATUS_EXPIRADA -> {
-                    Text("Cobrança expirada.", style = MaterialTheme.typography.titleMedium)
-                    Button(onClick = ::reiniciar, modifier = Modifier.fillMaxWidth()) { Text("Nova cobrança") }
+                STATUS_PAGA, STATUS_EXPIRADA -> {
+                    BotaoPrimario(texto = "Nova cobrança", onClick = ::reiniciar, modifier = Modifier.fillMaxWidth())
                 }
                 else -> {
-                    QrDaCobranca(CardsRepository.textoQr(atual.id))
-                    Text("Ou encoste o celular de quem vai pagar neste aparelho, com a tela acesa.")
+                    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                        QrDaCobranca(CardsRepository.textoQr(atual.id))
+                    }
+                    Text(
+                        "Ou encoste o celular de quem vai pagar neste aparelho, com a tela acesa.",
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 13.sp,
+                    )
                     val restante = ((atual.expiraEmMs - agoraMs) / 1_000).coerceAtLeast(0)
-                    Text("Aguardando pagamento · expira em %d:%02d".format(restante / 60, restante % 60))
-                    OutlinedButton(onClick = ::reiniciar, modifier = Modifier.fillMaxWidth()) { Text("Fechar") }
+                    Text(
+                        "Expira em %d:%02d".format(restante / 60, restante % 60),
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    BotaoSecundario(texto = "Fechar", onClick = ::reiniciar, modifier = Modifier.fillMaxWidth())
                 }
             }
         }
 
-        erro?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        erro?.let { TextoErro(it) }
     }
 }

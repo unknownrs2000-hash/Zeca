@@ -26,6 +26,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -150,12 +151,14 @@ internal fun CampoZeca(
     etiqueta: String,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
 ) {
     OutlinedTextField(
         value = valor,
         onValueChange = onValor,
         label = { Text(etiqueta) },
         singleLine = true,
+        keyboardOptions = keyboardOptions,
         enabled = enabled,
         shape = RoundedCornerShape(14.dp),
         modifier = modifier.fillMaxWidth(),
@@ -240,6 +243,38 @@ internal fun CampoPin(
             },
         )
     }
+}
+
+/** Cabeçalho das telas de cartão: "Voltar", título grande e subtítulo apagado. */
+@Composable
+internal fun CabecalhoZeca(titulo: String, subtitulo: String? = null, onVoltar: () -> Unit) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        TextButton(onClick = onVoltar) { Text("Voltar", color = Cores.Verde, fontWeight = FontWeight.SemiBold) }
+        Text(titulo, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Black)
+        if (subtitulo != null) {
+            Text(subtitulo, color = Color.White.copy(alpha = 0.66f), fontSize = 13.sp)
+        }
+    }
+}
+
+/** Caixa com o mesmo degradê, borda e cantos do diálogo, para agrupar valor, nome e comprovante. */
+@Composable
+internal fun PainelZeca(modifier: Modifier = Modifier, conteudo: @Composable ColumnScope.() -> Unit) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(22.dp))
+            .background(Brush.verticalGradient(listOf(Color(0xFF222A2E), Cores.Cartao)))
+            .border(1.dp, Color.White.copy(alpha = 0.17f), RoundedCornerShape(22.dp))
+            .padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        content = conteudo,
+    )
+}
+
+@Composable
+internal fun RotuloZeca(texto: String) {
+    Text(texto, color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
 }
 
 @Composable

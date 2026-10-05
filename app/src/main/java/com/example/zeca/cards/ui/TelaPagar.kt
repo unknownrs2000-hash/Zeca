@@ -25,11 +25,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.zeca.FirebaseRepository
+import com.example.zeca.ui.theme.Cores
 import com.example.zeca.cards.data.CARTAO_ATIVO
 import com.example.zeca.cards.data.Cartao
 import com.example.zeca.cards.data.CardsRepository
@@ -162,44 +166,69 @@ fun TelaPagar(chargeIdInicial: String? = null, onVoltar: () -> Unit) {
             .verticalScroll(rememberScrollState())
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        TextButton(onClick = onVoltar, modifier = Modifier.align(Alignment.Start)) { Text("Voltar") }
-        Text("Pagar", style = MaterialTheme.typography.headlineSmall)
+        CabecalhoZeca(
+            titulo = "Pagar",
+            subtitulo = when (etapa) {
+                Etapa.Inicio -> "Leia o QR code ou encoste o celular na maquininha de quem vai receber."
+                is Etapa.Confirmar -> "Confira o valor e quem recebe antes de confirmar."
+                else -> null
+            },
+            onVoltar = onVoltar,
+        )
 
         when (val atual = etapa) {
             Etapa.Inicio -> {
-                Text("Leia o QR code da maquininha de quem vai receber.")
-                Button(onClick = ::escanear, modifier = Modifier.fillMaxWidth()) { Text("Ler QR code") }
-                OutlinedButton(
+                BotaoPrimario(texto = "Ler QR code", onClick = ::escanear, modifier = Modifier.fillMaxWidth())
+                BotaoSecundario(
+                    texto = if (lendoNfc) "Parar leitura NFC" else "Aproximar celulares (NFC)",
                     onClick = { if (lendoNfc) pararNfc() else aproximar() },
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text(if (lendoNfc) "Parar leitura NFC" else "Aproximar celulares (NFC)") }
-                if (lendoNfc) Text("Encoste as costas deste celular no celular de quem vai receber.")
+                )
+                if (lendoNfc) {
+                    Text(
+                        "Encoste as costas deste celular no celular de quem vai receber.",
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 13.sp,
+                    )
+                }
             }
-            Etapa.Carregando -> CircularProgressIndicator()
+            Etapa.Carregando -> Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(color = Cores.Verde)
+            }
             is Etapa.Confirmar -> {
                 val c = atual.cobranca
-                Text("Pagar para", style = MaterialTheme.typography.labelLarge)
-                Text(c.recebedorNome, style = MaterialTheme.typography.titleLarge)
-                if (c.recebedorUsername.isNotBlank()) Text("@${c.recebedorUsername}")
-                Text(formatarBase(c.valorBaseCentavos), style = MaterialTheme.typography.headlineMedium)
-                if (c.descricao.isNotBlank()) Text(c.descricao)
+                PainelZeca {
+                    RotuloZeca("PAGAR PARA")
+                    Text(c.recebedorNome, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Black)
+                    if (c.recebedorUsername.isNotBlank()) {
+                        Text("@${c.recebedorUsername}", color = Color.White.copy(alpha = 0.66f), fontSize = 13.sp)
+                    }
+                    Text(
+                        formatarBase(c.valorBaseCentavos),
+                        color = Cores.Verde,
+                        fontSize = 34.sp,
+                        fontWeight = FontWeight.Black,
+                    )
+                    if (c.descricao.isNotBlank()) {
+                        Text(c.descricao, color = Color.White.copy(alpha = 0.8f), fontSize = 14.sp)
+                    }
+                }
                 if (cartoes.isNotEmpty()) {
-                    Text("Pagar com", style = MaterialTheme.typography.labelLarge)
-                    OutlinedButton(
-                        onClick = { cartaoSelecionado = null; pin = "" },
+                    RotuloZeca("PAGAR COM")
+                    OpcaoDePagamento(
+                        texto = "Saldo da carteira",
+                        selecionada = cartaoSelecionado == null,
                         enabled = !atual.pagando,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text(if (cartaoSelecionado == null) "✓ Saldo da carteira" else "Saldo da carteira") }
+                        onClick = { cartaoSelecionado = null; pin = "" },
+                    )
                     cartoes.forEach { cartao ->
-                        OutlinedButton(
-                            onClick = { cartaoSelecionado = cartao.id; pin = "" },
+                        OpcaoDePagamento(
+                            texto = "${cartao.rotulo} •••• ${cartao.final4}",
+                            selecionada = cartaoSelecionado == cartao.id,
                             enabled = !atual.pagando,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text((if (cartaoSelecionado == cartao.id) "✓ " else "") + "${cartao.rotulo} •••• ${cartao.final4}")
-                        }
+                            onClick = { cartaoSelecionado = cartao.id; pin = "" },
+                        )
                     }
                     if (cartaoSelecionado != null) {
                         CampoPin(
@@ -211,27 +240,48 @@ fun TelaPagar(chargeIdInicial: String? = null, onVoltar: () -> Unit) {
                         )
                     }
                 }
-                Button(
+                BotaoPrimario(
+                    texto = if (atual.pagando) "Pagando..." else "Confirmar pagamento",
                     onClick = { pagar(c) },
                     enabled = !atual.pagando && (cartaoSelecionado == null || pin.length == 4),
                     modifier = Modifier.fillMaxWidth(),
-                ) {
-                    if (atual.pagando) CircularProgressIndicator(modifier = Modifier.padding(2.dp)) else Text("Confirmar pagamento")
-                }
-                OutlinedButton(
+                )
+                BotaoSecundario(
+                    texto = "Cancelar",
                     onClick = { etapa = Etapa.Inicio; erro = null },
                     enabled = !atual.pagando,
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("Cancelar") }
+                )
             }
             is Etapa.Sucesso -> {
-                Text("Pagamento concluído!", style = MaterialTheme.typography.titleLarge)
-                Text(formatarBase(atual.comprovante.valorBaseCentavos), style = MaterialTheme.typography.headlineMedium)
-                Text("Saldo atual: ${formatarBase(atual.comprovante.saldoBaseCentavos)}")
-                Button(onClick = onVoltar, modifier = Modifier.fillMaxWidth()) { Text("Concluir") }
+                PainelZeca {
+                    RotuloZeca("PAGAMENTO CONCLUÍDO")
+                    Text(
+                        formatarBase(atual.comprovante.valorBaseCentavos),
+                        color = Cores.Verde,
+                        fontSize = 34.sp,
+                        fontWeight = FontWeight.Black,
+                    )
+                    Text(
+                        "Saldo atual: ${formatarBase(atual.comprovante.saldoBaseCentavos)}",
+                        color = Color.White.copy(alpha = 0.66f),
+                        fontSize = 13.sp,
+                    )
+                }
+                BotaoPrimario(texto = "Concluir", onClick = onVoltar, modifier = Modifier.fillMaxWidth())
             }
         }
 
-        erro?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        erro?.let { TextoErro(it) }
+    }
+}
+
+// Opção escolhida fica em verde cheio; as outras ficam só com borda.
+@Composable
+private fun OpcaoDePagamento(texto: String, selecionada: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    if (selecionada) {
+        BotaoPrimario(texto = "✓ $texto", onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth())
+    } else {
+        BotaoSecundario(texto = texto, onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth())
     }
 }
