@@ -161,15 +161,12 @@ fun TelaPagar(chargeIdInicial: String? = null, onVoltar: () -> Unit) {
                         }
                     }
                     if (cartaoSelecionado != null) {
-                        OutlinedTextField(
-                            value = pin,
-                            onValueChange = { pin = it.filter { ch -> ch.isDigit() }.take(4) },
-                            label = { Text("PIN do cartão") },
-                            singleLine = true,
+                        CampoPin(
+                            valor = pin,
+                            onValor = { pin = it },
+                            etiqueta = "PIN DO CARTÃO",
                             enabled = !atual.pagando,
-                            visualTransformation = PasswordVisualTransformation(),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                            modifier = Modifier.fillMaxWidth(),
+                            autoFoco = false,
                         )
                     }
                 }

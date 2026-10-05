@@ -20,6 +20,8 @@ const LIMITS = Object.freeze({
   maxDescriptionLength: 80,
   maxPendingChargesPerMerchant: 5,
   maxCardsPerUser: 3,
+  maxCardsCreatedPerDay: 5,
+  cardCreationWindowMs: 24 * 60 * 60 * 1000,
   maxCardLabelLength: 24,
   maxPinAttempts: 5,
   pinLockMs: 15 * 60 * 1000,
@@ -138,7 +140,46 @@ function newPaymentToken(nowMs) {
   return { token, tokenHash: hashToken(token), expiresAtMs: nowMs + LIMITS.tokenTtlMs };
 }
 
-function buildCard({ id, ownerUid, pin, label = '', nowMs }) {
+const CARD_BIN_PREFIX = '9';
+const CARD_VALIDITY_YEARS = 5;
+const CARD_HOLDER_MAX_LENGTH = 26;
+
+// Dígito verificador de Luhn: o número fictício parece um cartão de verdade.
+function luhnCheckDigit(partial) {
+  let sum = 0;
+  for (let i = partial.length - 1, doubled = true; i >= 0; i -= 1, doubled = !doubled) {
+    let digit = Number(partial[i]);
+    if (doubled) {
+      digit *= 2;
+      if (digit > 9) digit -= 9;
+    }
+    sum += digit;
+  }
+  return (10 - (sum % 10)) % 10;
+}
+
+// Começa com 9 (prefixo que nenhuma bandeira real usa): nunca coincide com um cartão real.
+function generateCardNumber() {
+  let body = CARD_BIN_PREFIX;
+  while (body.length < 15) body += crypto.randomInt(0, 10);
+  return body + luhnCheckDigit(body);
+}
+
+function generateCvv() {
+  return crypto.randomInt(0, 1000).toString().padStart(3, '0');
+}
+
+function cardExpiry(nowMs) {
+  const date = new Date(nowMs);
+  return { expiryMonth: date.getUTCMonth() + 1, expiryYear: date.getUTCFullYear() + CARD_VALIDITY_YEARS };
+}
+
+function formatExpiry(month, year) {
+  if (!month || !year) return '';
+  return `${String(month).padStart(2, '0')}/${String(year % 100).padStart(2, '0')}`;
+}
+
+function buildCard({ id, ownerUid, pin, label = '', holderName = '', nowMs }) {
   if (typeof id !== 'string' || !id.trim()) {
     throw cardsError('O cartão precisa de um ID.', 'INVALID_CARD');
   }
@@ -146,14 +187,21 @@ function buildCard({ id, ownerUid, pin, label = '', nowMs }) {
     throw cardsError('O cartão precisa de um dono.', 'INVALID_CARD');
   }
   const { salt, hash } = hashPin(pin);
+  const number = generateCardNumber();
+  const { expiryMonth, expiryYear } = cardExpiry(nowMs);
   return {
     _id: id,
     ownerUid,
     type: CARD_TYPES.DEBIT,
     status: CARD_STATUS.ACTIVE,
     label: String(label || '').trim().slice(0, LIMITS.maxCardLabelLength) || 'Cartão Zeca',
-    // Número fictício só para identificar o cartão na tela. Não vale para nada fora do Zeca.
-    last4: crypto.randomInt(0, 10000).toString().padStart(4, '0'),
+    // Dados fictícios: não valem para nada fora do Zeca.
+    number,
+    last4: number.slice(-4),
+    cvv: generateCvv(),
+    expiryMonth,
+    expiryYear,
+    holderName: String(holderName || '').trim().toUpperCase().slice(0, CARD_HOLDER_MAX_LENGTH) || 'JOGADOR ZECA',
     pin: { salt, hash },
     failedPinAttempts: 0,
     lockedUntilMs: 0,
@@ -169,12 +217,14 @@ function nextCardStatus(current, wanted) {
   return { ok: true };
 }
 
-// O que o app pode ver. Nunca inclui o PIN (nem o hash).
+// O que o app pode ver na lista. Nunca inclui o PIN, o número completo nem o CVV.
 function toPublicCard(card, nowMs) {
   return {
     cardId: card._id,
     label: card.label,
     last4: card.last4,
+    holderName: card.holderName || '',
+    expiry: formatExpiry(card.expiryMonth, card.expiryYear),
     type: card.type,
     status: card.status,
     locked: (card.lockedUntilMs || 0) > nowMs,
@@ -183,9 +233,15 @@ function toPublicCard(card, nowMs) {
   };
 }
 
+// Só sai depois de o PIN conferir (ver card-service.details).
+function toCardDetails(card, nowMs) {
+  return { ...toPublicCard(card, nowMs), number: card.number, cvv: card.cvv };
+}
+
 module.exports = {
   buildCard,
   nextCardStatus,
+  toCardDetails,
   toPublicCard,
   CARD_STATUS,
   CARD_TYPES,

@@ -36,6 +36,16 @@ data class Cartao(
     val status: String,
     val travado: Boolean,
     val travadoAteMs: Long,
+    val titular: String = "",
+    val validade: String = "",
+)
+
+/** Número completo e CVV: só existem na memória da tela, depois de o PIN conferir. */
+data class DadosCartao(
+    val numero: String,
+    val cvv: String,
+    val validade: String,
+    val titular: String,
 )
 
 data class PagamentoCartao(
@@ -174,6 +184,29 @@ object CardsRepository {
         }
     }
 
+    fun dadosDoCartao(cartaoId: String, pin: String, callback: (DadosCartao?, Exception?) -> Unit) {
+        FirebaseRepository.chamarFunction(
+            "getCardDetails",
+            mapOf("cardId" to cartaoId, "pin" to pin),
+        ) { data, erro ->
+            val numero = data?.get("number") as? String
+            val cvv = data?.get("cvv") as? String
+            if (erro != null || data == null || numero == null || cvv == null) {
+                callback(null, erro ?: IllegalStateException("Resposta dos dados do cartão inválida."))
+                return@chamarFunction
+            }
+            callback(
+                DadosCartao(
+                    numero = numero,
+                    cvv = cvv,
+                    validade = data["expiry"] as? String ?: "",
+                    titular = data["holderName"] as? String ?: "",
+                ),
+                null,
+            )
+        }
+    }
+
     private fun Map<*, *>.toCartao(): Cartao? {
         val id = this["cardId"] as? String ?: return null
         return Cartao(
@@ -183,6 +216,8 @@ object CardsRepository {
             status = this["status"] as? String ?: CARTAO_ATIVO,
             travado = this["locked"] as? Boolean ?: false,
             travadoAteMs = (this["lockedUntilMs"] as? Number)?.toLong() ?: 0L,
+            titular = this["holderName"] as? String ?: "",
+            validade = this["expiry"] as? String ?: "",
         )
     }
 

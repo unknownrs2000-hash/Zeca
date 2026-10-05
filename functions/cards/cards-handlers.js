@@ -101,7 +101,14 @@ exports.createCard = onCall(async (request) => {
   assertMongoMode();
   const cardId = requireId(request.data?.requestId, 'Identificador do cartão inválido.');
   const { cards } = await getServices();
-  return cards.createCard({ ownerUid, cardId, pin: request.data?.pin, label: request.data?.label });
+  const profile = await loadProfile(ownerUid);
+  return cards.createCard({
+    ownerUid,
+    cardId,
+    pin: request.data?.pin,
+    label: request.data?.label,
+    holderName: profile?.displayName,
+  });
 });
 
 exports.listCards = onCall(async (request) => {
@@ -138,4 +145,12 @@ exports.getCardHistory = onCall(async (request) => {
   const cardId = requireId(request.data?.cardId, 'Cartão inválido.');
   const { cards } = await getServices();
   return { payments: await cards.history({ ownerUid, cardId }) };
+});
+
+exports.getCardDetails = onCall(async (request) => {
+  const ownerUid = authenticatedUid(request);
+  assertMongoMode();
+  const cardId = requireId(request.data?.cardId, 'Cartão inválido.');
+  const { cards } = await getServices();
+  return cards.details({ ownerUid, cardId, pin: request.data?.pin });
 });

@@ -42,6 +42,9 @@ function createCardsStore({ database }) {
 
     countOpenCards: (ownerUid) => cards.countDocuments({ ownerUid, status: { $ne: 'cancelled' } }),
 
+    // Conta cartões criados depois de sinceMs, inclusive os cancelados (usa o índice ownerUid + createdAtMs).
+    countRecentCards: (ownerUid, sinceMs) => cards.countDocuments({ ownerUid, createdAtMs: { $gt: sinceMs } }),
+
     // Se o ID já existe (corrida entre duas chamadas iguais), devolve o documento salvo.
     async insertCard(card) {
       try {

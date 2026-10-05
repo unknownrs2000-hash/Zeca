@@ -33,6 +33,9 @@ function fakeCardsStore() {
     async countOpenCards(ownerUid) {
       return [...cards.values()].filter((c) => c.ownerUid === ownerUid && c.status !== 'cancelled').length;
     },
+    async countRecentCards(ownerUid, sinceMs) {
+      return [...cards.values()].filter((c) => c.ownerUid === ownerUid && c.createdAtMs > sinceMs).length;
+    },
     async insertCard(card) {
       if (cards.has(card._id)) return { inserted: false, card: structuredClone(cards.get(card._id)) };
       cards.set(card._id, structuredClone(card));
@@ -220,4 +223,55 @@ test('cartão bloqueado não paga e o saldo fica intacto', async () => {
     hasCode('failed-precondition'),
   );
   assert.equal(store.balances.cliente, 5000);
+});
+
+function luhnValid(number) {
+  let sum = 0;
+  for (let i = number.length - 1, doubled = false; i >= 0; i -= 1, doubled = !doubled) {
+    let digit = Number(number[i]);
+    if (doubled) {
+      digit *= 2;
+      if (digit > 9) digit -= 9;
+    }
+    sum += digit;
+  }
+  return sum % 10 === 0;
+}
+
+test('número completo e CVV só saem com o PIN certo e o cartão parece de verdade', async () => {
+  const { cards } = setup();
+  await cards.createCard(newCard({ holderName: 'Ana Souza' }));
+
+  const listed = (await cards.listCards({ ownerUid: 'cliente' }))[0];
+  assert.equal(listed.number, undefined);
+  assert.equal(JSON.stringify(listed).includes('cvv'), false);
+  assert.equal(listed.holderName, 'ANA SOUZA');
+  assert.equal(listed.expiry, '01/75');
+
+  const details = (pin) => cards.details({ ownerUid: 'cliente', cardId: 'k1', pin });
+  await assert.rejects(details('0000'), hasCode('permission-denied'));
+  const full = await details('1234');
+  assert.match(full.number, /^9\d{15}$/);
+  assert.equal(luhnValid(full.number), true);
+  assert.match(full.cvv, /^\d{3}$/);
+  assert.equal(full.number.slice(-4), listed.last4);
+  await assert.rejects(
+    cards.details({ ownerUid: 'outro', cardId: 'k1', pin: '1234' }),
+    hasCode('not-found'),
+  );
+});
+
+test('há um limite de cartões criados por dia, mesmo cancelando, e ele libera depois da janela', async () => {
+  const { cards, clock } = setup();
+  const create = (cardId) => cards.createCard(newCard({ cardId }));
+  const cancel = (cardId) => cards.setStatus({ ownerUid: 'cliente', cardId, status: 'cancelled' });
+
+  for (let i = 0; i < LIMITS.maxCardsCreatedPerDay; i += 1) {
+    await create(`k${i}`);
+    await cancel(`k${i}`);
+  }
+  await assert.rejects(create('extra'), hasCode('resource-exhausted'));
+
+  clock.now = NOW + LIMITS.cardCreationWindowMs;
+  assert.equal((await create('extra')).cardId, 'extra');
 });

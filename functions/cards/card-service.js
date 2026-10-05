@@ -8,6 +8,7 @@ const {
   hashPin,
   isValidPinFormat,
   nextCardStatus,
+  toCardDetails,
   toPublicCard,
   verifyPin,
 } = require('./cards-logic');
@@ -53,7 +54,7 @@ function createCardService({ cardsStore, clock = Date.now }) {
     throw new HttpsError('permission-denied', 'PIN incorreto.');
   }
 
-  async function createCard({ ownerUid, cardId, pin, label }) {
+  async function createCard({ ownerUid, cardId, pin, label, holderName }) {
     if (!isValidPinFormat(pin)) throw new HttpsError('invalid-argument', PIN_FORMAT_MESSAGE);
 
     const existing = await cardsStore.getCard(cardId);
@@ -66,8 +67,13 @@ function createCardService({ cardsStore, clock = Date.now }) {
       throw new HttpsError('resource-exhausted', 'Você já tem o máximo de cartões. Cancele um para criar outro.');
     }
 
+    const sinceMs = clock() - LIMITS.cardCreationWindowMs;
+    if (await cardsStore.countRecentCards(ownerUid, sinceMs) >= LIMITS.maxCardsCreatedPerDay) {
+      throw new HttpsError('resource-exhausted', 'Você criou cartões demais hoje. Tente de novo amanhã.');
+    }
+
     const nowMs = clock();
-    const result = await cardsStore.insertCard(buildCard({ id: cardId, ownerUid, pin, label, nowMs }));
+    const result = await cardsStore.insertCard(buildCard({ id: cardId, ownerUid, pin, label, holderName, nowMs }));
     if (!result.inserted && result.card.ownerUid !== ownerUid) {
       throw new HttpsError('already-exists', 'Identificador de cartão já utilizado.');
     }
@@ -118,7 +124,17 @@ function createCardService({ cardsStore, clock = Date.now }) {
     }));
   }
 
-  return { createCard, listCards, setStatus, changePin, authorizePayment, history };
+  // Número completo e CVV só com o PIN certo (erro de PIN conta tentativa e trava o cartão).
+  async function details({ ownerUid, cardId, pin }) {
+    const card = await ownedCard(ownerUid, cardId);
+    await checkPin(card, pin);
+    if (!card.number || !card.cvv) {
+      throw new HttpsError('failed-precondition', 'Este cartão não tem dados completos. Cancele-o e crie um novo.');
+    }
+    return toCardDetails(card, clock());
+  }
+
+  return { createCard, listCards, setStatus, changePin, authorizePayment, history, details };
 }
 
 module.exports = { createCardService };
