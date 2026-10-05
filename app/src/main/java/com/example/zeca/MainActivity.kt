@@ -72,6 +72,8 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import kotlinx.coroutines.delay
+import com.example.zeca.cards.ui.TelaMaquininha
+import com.example.zeca.cards.ui.TelaPagar
 import com.example.zeca.ui.TelaCarteira
 import com.example.zeca.ui.TelaConfigurarPerfil
 import com.example.zeca.ui.AccountCurrencyInfo
@@ -413,6 +415,8 @@ fun CassinoApp(
     var mostrarDenunciasAdmin by rememberSaveable(usuario.uid) { mutableStateOf(false) }
     var mostrarLoja by rememberSaveable { mutableStateOf(false) }
     var mostrarTrabalho by rememberSaveable { mutableStateOf(false) }
+    var mostrarMaquininha by rememberSaveable { mutableStateOf(false) }
+    var mostrarPagar by rememberSaveable { mutableStateOf(false) }
     var perfil by remember(usuario.uid) { mutableStateOf<PerfilJogador?>(null) }
     var erroPerfil by rememberSaveable { mutableStateOf("") }
     var saldoFinanceiro by remember(usuario.uid) { mutableStateOf<Long?>(null) }
@@ -1184,7 +1188,32 @@ fun CassinoApp(
                             },
                             onVoltar = { aba = Aba.Perfil },
                         )
-                        Aba.Carteira -> TelaCarteira(
+                        Aba.Carteira -> if (mostrarMaquininha) {
+                            Box(Modifier.fillMaxSize().statusBarsPadding().padding(bottom = 96.dp)) {
+                                TelaMaquininha(onVoltar = { mostrarMaquininha = false })
+                            }
+                        } else if (mostrarPagar) {
+                            Box(Modifier.fillMaxSize().statusBarsPadding().padding(bottom = 96.dp)) {
+                                TelaPagar(onVoltar = { mostrarPagar = false })
+                            }
+                        } else Column(Modifier.fillMaxSize()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .statusBarsPadding()
+                                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                androidx.compose.material3.Button(
+                                    onClick = { mostrarMaquininha = true },
+                                    modifier = Modifier.weight(1f),
+                                ) { Text("Maquininha") }
+                                androidx.compose.material3.OutlinedButton(
+                                    onClick = { mostrarPagar = true },
+                                    modifier = Modifier.weight(1f),
+                                ) { Text("Pagar com QR") }
+                            }
+                            TelaCarteira(
                             linkPagamentoRecebido = pixPaymentLink,
                             onLinkPagamentoRecebido = onPixPaymentLinkHandled,
                             saldoCentavos = jogador.saldoCentavos,
@@ -1224,6 +1253,7 @@ fun CassinoApp(
                                 }
                             },
                         )
+                        }
                         Aba.Chat -> TelaChat(
                             uidAtual = usuario.uid,
                             chavePixAtual = jogador.chavePix,
@@ -1477,6 +1507,8 @@ fun CassinoApp(
                     aba = it
                     mostrarLoja = false
                     mostrarTrabalho = false
+                    mostrarMaquininha = false
+                    mostrarPagar = false
                 },
                 modifier = Modifier.align(Alignment.BottomCenter),
             )

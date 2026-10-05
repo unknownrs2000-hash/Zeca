@@ -8943,3 +8943,6 @@ exports.adminModeratePlayerReport = onCall(async (request) => {
   });
   return { ok: true };
 });
+
+// Maquininha e cartões: toda a lógica vive em functions/cards/.
+Object.assign(exports, require("./cards/cards-handlers"));

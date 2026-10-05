@@ -28,6 +28,10 @@ internal fun centavosBaseParaConta(centavosBase: Long): Long =
 internal fun parseValorBaseCentavos(texto: String): Long? =
     parseValorCentavos(texto)?.let { centavosDaContaParaBase(it) }
 
+/** Texto para preencher um campo (na moeda da conta) a partir de centavos da moeda base. Ex.: "12,50". */
+internal fun textoCampoDaBase(centavosBase: Long): String =
+    BigDecimal.valueOf(centavosBaseParaConta(centavosBase), 2).toPlainString().replace('.', ',')
+
 /**
  * Maior valor base que, ao ir para o campo (moeda da conta) e voltar para a base,
  * NÃO ultrapassa centavosBase. Evita o "Máx" passar do saldo por arredondamento.

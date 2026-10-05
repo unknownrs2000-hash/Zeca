@@ -2966,7 +2966,7 @@ object FirebaseRepository {
 
     fun sair() = auth.signOut()
 
-    private fun chamarFunction(
+    internal fun chamarFunction(
         nome: String,
         dados: Map<String, Any>,
         callback: (Map<String, Any>?, Exception?) -> Unit,

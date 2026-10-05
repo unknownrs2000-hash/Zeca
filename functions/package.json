@@ -20,7 +20,9 @@
     "grant:initial-bonus": "node scripts/grant-initial-bonus.js",
     "grant:users": "node scripts/grant-initial-bonus.js",
     "grant:admin": "node scripts/grant-admin.js",
-    "financial:close-tug-rooms": "node scripts/prepare-tug-cutover.js"
+    "financial:close-tug-rooms": "node scripts/prepare-tug-cutover.js",
+    "lint:cards": "node --check cards/cards-logic.js && node --check cards/cards-store.js && node --check cards/charge-service.js && node --check cards/payment-service.js && node --check cards/cards-handlers.js && node --check cards/cards.test.js && node --check cards/cards-services.test.js",
+    "test:cards": "node --test cards/cards.test.js cards/cards-services.test.js"
   },
   "dependencies": {
     "cloudinary": "^2.11.0",
