@@ -16,6 +16,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -37,6 +38,7 @@ import com.example.zeca.cards.money.COBRANCA_MIN_BASE_CENTAVOS
 import com.example.zeca.cards.money.formatarBase
 import com.example.zeca.cards.money.moedaDaConta
 import com.example.zeca.cards.money.valorDigitadoParaBase
+import com.example.zeca.cards.nfc.NfcProtocolo
 import kotlinx.coroutines.delay
 import java.util.UUID
 
@@ -66,6 +68,12 @@ fun TelaMaquininha(onVoltar: () -> Unit) {
                 if (atual != null && cobranca?.id == atual.id) cobranca = atual
             }
         }
+    }
+
+    // Enquanto a cobranca esta pendente, o toque NFC entrega o ID dela. Limpa ao pagar, expirar ou sair.
+    DisposableEffect(cobranca?.id, cobranca?.status) {
+        NfcProtocolo.chargeIdAtivo = if (cobranca?.status == STATUS_PENDENTE) cobranca?.id else null
+        onDispose { NfcProtocolo.chargeIdAtivo = null }
     }
 
     fun gerar() {
@@ -136,6 +144,7 @@ fun TelaMaquininha(onVoltar: () -> Unit) {
                 }
                 else -> {
                     QrDaCobranca(CardsRepository.textoQr(atual.id))
+                    Text("Ou encoste o celular de quem vai pagar neste aparelho, com a tela acesa.")
                     val restante = ((atual.expiraEmMs - agoraMs) / 1_000).coerceAtLeast(0)
                     Text("Aguardando pagamento · expira em %d:%02d".format(restante / 60, restante % 60))
                     OutlinedButton(onClick = ::reiniciar, modifier = Modifier.fillMaxWidth()) { Text("Fechar") }

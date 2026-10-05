@@ -1,5 +1,6 @@
 package com.example.zeca.cards.ui
 
+import android.app.Activity
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,6 +17,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,6 +39,7 @@ import com.example.zeca.cards.data.STATUS_PAGA
 import com.example.zeca.cards.data.STATUS_PENDENTE
 import com.example.zeca.cards.data.mensagemDeErro
 import com.example.zeca.cards.money.formatarBase
+import com.example.zeca.cards.nfc.NfcLeitor
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
@@ -57,6 +60,7 @@ fun TelaPagar(chargeIdInicial: String? = null, onVoltar: () -> Unit) {
     var cartoes by remember { mutableStateOf<List<Cartao>>(emptyList()) }
     var cartaoSelecionado by remember { mutableStateOf<String?>(null) }
     var pin by remember { mutableStateOf("") }
+    var lendoNfc by remember { mutableStateOf(false) }
 
     fun carregar(id: String) {
         erro = null
@@ -90,6 +94,34 @@ fun TelaPagar(chargeIdInicial: String? = null, onVoltar: () -> Unit) {
             .addOnFailureListener { erro = "Não foi possível abrir a câmera para ler o QR." }
     }
 
+    fun pararNfc() {
+        lendoNfc = false
+        (contexto as? Activity)?.let { NfcLeitor.parar(it) }
+    }
+
+    // Le o ID da cobranca no celular do recebedor e segue o mesmo caminho do QR (valor e nome antes de pagar).
+    fun aproximar() {
+        val atividade = contexto as? Activity
+        if (atividade == null || !NfcLeitor.existe(contexto)) {
+            erro = "Este aparelho não tem NFC."
+            return
+        }
+        if (!NfcLeitor.ligado(contexto)) {
+            erro = "Ligue o NFC nas configurações do aparelho."
+            return
+        }
+        erro = null
+        lendoNfc = true
+        NfcLeitor.iniciar(
+            atividade,
+            aoLer = { id ->
+                pararNfc()
+                carregar(id)
+            },
+            aoFalhar = { mensagem -> erro = mensagem },
+        )
+    }
+
     fun pagar(c: Cobranca) {
         erro = null
         etapa = Etapa.Confirmar(c, pagando = true)
@@ -105,6 +137,10 @@ fun TelaPagar(chargeIdInicial: String? = null, onVoltar: () -> Unit) {
                 etapa = Etapa.Sucesso(comprovante)
             }
         }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { (contexto as? Activity)?.let { NfcLeitor.parar(it) } }
     }
 
     LaunchedEffect(chargeIdInicial) {
@@ -135,6 +171,11 @@ fun TelaPagar(chargeIdInicial: String? = null, onVoltar: () -> Unit) {
             Etapa.Inicio -> {
                 Text("Leia o QR code da maquininha de quem vai receber.")
                 Button(onClick = ::escanear, modifier = Modifier.fillMaxWidth()) { Text("Ler QR code") }
+                OutlinedButton(
+                    onClick = { if (lendoNfc) pararNfc() else aproximar() },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(if (lendoNfc) "Parar leitura NFC" else "Aproximar celulares (NFC)") }
+                if (lendoNfc) Text("Encoste as costas deste celular no celular de quem vai receber.")
             }
             Etapa.Carregando -> CircularProgressIndicator()
             is Etapa.Confirmar -> {
