@@ -103,6 +103,10 @@ function createPaymentService({ store, cardsStore, clock = Date.now }) {
         if (error?.name === 'IdempotencyConflictError') {
           throw new HttpsError('already-exists', 'Esta cobrança já foi paga por outra pessoa.');
         }
+        // Erro comum do financial-store: vira mensagem clara em vez de "Erro interno.".
+        if (error?.name === 'InsufficientBalanceError') {
+          throw new HttpsError('failed-precondition', 'Saldo insuficiente para pagar esta cobrança.');
+        }
         throw error;
       }
       return finish(charge, operation, payerUid);

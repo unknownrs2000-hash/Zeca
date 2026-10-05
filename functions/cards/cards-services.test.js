@@ -137,10 +137,7 @@ test('o recebedor não pode pagar a própria cobrança', async () => {
 test('saldo insuficiente não move dinheiro e a cobrança continua pendente', async () => {
   const { charges, payments, store, cardsStore } = setup({ cliente: 100, loja: 0 });
   await charges.createCharge(request());
-  await assert.rejects(
-    payments.payCharge({ payerUid: 'cliente', chargeId: 'c1' }),
-    (error) => error.name === 'InsufficientBalanceError',
-  );
+  await assert.rejects(payments.payCharge({ payerUid: 'cliente', chargeId: 'c1' }), hasCode('failed-precondition'));
   assert.equal(store.balances.cliente, 100);
   assert.equal((await cardsStore.getCharge('c1')).status, 'pending');
 });
