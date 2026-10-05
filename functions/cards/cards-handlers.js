@@ -3,6 +3,7 @@
 const { getFirestore } = require('firebase-admin/firestore');
 const { HttpsError, onCall } = require('../callable');
 const { getFinancialServices } = require('../financial-runtime');
+const { createCardService } = require('./card-service');
 const { createCardsStore } = require('./cards-store');
 const { createChargeService } = require('./charge-service');
 const { createPaymentService } = require('./payment-service');
@@ -37,6 +38,7 @@ function getServices() {
       const cardsStore = createCardsStore({ database: connection.database });
       await cardsStore.ensureIndexes();
       return {
+        cards: createCardService({ cardsStore }),
         charges: createChargeService({ cardsStore, loadProfile }),
         payments: createPaymentService({ store, cardsStore }),
       };
@@ -78,6 +80,62 @@ exports.payCharge = onCall(async (request) => {
   const payerUid = authenticatedUid(request);
   assertMongoMode();
   const chargeId = requireId(request.data?.chargeId, 'Cobrança inválida.');
-  const { payments } = await getServices();
-  return payments.payCharge({ payerUid, chargeId });
+  const { payments, cards } = await getServices();
+
+  const rawCardId = request.data?.cardId;
+  if (rawCardId === undefined || rawCardId === null || rawCardId === '') {
+    return payments.payCharge({ payerUid, chargeId });
+  }
+  const cardId = requireId(rawCardId, 'Cartão inválido.');
+  const pin = request.data?.pin;
+  return payments.payCharge({
+    payerUid,
+    chargeId,
+    cardId,
+    authorize: () => cards.authorizePayment({ ownerUid: payerUid, cardId, pin }),
+  });
+});
+
+exports.createCard = onCall(async (request) => {
+  const ownerUid = authenticatedUid(request);
+  assertMongoMode();
+  const cardId = requireId(request.data?.requestId, 'Identificador do cartão inválido.');
+  const { cards } = await getServices();
+  return cards.createCard({ ownerUid, cardId, pin: request.data?.pin, label: request.data?.label });
+});
+
+exports.listCards = onCall(async (request) => {
+  const ownerUid = authenticatedUid(request);
+  assertMongoMode();
+  const { cards } = await getServices();
+  return { cards: await cards.listCards({ ownerUid }) };
+});
+
+exports.setCardStatus = onCall(async (request) => {
+  const ownerUid = authenticatedUid(request);
+  assertMongoMode();
+  const cardId = requireId(request.data?.cardId, 'Cartão inválido.');
+  const { cards } = await getServices();
+  return cards.setStatus({ ownerUid, cardId, status: request.data?.status });
+});
+
+exports.changeCardPin = onCall(async (request) => {
+  const ownerUid = authenticatedUid(request);
+  assertMongoMode();
+  const cardId = requireId(request.data?.cardId, 'Cartão inválido.');
+  const { cards } = await getServices();
+  return cards.changePin({
+    ownerUid,
+    cardId,
+    currentPin: request.data?.currentPin,
+    newPin: request.data?.newPin,
+  });
+});
+
+exports.getCardHistory = onCall(async (request) => {
+  const ownerUid = authenticatedUid(request);
+  assertMongoMode();
+  const cardId = requireId(request.data?.cardId, 'Cartão inválido.');
+  const { cards } = await getServices();
+  return { payments: await cards.history({ ownerUid, cardId }) };
 });

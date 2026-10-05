@@ -19,6 +19,8 @@ const LIMITS = Object.freeze({
   maxChargeCents: 1000000,
   maxDescriptionLength: 80,
   maxPendingChargesPerMerchant: 5,
+  maxCardsPerUser: 3,
+  maxCardLabelLength: 24,
   maxPinAttempts: 5,
   pinLockMs: 15 * 60 * 1000,
   feeBps: 0,
@@ -136,7 +138,55 @@ function newPaymentToken(nowMs) {
   return { token, tokenHash: hashToken(token), expiresAtMs: nowMs + LIMITS.tokenTtlMs };
 }
 
+function buildCard({ id, ownerUid, pin, label = '', nowMs }) {
+  if (typeof id !== 'string' || !id.trim()) {
+    throw cardsError('O cartão precisa de um ID.', 'INVALID_CARD');
+  }
+  if (typeof ownerUid !== 'string' || !ownerUid.trim()) {
+    throw cardsError('O cartão precisa de um dono.', 'INVALID_CARD');
+  }
+  const { salt, hash } = hashPin(pin);
+  return {
+    _id: id,
+    ownerUid,
+    type: CARD_TYPES.DEBIT,
+    status: CARD_STATUS.ACTIVE,
+    label: String(label || '').trim().slice(0, LIMITS.maxCardLabelLength) || 'Cartão Zeca',
+    // Número fictício só para identificar o cartão na tela. Não vale para nada fora do Zeca.
+    last4: crypto.randomInt(0, 10000).toString().padStart(4, '0'),
+    pin: { salt, hash },
+    failedPinAttempts: 0,
+    lockedUntilMs: 0,
+    createdAtMs: nowMs,
+  };
+}
+
+// Ativo <-> bloqueado é livre. Cancelado é definitivo.
+function nextCardStatus(current, wanted) {
+  if (!Object.values(CARD_STATUS).includes(wanted)) return { ok: false, reason: 'invalid-status' };
+  if (current === wanted) return { ok: true };
+  if (current === CARD_STATUS.CANCELLED) return { ok: false, reason: 'card-cancelled' };
+  return { ok: true };
+}
+
+// O que o app pode ver. Nunca inclui o PIN (nem o hash).
+function toPublicCard(card, nowMs) {
+  return {
+    cardId: card._id,
+    label: card.label,
+    last4: card.last4,
+    type: card.type,
+    status: card.status,
+    locked: (card.lockedUntilMs || 0) > nowMs,
+    lockedUntilMs: card.lockedUntilMs || 0,
+    createdAtMs: card.createdAtMs,
+  };
+}
+
 module.exports = {
+  buildCard,
+  nextCardStatus,
+  toPublicCard,
   CARD_STATUS,
   CARD_TYPES,
   CHARGE_STATUS,

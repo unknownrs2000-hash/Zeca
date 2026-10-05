@@ -13,7 +13,7 @@ const PAYABLE_ERRORS = Object.freeze({
 
 function createPaymentService({ store, cardsStore, clock = Date.now }) {
   // Conclui a cobrança a partir de uma operação já gravada (primeira vez ou repetição).
-  async function finish(charge, operation, payerUid) {
+  async function finish(charge, operation, payerUid, cardId) {
     const fingerprint = operation.result?.requestFingerprint || {};
     if (fingerprint.payerUid !== payerUid) {
       throw new HttpsError('failed-precondition', 'Esta cobrança já foi paga por outra pessoa.');
@@ -25,17 +25,18 @@ function createPaymentService({ store, cardsStore, clock = Date.now }) {
       paidByUid: payerUid,
       paidAtMs: settled.committedAtMs || clock(),
       operationId: operation._id,
+      ...(cardId ? { paidWithCardId: cardId } : {}),
     });
     return { ...operation.result.response, balanceCents: settled.balances[payerUid] };
   }
 
-  async function payCharge({ payerUid, chargeId }) {
+  async function payCharge({ payerUid, chargeId, cardId, authorize }) {
     const charge = await cardsStore.getCharge(chargeId);
     if (!charge) throw new HttpsError('not-found', 'Cobrança não encontrada.');
 
     const operationId = chargeOperationId(chargeId);
     const prior = await store.getOperation(operationId);
-    if (prior) return finish(charge, prior, payerUid);
+    if (prior) return finish(charge, prior, payerUid, cardId);
 
     const check = checkChargePayable(charge, payerUid, clock());
     if (!check.ok) {
@@ -45,7 +46,10 @@ function createPaymentService({ store, cardsStore, clock = Date.now }) {
 
     return store.withActionLock(`financial-action:${payerUid}`, async (lockLease) => {
       const concurrent = await store.getOperation(operationId);
-      if (concurrent) return finish(charge, concurrent, payerUid);
+      if (concurrent) return finish(charge, concurrent, payerUid, cardId);
+
+      // Autorização do cartão (PIN) dentro do lock: tentativas do mesmo pagador entram em fila.
+      if (authorize) await authorize();
 
       const { feeCents, netCents } = splitFee(charge.amountCents);
       const label = charge.description || 'cobrança';
@@ -109,7 +113,7 @@ function createPaymentService({ store, cardsStore, clock = Date.now }) {
         }
         throw error;
       }
-      return finish(charge, operation, payerUid);
+      return finish(charge, operation, payerUid, cardId);
     });
   }
 

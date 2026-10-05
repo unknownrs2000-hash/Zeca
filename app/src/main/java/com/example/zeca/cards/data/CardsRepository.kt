@@ -25,6 +25,26 @@ data class ComprovantePagamento(
     val saldoBaseCentavos: Long,
 )
 
+const val CARTAO_ATIVO = "active"
+const val CARTAO_BLOQUEADO = "blocked"
+const val CARTAO_CANCELADO = "cancelled"
+
+data class Cartao(
+    val id: String,
+    val rotulo: String,
+    val final4: String,
+    val status: String,
+    val travado: Boolean,
+    val travadoAteMs: Long,
+)
+
+data class PagamentoCartao(
+    val cobrancaId: String,
+    val valorBaseCentavos: Long,
+    val descricao: String,
+    val pagoEmMs: Long,
+)
+
 fun mensagemDeErro(erro: Exception?): String =
     erro?.localizedMessage?.takeIf { it.isNotBlank() } ?: "Algo deu errado. Tente de novo."
 
@@ -62,8 +82,18 @@ object CardsRepository {
         }
     }
 
-    fun pagarCobranca(cobrancaId: String, callback: (ComprovantePagamento?, Exception?) -> Unit) {
-        FirebaseRepository.chamarFunction("payCharge", mapOf("chargeId" to cobrancaId)) { data, erro ->
+    fun pagarCobranca(
+        cobrancaId: String,
+        cartaoId: String? = null,
+        pin: String? = null,
+        callback: (ComprovantePagamento?, Exception?) -> Unit,
+    ) {
+        val parametros = mutableMapOf<String, Any>("chargeId" to cobrancaId)
+        if (cartaoId != null && pin != null) {
+            parametros["cardId"] = cartaoId
+            parametros["pin"] = pin
+        }
+        FirebaseRepository.chamarFunction("payCharge", parametros) { data, erro ->
             if (erro != null || data == null) {
                 callback(null, erro ?: IllegalStateException("O servidor não confirmou o pagamento."))
                 return@chamarFunction
@@ -79,6 +109,81 @@ object CardsRepository {
                 null,
             )
         }
+    }
+
+    fun listarCartoes(callback: (List<Cartao>?, Exception?) -> Unit) {
+        FirebaseRepository.chamarFunction("listCards", emptyMap<String, Any>()) { data, erro ->
+            if (erro != null || data == null) {
+                callback(null, erro ?: IllegalStateException("Resposta dos cartões inválida."))
+                return@chamarFunction
+            }
+            val lista = (data["cards"] as? List<*>).orEmpty()
+                .mapNotNull { (it as? Map<*, *>)?.let { mapa -> mapa.toCartao() } }
+            callback(lista, null)
+        }
+    }
+
+    fun criarCartao(
+        requestId: String,
+        pin: String,
+        rotulo: String,
+        callback: (Cartao?, Exception?) -> Unit,
+    ) {
+        FirebaseRepository.chamarFunction(
+            "createCard",
+            mapOf("requestId" to requestId, "pin" to pin, "label" to rotulo),
+        ) { data, erro ->
+            val cartao = data?.toCartao()
+            callback(
+                cartao,
+                erro ?: if (cartao == null) IllegalStateException("Resposta do cartão inválida.") else null,
+            )
+        }
+    }
+
+    fun definirStatusCartao(cartaoId: String, status: String, callback: (Exception?) -> Unit) {
+        FirebaseRepository.chamarFunction(
+            "setCardStatus",
+            mapOf("cardId" to cartaoId, "status" to status),
+        ) { _, erro -> callback(erro) }
+    }
+
+    fun trocarPin(cartaoId: String, pinAtual: String, pinNovo: String, callback: (Exception?) -> Unit) {
+        FirebaseRepository.chamarFunction(
+            "changeCardPin",
+            mapOf("cardId" to cartaoId, "currentPin" to pinAtual, "newPin" to pinNovo),
+        ) { _, erro -> callback(erro) }
+    }
+
+    fun historicoCartao(cartaoId: String, callback: (List<PagamentoCartao>?, Exception?) -> Unit) {
+        FirebaseRepository.chamarFunction("getCardHistory", mapOf("cardId" to cartaoId)) { data, erro ->
+            if (erro != null || data == null) {
+                callback(null, erro ?: IllegalStateException("Resposta do histórico inválida."))
+                return@chamarFunction
+            }
+            val lista = (data["payments"] as? List<*>).orEmpty().mapNotNull { item ->
+                val mapa = item as? Map<*, *> ?: return@mapNotNull null
+                PagamentoCartao(
+                    cobrancaId = mapa["chargeId"] as? String ?: return@mapNotNull null,
+                    valorBaseCentavos = (mapa["amountCents"] as? Number)?.toLong() ?: 0L,
+                    descricao = mapa["description"] as? String ?: "",
+                    pagoEmMs = (mapa["paidAtMs"] as? Number)?.toLong() ?: 0L,
+                )
+            }
+            callback(lista, null)
+        }
+    }
+
+    private fun Map<*, *>.toCartao(): Cartao? {
+        val id = this["cardId"] as? String ?: return null
+        return Cartao(
+            id = id,
+            rotulo = this["label"] as? String ?: "Cartão Zeca",
+            final4 = this["last4"] as? String ?: "0000",
+            status = this["status"] as? String ?: CARTAO_ATIVO,
+            travado = this["locked"] as? Boolean ?: false,
+            travadoAteMs = (this["lockedUntilMs"] as? Number)?.toLong() ?: 0L,
+        )
     }
 
     private fun entregarCobranca(

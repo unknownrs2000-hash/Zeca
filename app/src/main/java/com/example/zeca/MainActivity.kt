@@ -72,6 +72,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import kotlinx.coroutines.delay
+import com.example.zeca.cards.ui.TelaCartoes
 import com.example.zeca.cards.ui.TelaMaquininha
 import com.example.zeca.cards.ui.TelaPagar
 import com.example.zeca.ui.TelaCarteira
@@ -417,6 +418,7 @@ fun CassinoApp(
     var mostrarTrabalho by rememberSaveable { mutableStateOf(false) }
     var mostrarMaquininha by rememberSaveable { mutableStateOf(false) }
     var mostrarPagar by rememberSaveable { mutableStateOf(false) }
+    var mostrarCartoes by rememberSaveable { mutableStateOf(false) }
     var perfil by remember(usuario.uid) { mutableStateOf<PerfilJogador?>(null) }
     var erroPerfil by rememberSaveable { mutableStateOf("") }
     var saldoFinanceiro by remember(usuario.uid) { mutableStateOf<Long?>(null) }
@@ -1196,6 +1198,10 @@ fun CassinoApp(
                             Box(Modifier.fillMaxSize().statusBarsPadding().padding(bottom = 96.dp)) {
                                 TelaPagar(onVoltar = { mostrarPagar = false })
                             }
+                        } else if (mostrarCartoes) {
+                            Box(Modifier.fillMaxSize().statusBarsPadding().padding(bottom = 96.dp)) {
+                                TelaCartoes(onVoltar = { mostrarCartoes = false })
+                            }
                         } else Column(Modifier.fillMaxSize()) {
                             Row(
                                 modifier = Modifier
@@ -1212,6 +1218,10 @@ fun CassinoApp(
                                     onClick = { mostrarPagar = true },
                                     modifier = Modifier.weight(1f),
                                 ) { Text("Pagar com QR") }
+                                androidx.compose.material3.OutlinedButton(
+                                    onClick = { mostrarCartoes = true },
+                                    modifier = Modifier.weight(1f),
+                                ) { Text("Cartões") }
                             }
                             TelaCarteira(
                             linkPagamentoRecebido = pixPaymentLink,
@@ -1509,6 +1519,7 @@ fun CassinoApp(
                     mostrarTrabalho = false
                     mostrarMaquininha = false
                     mostrarPagar = false
+                    mostrarCartoes = false
                 },
                 modifier = Modifier.align(Alignment.BottomCenter),
             )

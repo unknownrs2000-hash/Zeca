@@ -6,11 +6,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -22,8 +24,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.example.zeca.FirebaseRepository
+import com.example.zeca.cards.data.CARTAO_ATIVO
+import com.example.zeca.cards.data.Cartao
 import com.example.zeca.cards.data.CardsRepository
 import com.example.zeca.cards.data.Cobranca
 import com.example.zeca.cards.data.ComprovantePagamento
@@ -48,6 +54,9 @@ fun TelaPagar(chargeIdInicial: String? = null, onVoltar: () -> Unit) {
     val contexto = LocalContext.current
     var etapa by remember { mutableStateOf<Etapa>(Etapa.Inicio) }
     var erro by remember { mutableStateOf<String?>(null) }
+    var cartoes by remember { mutableStateOf<List<Cartao>>(emptyList()) }
+    var cartaoSelecionado by remember { mutableStateOf<String?>(null) }
+    var pin by remember { mutableStateOf("") }
 
     fun carregar(id: String) {
         erro = null
@@ -84,7 +93,10 @@ fun TelaPagar(chargeIdInicial: String? = null, onVoltar: () -> Unit) {
     fun pagar(c: Cobranca) {
         erro = null
         etapa = Etapa.Confirmar(c, pagando = true)
-        CardsRepository.pagarCobranca(c.id) { comprovante, e ->
+        val cartaoId = cartaoSelecionado
+        val pinEnviado = if (cartaoId != null) pin else null
+        CardsRepository.pagarCobranca(c.id, cartaoId, pinEnviado) { comprovante, e ->
+            pin = ""
             if (e != null || comprovante == null) {
                 // Continua na confirmação: repetir é seguro, o servidor usa um ID fixo por cobrança.
                 erro = mensagemDeErro(e)
@@ -97,6 +109,15 @@ fun TelaPagar(chargeIdInicial: String? = null, onVoltar: () -> Unit) {
 
     LaunchedEffect(chargeIdInicial) {
         if (!chargeIdInicial.isNullOrBlank()) carregar(chargeIdInicial)
+    }
+
+    // Se falhar (ex.: servidor sem a Fase 2), segue só com a carteira.
+    LaunchedEffect(Unit) {
+        CardsRepository.listarCartoes { lista, e ->
+            if (e == null && lista != null) {
+                cartoes = lista.filter { it.status == CARTAO_ATIVO && !it.travado }
+            }
+        }
     }
 
     Column(
@@ -123,9 +144,38 @@ fun TelaPagar(chargeIdInicial: String? = null, onVoltar: () -> Unit) {
                 if (c.recebedorUsername.isNotBlank()) Text("@${c.recebedorUsername}")
                 Text(formatarBase(c.valorBaseCentavos), style = MaterialTheme.typography.headlineMedium)
                 if (c.descricao.isNotBlank()) Text(c.descricao)
+                if (cartoes.isNotEmpty()) {
+                    Text("Pagar com", style = MaterialTheme.typography.labelLarge)
+                    OutlinedButton(
+                        onClick = { cartaoSelecionado = null; pin = "" },
+                        enabled = !atual.pagando,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(if (cartaoSelecionado == null) "✓ Saldo da carteira" else "Saldo da carteira") }
+                    cartoes.forEach { cartao ->
+                        OutlinedButton(
+                            onClick = { cartaoSelecionado = cartao.id; pin = "" },
+                            enabled = !atual.pagando,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text((if (cartaoSelecionado == cartao.id) "✓ " else "") + "${cartao.rotulo} •••• ${cartao.final4}")
+                        }
+                    }
+                    if (cartaoSelecionado != null) {
+                        OutlinedTextField(
+                            value = pin,
+                            onValueChange = { pin = it.filter { ch -> ch.isDigit() }.take(4) },
+                            label = { Text("PIN do cartão") },
+                            singleLine = true,
+                            enabled = !atual.pagando,
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
                 Button(
                     onClick = { pagar(c) },
-                    enabled = !atual.pagando,
+                    enabled = !atual.pagando && (cartaoSelecionado == null || pin.length == 4),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     if (atual.pagando) CircularProgressIndicator(modifier = Modifier.padding(2.dp)) else Text("Confirmar pagamento")
