@@ -275,3 +275,37 @@ test('há um limite de cartões criados por dia, mesmo cancelando, e ele libera 
   clock.now = NOW + LIMITS.cardCreationWindowMs;
   assert.equal((await create('extra')).cardId, 'extra');
 });
+
+test('cartão vencido não paga nem mostra detalhes, não gasta tentativa de PIN e ainda pode ser cancelado', async () => {
+  const { cards, charges, payments, store, cardsStore, clock } = setup();
+  await cards.createCard(newCard());
+
+  // Criado em NOW (jan/1970): validade 01/75, vale até o fim de janeiro de 1975.
+  const firstMomentAfterExpiry = Date.UTC(1975, 1, 1);
+  clock.now = firstMomentAfterExpiry - 1;
+  assert.equal(await auth(cards, '1234'), 'k1');
+
+  // A cobrança é criada já no instante do teste, senão ela mesma expira (validade de 2 minutos).
+  clock.now = firstMomentAfterExpiry;
+  await charges.createCharge(chargeRequest());
+  const pay = () => payments.payCharge({
+    payerUid: 'cliente',
+    chargeId: 'c1',
+    cardId: 'k1',
+    authorize: () => auth(cards, '1234'),
+  });
+  await assert.rejects(pay(), (error) => error.code === 'failed-precondition' && /venceu/.test(error.message));
+  assert.equal(store.balances.cliente, 5000);
+  assert.equal((await cardsStore.getCharge('c1')).status, 'pending');
+
+  await assert.rejects(auth(cards, '0000'), hasCode('failed-precondition'));
+  assert.equal((await cardsStore.getCard('k1')).failedPinAttempts, 0);
+  await assert.rejects(
+    cards.details({ ownerUid: 'cliente', cardId: 'k1', pin: '1234' }),
+    hasCode('failed-precondition'),
+  );
+
+  assert.equal((await cards.listCards({ ownerUid: 'cliente' })).length, 1);
+  const cancelled = await cards.setStatus({ ownerUid: 'cliente', cardId: 'k1', status: 'cancelled' });
+  assert.equal(cancelled.status, 'cancelled');
+});

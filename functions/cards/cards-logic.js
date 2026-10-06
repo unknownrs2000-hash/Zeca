@@ -109,10 +109,17 @@ function verifyPin(pin, record) {
   return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
 }
 
+// O cartão vale até o fim do mês de validade (UTC). Sem validade gravada, não vence.
+function isCardExpired(card, nowMs) {
+  if (!card.expiryMonth || !card.expiryYear) return false;
+  return nowMs >= Date.UTC(card.expiryYear, card.expiryMonth, 1);
+}
+
 function checkCardUsable(card, nowMs) {
   if (!card) return { ok: false, reason: 'card-not-found' };
   if (card.status === CARD_STATUS.CANCELLED) return { ok: false, reason: 'card-cancelled' };
   if (card.status !== CARD_STATUS.ACTIVE) return { ok: false, reason: 'card-blocked' };
+  if (isCardExpired(card, nowMs)) return { ok: false, reason: 'card-expired' };
   if ((card.lockedUntilMs || 0) > nowMs) return { ok: false, reason: 'pin-locked' };
   return { ok: true };
 }

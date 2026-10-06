@@ -87,3 +87,14 @@ test('token de pagamento: guarda só o hash, expira rápido e nunca se repete', 
   assert.equal(first.expiresAtMs, NOW + logic.LIMITS.tokenTtlMs);
   assert.notEqual(first.token, second.token);
 });
+
+test('checkCardUsable recusa cartão vencido só a partir do mês seguinte à validade', () => {
+  const card = { status: 'active', expiryMonth: 10, expiryYear: 2031 };
+  const lastMomentOfOctober = Date.UTC(2031, 9, 31, 23, 59, 59, 999);
+  const firstMomentOfNovember = Date.UTC(2031, 10, 1);
+  assert.deepEqual(logic.checkCardUsable(card, lastMomentOfOctober), { ok: true });
+  assert.equal(logic.checkCardUsable(card, firstMomentOfNovember).reason, 'card-expired');
+  assert.equal(logic.checkCardUsable({ ...card, status: 'cancelled' }, firstMomentOfNovember).reason, 'card-cancelled');
+  assert.equal(logic.checkCardUsable({ ...card, status: 'blocked' }, firstMomentOfNovember).reason, 'card-blocked');
+  assert.deepEqual(logic.checkCardUsable({ status: 'active' }, firstMomentOfNovember), { ok: true });
+});

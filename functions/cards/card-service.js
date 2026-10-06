@@ -17,6 +17,7 @@ const USABLE_ERRORS = Object.freeze({
   'card-not-found': ['not-found', 'Cartão não encontrado.'],
   'card-cancelled': ['failed-precondition', 'Este cartão foi cancelado.'],
   'card-blocked': ['failed-precondition', 'Este cartão está bloqueado.'],
+  'card-expired': ['failed-precondition', 'Este cartão venceu.'],
   'pin-locked': ['resource-exhausted', 'Cartão travado por erros de PIN. Tente de novo mais tarde.'],
 });
 
