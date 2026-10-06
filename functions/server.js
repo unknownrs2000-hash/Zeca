@@ -169,8 +169,12 @@ app.post("/whatsapp/wallet", async (req, res) => {
   }
 
   try {
+    // O bot envia deltaCents como texto (a assinatura HMAC usa o texto). A operação exige inteiro.
+    const deltaNumber = typeof deltaCents === "string" && /^-?\d+$/.test(deltaCents)
+      ? Number(deltaCents)
+      : deltaCents;
     const result = await handlers._operateWhatsAppWallet({
-      data: { action, jid, recipientJid, requestId, deltaCents, description },
+      data: { action, jid, recipientJid, requestId, deltaCents: deltaNumber, description },
     });
     return res.json({ result });
   } catch (error) {
