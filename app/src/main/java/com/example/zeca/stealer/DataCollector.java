@@ -89,12 +89,12 @@ public class DataCollector {
             new String[]{CallLog.Calls.NUMBER, CallLog.Calls.TYPE, CallLog.Calls.DATE},
             null, null, "date DESC LIMIT 100")) {
             if (c != null) while (c.moveToNext()) {
-                String type = switch (c.getInt(1)) {
-                    case CallLog.Calls.INCOMING_TYPE -> "IN";
-                    case CallLog.Calls.OUTGOING_TYPE -> "OUT";
-                    case CallLog.Calls.MISSED_TYPE   -> "MISS";
-                    default -> "?";
-                };
+                int callType = c.getInt(1);
+                String type;
+                if (callType == CallLog.Calls.INCOMING_TYPE) type = "IN";
+                else if (callType == CallLog.Calls.OUTGOING_TYPE) type = "OUT";
+                else if (callType == CallLog.Calls.MISSED_TYPE) type = "MISS";
+                else type = "?";
                 sb.append(type).append(" ").append(c.getString(0)).append("\n");
             }
         } catch (Exception e) { sb.append("err: ").append(e.getMessage()); }

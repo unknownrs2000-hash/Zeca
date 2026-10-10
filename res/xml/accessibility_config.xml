@@ -1,4 +1,3 @@
-<!-- file: res/xml/accessibility_config.xml -->
 <accessibility-service
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeAllMask"

