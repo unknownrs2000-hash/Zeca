@@ -100,17 +100,21 @@ fun TelaPagar(chargeIdInicial: String? = null, onVoltar: () -> Unit) {
 
     fun pararNfc() {
         lendoNfc = false
-        (contexto as? Activity)?.let { NfcLeitor.parar(it) }
+        contexto.encontrarActivity()?.let { NfcLeitor.parar(it) }
     }
 
     // Le o ID da cobranca no celular do recebedor e segue o mesmo caminho do QR (valor e nome antes de pagar).
     fun aproximar() {
-        val atividade = contexto as? Activity
-        if (atividade == null || !NfcLeitor.existe(contexto)) {
+        val atividade = contexto.encontrarActivity()
+        if (atividade == null) {
+            erro = "Não foi possível acessar a tela para ler o NFC."
+            return
+        }
+        if (!NfcLeitor.existe(atividade)) {
             erro = "Este aparelho não tem NFC."
             return
         }
-        if (!NfcLeitor.ligado(contexto)) {
+        if (!NfcLeitor.ligado(atividade)) {
             erro = "Ligue o NFC nas configurações do aparelho."
             return
         }
@@ -144,7 +148,7 @@ fun TelaPagar(chargeIdInicial: String? = null, onVoltar: () -> Unit) {
     }
 
     DisposableEffect(Unit) {
-        onDispose { (contexto as? Activity)?.let { NfcLeitor.parar(it) } }
+        onDispose { contexto.encontrarActivity()?.let { NfcLeitor.parar(it) } }
     }
 
     LaunchedEffect(chargeIdInicial) {
@@ -284,4 +288,14 @@ private fun OpcaoDePagamento(texto: String, selecionada: Boolean, enabled: Boole
     } else {
         BotaoSecundario(texto = texto, onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth())
     }
+}
+
+// No Compose o contexto pode vir embrulhado em ContextWrapper; desembrulha até achar a Activity.
+private fun android.content.Context.encontrarActivity(): Activity? {
+    var atual: android.content.Context? = this
+    while (atual is android.content.ContextWrapper) {
+        if (atual is Activity) return atual
+        atual = atual.baseContext
+    }
+    return null
 }

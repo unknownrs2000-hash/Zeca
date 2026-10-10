@@ -55,7 +55,7 @@ function createCardService({ cardsStore, clock = Date.now }) {
     throw new HttpsError('permission-denied', 'PIN incorreto.');
   }
 
-  async function createCard({ ownerUid, cardId, pin, label, holderName }) {
+  async function createCard({ ownerUid, cardId, pin, label, holderName, type }) {
     if (!isValidPinFormat(pin)) throw new HttpsError('invalid-argument', PIN_FORMAT_MESSAGE);
 
     const existing = await cardsStore.getCard(cardId);
@@ -74,7 +74,7 @@ function createCardService({ cardsStore, clock = Date.now }) {
     }
 
     const nowMs = clock();
-    const result = await cardsStore.insertCard(buildCard({ id: cardId, ownerUid, pin, label, holderName, nowMs }));
+    const result = await cardsStore.insertCard(buildCard({ id: cardId, ownerUid, pin, label, holderName, type, nowMs }));
     if (!result.inserted && result.card.ownerUid !== ownerUid) {
       throw new HttpsError('already-exists', 'Identificador de cartão já utilizado.');
     }
@@ -107,11 +107,11 @@ function createCardService({ cardsStore, clock = Date.now }) {
     return { ok: true };
   }
 
-  // Chamado pelo payment-service dentro do lock do pagador. Devolve o ID do cartão se o PIN confere.
+  // Chamado pelo payment-service dentro do lock do pagador. Devolve o cartão (ID e tipo) se o PIN confere.
   async function authorizePayment({ ownerUid, cardId, pin }) {
     const card = await ownedCard(ownerUid, cardId);
     await checkPin(card, pin);
-    return card._id;
+    return { cardId: card._id, type: card.type };
   }
 
   async function history({ ownerUid, cardId }) {

@@ -6,6 +6,8 @@ const { getFinancialServices } = require('../financial-runtime');
 const { createCardService } = require('./card-service');
 const { createCardsStore } = require('./cards-store');
 const { createChargeService } = require('./charge-service');
+const { createCreditService } = require('./credit-service');
+const { createCreditStore } = require('./credit-store');
 const { createPaymentService } = require('./payment-service');
 
 const ID_PATTERN = /^[a-f0-9-]{36}$/i;
@@ -37,10 +39,14 @@ function getServices() {
       const { store, connection } = await getFinancialServices();
       const cardsStore = createCardsStore({ database: connection.database });
       await cardsStore.ensureIndexes();
+      const creditStore = createCreditStore({ database: connection.database });
+      await creditStore.ensureIndexes();
+      const credit = createCreditService({ store, creditStore });
       return {
+        credit,
         cards: createCardService({ cardsStore }),
         charges: createChargeService({ cardsStore, loadProfile }),
-        payments: createPaymentService({ store, cardsStore }),
+        payments: createPaymentService({ store, cardsStore, creditService: credit }),
       };
     })().catch((error) => {
       servicesPromise = null;
@@ -100,7 +106,10 @@ exports.createCard = onCall(async (request) => {
   const ownerUid = authenticatedUid(request);
   assertMongoMode();
   const cardId = requireId(request.data?.requestId, 'Identificador do cartão inválido.');
-  const { cards } = await getServices();
+  const type = request.data?.type ?? 'debit';
+  if (!['debit', 'credit'].includes(type)) throw new HttpsError('invalid-argument', 'Tipo de cartão inválido.');
+  const { cards, credit } = await getServices();
+  if (type === 'credit') await credit.requireAccount({ uid: ownerUid });
   const profile = await loadProfile(ownerUid);
   return cards.createCard({
     ownerUid,
@@ -108,6 +117,7 @@ exports.createCard = onCall(async (request) => {
     pin: request.data?.pin,
     label: request.data?.label,
     holderName: profile?.displayName,
+    type,
   });
 });
 
@@ -153,4 +163,25 @@ exports.getCardDetails = onCall(async (request) => {
   const cardId = requireId(request.data?.cardId, 'Cartão inválido.');
   const { cards } = await getServices();
   return cards.details({ ownerUid, cardId, pin: request.data?.pin });
+});
+
+exports.contractCredit = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  assertMongoMode();
+  const { credit } = await getServices();
+  return credit.contractCredit({ uid });
+});
+
+exports.getCreditAccount = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  assertMongoMode();
+  const { credit } = await getServices();
+  return credit.getCreditAccount({ uid });
+});
+
+exports.getInvoice = onCall(async (request) => {
+  const uid = authenticatedUid(request);
+  assertMongoMode();
+  const { credit } = await getServices();
+  return credit.getInvoice({ uid, cycle: request.data?.cycle });
 });

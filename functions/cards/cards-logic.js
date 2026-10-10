@@ -186,7 +186,10 @@ function formatExpiry(month, year) {
   return `${String(month).padStart(2, '0')}/${String(year % 100).padStart(2, '0')}`;
 }
 
-function buildCard({ id, ownerUid, pin, label = '', holderName = '', nowMs }) {
+function buildCard({ id, ownerUid, pin, label = '', holderName = '', type = CARD_TYPES.DEBIT, nowMs }) {
+  if (!Object.values(CARD_TYPES).includes(type)) {
+    throw cardsError('Tipo de cartão inválido.', 'INVALID_CARD');
+  }
   if (typeof id !== 'string' || !id.trim()) {
     throw cardsError('O cartão precisa de um ID.', 'INVALID_CARD');
   }
@@ -199,7 +202,7 @@ function buildCard({ id, ownerUid, pin, label = '', holderName = '', nowMs }) {
   return {
     _id: id,
     ownerUid,
-    type: CARD_TYPES.DEBIT,
+    type,
     status: CARD_STATUS.ACTIVE,
     label: String(label || '').trim().slice(0, LIMITS.maxCardLabelLength) || 'Cartão Zeca',
     // Dados fictícios: não valem para nada fora do Zeca.

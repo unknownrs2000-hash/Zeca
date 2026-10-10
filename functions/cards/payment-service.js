@@ -11,7 +11,7 @@ const PAYABLE_ERRORS = Object.freeze({
   'charge-not-pending': ['failed-precondition', 'Esta cobrança já foi paga ou encerrada.'],
 });
 
-function createPaymentService({ store, cardsStore, clock = Date.now }) {
+function createPaymentService({ store, cardsStore, creditService, clock = Date.now }) {
   // Conclui a cobrança a partir de uma operação já gravada (primeira vez ou repetição).
   async function finish(charge, operation, payerUid, cardId) {
     const fingerprint = operation.result?.requestFingerprint || {};
@@ -36,7 +36,7 @@ function createPaymentService({ store, cardsStore, clock = Date.now }) {
 
     const operationId = chargeOperationId(chargeId);
     const prior = await store.getOperation(operationId);
-    if (prior) return finish(charge, prior, payerUid, cardId);
+    if (prior) return finishAny(charge, prior, payerUid, cardId);
 
     const check = checkChargePayable(charge, payerUid, clock());
     if (!check.ok) {
@@ -46,10 +46,14 @@ function createPaymentService({ store, cardsStore, clock = Date.now }) {
 
     return store.withActionLock(`financial-action:${payerUid}`, async (lockLease) => {
       const concurrent = await store.getOperation(operationId);
-      if (concurrent) return finish(charge, concurrent, payerUid, cardId);
+      if (concurrent) return finishAny(charge, concurrent, payerUid, cardId);
 
       // Autorização do cartão (PIN) dentro do lock: tentativas do mesmo pagador entram em fila.
-      if (authorize) await authorize();
+      const auth = authorize ? await authorize() : null;
+      if (auth?.type === 'credit') {
+        const operation = await creditService.chargeOnCredit({ payerUid, charge, lockLease });
+        return finishCredit(charge, operation, payerUid, cardId);
+      }
 
       const { feeCents, netCents } = splitFee(charge.amountCents);
       const label = charge.description || 'cobrança';

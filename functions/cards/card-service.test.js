@@ -165,7 +165,7 @@ test('cinco erros de PIN travam o cartão até o tempo passar', async () => {
   }
   await assert.rejects(auth(cards, '1234'), hasCode('resource-exhausted'));
   clock.now = NOW + LIMITS.pinLockMs;
-  assert.equal(await auth(cards, '1234'), 'k1');
+  assert.deepEqual(await auth(cards, '1234'), { cardId: 'k1', type: 'debit' });
 });
 
 test('changePin exige o PIN atual e o PIN antigo deixa de valer', async () => {
@@ -283,7 +283,7 @@ test('cartão vencido não paga nem mostra detalhes, não gasta tentativa de PIN
   // Criado em NOW (jan/1970): validade 01/75, vale até o fim de janeiro de 1975.
   const firstMomentAfterExpiry = Date.UTC(1975, 1, 1);
   clock.now = firstMomentAfterExpiry - 1;
-  assert.equal(await auth(cards, '1234'), 'k1');
+  assert.deepEqual(await auth(cards, '1234'), { cardId: 'k1', type: 'debit' });
 
   // A cobrança é criada já no instante do teste, senão ela mesma expira (validade de 2 minutos).
   clock.now = firstMomentAfterExpiry;
